@@ -4,13 +4,13 @@
 import { BRAND } from "../brand";
 import { ICONS, LINKS, layout } from "./_layout";
 
-// Lucide-style Chrome glyph: outer circle + inner circle + three spokes.
-// Monochrome stroke to match the rest of the design system; we don't use the
-// brand multi-color disc on this surface because it'd clash with our type-led
-// hierarchy. The official CWS page is the user's visual confirmation of brand.
-const ICON_CHROME = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="21.17" y1="8" x2="12" y2="8"/><line x1="3.95" y1="6.06" x2="8.54" y2="14"/><line x1="10.88" y1="21.94" x2="15.46" y2="14"/></svg>`;
+// Install CTAs now use the official multi-color Chrome / Firefox store logos
+// (served from /static as SVG); see the .store-badge markup in HERO.
 const ICON_GH = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.2c-3.3.7-4-1.4-4-1.4-.5-1.4-1.3-1.8-1.3-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.7.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.7-5.5 6 .4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/></svg>`;
 const ICON_LIST = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg>`;
+// Small chevron tucked after the store name — signals "this jumps out to the
+// store". Tints with currentColor and nudges right on badge hover.
+const ICON_ARROW = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>`;
 const ICON_SHIELD = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>`;
 const ICON_LOCK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
 const ICON_DB = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>`;
@@ -39,27 +39,42 @@ const HERO = `
   <span class="eyebrow">
     <span class="dot" aria-hidden="true"></span>
     <span class="x">${ICONS.X}</span>
-    Chrome 扩展<span class="sep">·</span>${BRAND.license} 开源
+    Chrome &amp; Firefox 扩展<span class="sep">·</span>${BRAND.license} 开源
   </span>
   <h1>Make <span class="xmark">${ICONS.X}</span> Great Again<br><span class="sub">少看垃圾，多看人话。</span></h1>
   <p class="lede">广告号、色情引流先标出；拉黑由你确认。</p>
-  <div class="ctas">
-    <a class="btn primary" data-install href="${BRAND.chromeWebStore}" target="_blank" rel="noopener" aria-label="从 Chrome Web Store 安装扩展">${ICON_CHROME}<span>从 Chrome 商店安装</span></a>
-    <a class="btn" href="/list" aria-label="看公开名单">${ICON_LIST}<span>看公开名单</span></a>
-    <a class="btn" href="${BRAND.repo}" aria-label="在 GitHub 上查看源码">${ICON_GH}<span>看源码</span></a>
+  <div class="store-badges">
+    <a class="store-badge chrome" data-install href="${BRAND.chromeWebStore}" target="_blank" rel="noopener" aria-label="从 Chrome 网上应用店安装扩展">
+      <img class="store-logo" src="/store-chrome.svg" alt="" width="34" height="34" loading="eager">
+      <span class="store-text">
+        <span class="store-sub">Chrome · Edge · Brave · Arc</span>
+        <span class="store-name">Chrome 网上应用店<span class="store-go" aria-hidden="true">${ICON_ARROW}</span></span>
+      </span>
+    </a>
+    <a class="store-badge firefox" href="${BRAND.firefoxAddons}" target="_blank" rel="noopener" aria-label="从 Firefox 附加组件商店安装扩展">
+      <img class="store-logo" src="/store-firefox.svg" alt="" width="34" height="34" loading="eager">
+      <span class="store-text">
+        <span class="store-sub">Firefox 浏览器</span>
+        <span class="store-name">Firefox 附加组件<span class="store-go" aria-hidden="true">${ICON_ARROW}</span></span>
+      </span>
+    </a>
+  </div>
+  <div class="ctas ctas-minor">
+    <a class="btn ghost" href="/list" aria-label="看公开名单">${ICON_LIST}<span>看公开名单</span></a>
+    <a class="btn ghost" href="${BRAND.repo}" aria-label="在 GitHub 上查看源码">${ICON_GH}<span>看源码</span></a>
   </div>
   <p class="meta">
-    <span>已上架 Chrome Web Store</span><span class="dot" aria-hidden="true"></span>
+    <span>已上架 Chrome / Firefox</span><span class="dot" aria-hidden="true"></span>
     <span>手动拉黑</span><span class="dot" aria-hidden="true"></span>
     <span>不存身份</span><span class="dot" aria-hidden="true"></span>
     <span>开源</span>
   </p>
   <details class="install-alt">
-    <summary>用 Edge / Brave / Arc，或想跑开发版？</summary>
+    <summary>想跑开发版，或从源码加载？</summary>
     <ol>
       <li>从 <a href="${LINKS.RELEASE_URL}" target="_blank" rel="noopener">GitHub Release</a> 下载最新 <code>.zip</code> 并解压</li>
-      <li>打开 <code>chrome://extensions</code>，开启「开发者模式」</li>
-      <li>点「加载已解压的扩展程序」</li>
+      <li><strong>Chromium 内核</strong>（Chrome / Edge / Brave / Arc）：打开 <code>chrome://extensions</code> → 开启「开发者模式」→「加载已解压的扩展程序」</li>
+      <li><strong>Firefox</strong>：打开 <code>about:debugging</code> → 「此 Firefox」→「临时加载附加组件」，选择解压目录里的 <code>manifest.json</code></li>
       <li>打开 x.com 就能用</li>
     </ol>
   </details>
@@ -511,9 +526,10 @@ const RISK_MODAL_JS = `
     setTimeout(function(){modal.hidden=true},220);
     try{lastFocus&&lastFocus.focus&&lastFocus.focus()}catch(e){}
   }
-  // Intercept any link to the Chrome Web Store (skip the modal's own button).
+  // Intercept any jump to an extension store — Chrome Web Store or Firefox
+  // AMO (skip the modal's own button, which carries the resolved href).
   document.addEventListener('click',function(e){
-    var a=e.target.closest&&e.target.closest('a[href*="chromewebstore"]');
+    var a=e.target.closest&&e.target.closest('a[href*="chromewebstore"],a[href*="addons.mozilla"]');
     if(!a||a.id==='riskModalGo')return;
     if(acked())return;            // already seen — let it through
     e.preventDefault();

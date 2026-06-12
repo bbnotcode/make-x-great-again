@@ -8,11 +8,12 @@
 
 <p align="center">
   <b>少看垃圾，多看人话。</b><br>
-  你照常刷 X，社区共建的公开黑名单帮你把广告号和色情 bot 标出来 · Chrome 扩展 · AGPL-3.0 开源
+  你照常刷 X，社区共建的公开黑名单帮你把广告号和色情 bot 标出来 · Chrome / Firefox 扩展 · AGPL-3.0 开源
 </p>
 
 <p align="center">
   <a href="https://chromewebstore.google.com/detail/make-x-great-again/aeoldnecphbkkckeedfgfcdcekkljdea"><img src="https://img.shields.io/chrome-web-store/v/aeoldnecphbkkckeedfgfcdcekkljdea?style=flat-square&color=4285F4&label=chrome%20web%20store&logo=googlechrome&logoColor=white" alt="Chrome Web Store"></a>
+  <a href="https://addons.mozilla.org/firefox/addon/make-x-great-again/"><img src="https://img.shields.io/amo/v/make-x-great-again?style=flat-square&color=FF7139&label=firefox%20add-ons&logo=firefoxbrowser&logoColor=white" alt="Firefox Add-ons"></a>
   <a href="https://github.com/foru17/make-x-great-again/blob/main/LICENSE"><img src="https://img.shields.io/github/license/foru17/make-x-great-again?style=flat-square&color=green" alt="License: AGPL-3.0"></a>
   <a href="https://github.com/foru17/make-x-great-again/releases/latest"><img src="https://img.shields.io/github/v/release/foru17/make-x-great-again?style=flat-square&color=blue&include_prereleases&label=release" alt="Release"></a>
   <a href="https://github.com/foru17/make-x-great-again/stargazers"><img src="https://img.shields.io/github/stars/foru17/make-x-great-again?style=flat-square&color=yellow" alt="Stars"></a>
@@ -22,6 +23,7 @@
 
 <p align="center">
   <a href="https://chromewebstore.google.com/detail/make-x-great-again/aeoldnecphbkkckeedfgfcdcekkljdea">🟦 从 Chrome 商店安装</a> ·
+  <a href="https://addons.mozilla.org/firefox/addon/make-x-great-again/">🦊 从 Firefox 商店安装</a> ·
   <a href="https://x.zuoluo.tv">🌐 官网门户</a> ·
   <a href="https://x.zuoluo.tv/list">📋 公共名单</a> ·
   <a href="https://github.com/foru17/make-x-great-again/releases/latest">📦 GitHub Release</a> ·
@@ -83,19 +85,27 @@ X 现在的问题，大家都知道：
 
 ### 普通用户
 
-**推荐**：直接从 Chrome Web Store 安装。
+**推荐**：直接从官方商店安装，会自动更新。
 
-👉 [chromewebstore.google.com/detail/make-x-great-again/aeoldnecphbkkckeedfgfcdcekkljdea](https://chromewebstore.google.com/detail/make-x-great-again/aeoldnecphbkkckeedfgfcdcekkljdea)
+- 🟦 **Chrome / Edge / Brave / Arc**：[Chrome 网上应用店](https://chromewebstore.google.com/detail/make-x-great-again/aeoldnecphbkkckeedfgfcdcekkljdea)
+- 🦊 **Firefox**：[Firefox 附加组件商店](https://addons.mozilla.org/firefox/addon/make-x-great-again/)
 
 装好后，访问 x.com 扩展会自动开始工作。
 
 <details>
-<summary>用 Edge / Brave / Arc，或想跑开发版？</summary>
+<summary>想跑开发版，或从源码加载？</summary>
 
 ```bash
 # 1. 从 https://github.com/foru17/make-x-great-again/releases/latest 下载最新 .zip 并解压
+
+# Chromium 内核（Chrome / Edge / Brave / Arc）
 # 2. chrome://extensions → 开启「开发者模式」
 # 3. 「加载已解压的扩展程序」→ 选择解压目录
+
+# Firefox
+# 2. about:debugging → 「此 Firefox」→「临时加载附加组件」
+# 3. 选择解压目录里的 manifest.json
+
 # 4. 访问 x.com，扩展自动开始工作
 ```
 
@@ -112,7 +122,8 @@ pnpm typecheck && pnpm test && pnpm lint
 
 # 2. 扩展（WXT + React 19 + Tailwind v4）
 cd extension
-pnpm dev         # 监听 + 自动重载，把 .output/chrome-mv3 加进 Chrome 即可
+pnpm dev          # Chromium：监听 + 自动重载，把 .output/chrome-mv3 加进 Chrome 即可
+pnpm dev:firefox  # Firefox：同上，产物在 .output/firefox-mv3
 
 # 3. 边缘服务（Cloudflare Worker + D1 + Hono）
 cd services/edge
@@ -228,7 +239,7 @@ CONTRIBUTING.md       贡献指南
 
 | 层 | 选型 | 备注 |
 |---|---|---|
-| 扩展 | WXT 0.20 · React 19 · Tailwind v4 · Shadow DOM | content-script 用 Shadow DOM 隔离样式，不污染 X；默认模式零网络请求，名单随包内置；可选 X 静音/拉黑用 x.com 可选权限调 X 自家接口 |
+| 扩展 | WXT 0.20 · React 19 · Tailwind v4 · Shadow DOM · Chrome + Firefox MV3 | content-script 用 Shadow DOM 隔离样式，不污染 X；同一套代码出 Chrome / Firefox 两个产物；默认模式零网络请求，名单随包内置；可选 X 静音/拉黑用 x.com 可选权限调 X 自家接口 |
 | 边缘 | Cloudflare Worker · Hono · D1 SQLite · R2 | 单 region，custom domain `x.zuoluo.tv` |
 | LLM | 任何 OpenAI 兼容 `/chat/completions` | 仅靠 system prompt 约束，不微调；只在服务端策展管线使用 |
 | 身份 | GitHub token 验证（仅网站端举报/共建流程） | 扩展无任何登录；X 静音/拉黑复用你浏览器已有的 X 登录态，不读取也不上传该凭据；服务端只存加盐 HMAC 指纹 |

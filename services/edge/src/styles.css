@@ -727,6 +727,36 @@ input::placeholder{color:var(--fg-4)}
 .hero .lede{font-size:17px;color:var(--fg-2);max-width:560px;margin-bottom:28px;
   line-height:1.65;letter-spacing:-.005em}
 .hero .ctas{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px}
+/* Store badges — App-Store-style install buttons. The colorful browser logo
+   is the eye magnet (the rest of the page stays monochrome); two lines of
+   type give the store name + which browsers it covers. These are the hero's
+   primary CTA, so they sit above the quieter ghost links. */
+.store-badges{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:14px}
+.store-badge{display:inline-flex;align-items:center;gap:13px;padding:11px 18px 11px 14px;
+  border-radius:var(--r-lg);border:1px solid var(--border-strong);background:var(--surface);
+  box-shadow:var(--shadow-elev);text-decoration:none;color:var(--fg);min-width:212px;
+  transition:transform .12s ease,box-shadow .16s ease,border-color .16s ease}
+.store-badge:hover{transform:translateY(-2px);border-color:var(--fg-4);
+  box-shadow:0 4px 14px -4px rgba(0,0,0,.3),0 16px 34px -14px rgba(0,0,0,.4)}
+.store-badge:active{transform:translateY(0)}
+.store-badge .store-logo{width:34px;height:34px;flex-shrink:0;display:block}
+.store-badge .store-text{display:flex;flex-direction:column;gap:2px;min-width:0}
+.store-badge .store-sub{font-size:11px;font-weight:500;color:var(--fg-3);letter-spacing:.01em;
+  text-transform:none;line-height:1.1}
+.store-badge .store-name{font-size:16px;font-weight:650;letter-spacing:-.01em;line-height:1.15;
+  display:inline-flex;align-items:center;gap:3px}
+.store-badge .store-go{width:14px;height:14px;display:inline-flex;color:var(--fg-3);
+  transition:transform .16s ease,color .16s ease}
+.store-badge .store-go svg{width:100%;height:100%}
+.store-badge:hover .store-go{transform:translateX(3px);color:var(--fg)}
+/* Firefox badge gets a faint warm sheen so the two don't read as identical
+   gray pills; Chrome leans on its own multi-color disc. */
+.store-badge.firefox{background:linear-gradient(180deg,color-mix(in srgb,var(--warn) 5%,var(--surface)),var(--surface))}
+/* Secondary actions under the badges — quiet, text-led, no fill. */
+.hero .ctas-minor{gap:8px;margin-bottom:18px}
+.btn.ghost{background:transparent;border-color:transparent;box-shadow:none;color:var(--fg-2);
+  padding:7px 10px}
+.btn.ghost:hover{background:var(--card-hi);border-color:transparent;color:var(--fg)}
 .hero .meta{font-size:12.5px;color:var(--fg-4);display:flex;flex-wrap:wrap;
   gap:6px 14px;align-items:center}
 .hero .meta .dot{width:3px;height:3px;border-radius:50%;background:var(--fg-4);opacity:.5}
@@ -1056,9 +1086,10 @@ section.block h2{font-size:11.5px;letter-spacing:.18em;text-transform:uppercase;
   .hero-row{gap:18px;padding:34px 0 24px}
   .hero .eyebrow{margin-bottom:20px}
   .hero h1{font-size:34px}
-  .hero .ctas{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-  .hero .ctas .btn{min-height:42px;padding:10px 10px}
-  .hero .ctas .btn.primary{grid-column:1/-1}
+  .store-badges{flex-direction:column;gap:10px}
+  .store-badge{width:100%;min-width:0;padding:11px 16px}
+  .hero .ctas-minor{display:flex;gap:8px}
+  .hero .ctas-minor .btn{flex:1;min-height:40px;justify-content:center}
   .hero .meta{font-size:12px}
   .hero-side{grid-template-columns:72px minmax(0,1fr);gap:10px}
   .hero-mascot{width:72px}
