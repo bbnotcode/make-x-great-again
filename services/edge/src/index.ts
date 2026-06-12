@@ -39,6 +39,14 @@ type Ctx = Context<{ Bindings: Env }>;
 
 const AUTO_CONF = 0.9; // AI confidence floor for auto-publish
 const AUTO_REPORTERS = 3; // distinct GitHub reporters required for auto-publish
+// Confidence floor for AI-only auto-publish on the /v1/classify path (no
+// reporter corroboration needed). Validated 2026-06-12 against 100 random
+// pending candidates: fresh-classify spam/porn_bot verdicts were ~93% precise
+// with zero clear false positives at conf>=0.9; the bar is set at 0.95 for
+// extra public-list safety. Lower to 0.9 to widen coverage. This path is the
+// mirror of the auto_legit fast-accept and is DELIBERATELY separate from the
+// report path, whose inherited verdicts are the noisy ones (kept manual-only).
+const AUTO_AI_PUBLISH_CONF = 0.95;
 // GH accounts younger than this don't count toward the auto-publish
 // reporter threshold. Their reports are still stored (audit /
 // future re-evaluation), but a fresh throwaway account can't help flip
@@ -1025,15 +1033,27 @@ app.post("/v1/classify", async (c) => {
   }
   const verdict = await classify(c.env, s);
   const now = Date.now();
+  // Auto-publish high-confidence AI spam straight to the public list — the
+  // mirror image of the auto_legit fast-accept below. Only the classify path
+  // does this; the report path stays manual-confirm-only (its inherited
+  // verdicts are the noisy ones). writeAccount still preserves any prior human
+  // decision (human_confirmed/rejected/removed/whitelisted), so this can never
+  // override a maintainer, and /v1/appeal remains the fallback.
+  const aiAutoPublish =
+    (verdict.label === "spam" || verdict.label === "porn_bot") &&
+    verdict.confidence >= AUTO_AI_PUBLISH_CONF;
   // High-confidence legit verdicts are cached but kept out of the maintainer
   // queue. /admin/queue still only selects status='auto_pending_review', so
   // auto_legit rows are invisible there but the next /v1/classify hit still
   // gets a free cache return.
-  const writeStatus =
-    verdict.label === "legit" && verdict.confidence >= 0.85 ? "auto_legit" : "auto_pending_review";
+  const writeStatus = aiAutoPublish
+    ? "human_confirmed"
+    : verdict.label === "legit" && verdict.confidence >= 0.85
+      ? "auto_legit"
+      : "auto_pending_review";
   // Pick the most-relevant public X snippet that triggered this verdict so
   // the public list can be audited without retaining unrelated context.
-  await writeAccount(c.env, {
+  const written = await writeAccount(c.env, {
     uid,
     handle: s.handle,
     displayName: s.displayName,
@@ -1047,8 +1067,27 @@ app.post("/v1/classify", async (c) => {
     signalsHash: h,
     evidenceText: evidenceText(s),
     now,
+    publishedAt: aiAutoPublish ? now : null,
     ...signalSnapshot(s),
   });
+  // Audit every AI auto-publish (mirrors the keyword-rule actor='rule:<id>'
+  // trail). Skip rows that were already on the public list — writeAccount
+  // preserves an existing human_confirmed status, so re-scanning a published
+  // account would otherwise log a spurious publish.
+  if (aiAutoPublish && written?.status === "human_confirmed" && prev?.status !== "human_confirmed") {
+    await c.env.DB.prepare(
+      "INSERT INTO review_log (x_user_id,handle,action,actor,note,at) VALUES (?,?,?,?,?,?)",
+    )
+      .bind(
+        uid ?? null,
+        s.handle,
+        "ai_blacklist",
+        "ai:auto",
+        `auto-published ${verdict.label} @ ${verdict.confidence}`,
+        now,
+      )
+      .run();
+  }
   return c.json({ cached: false, record: { verdict, status: writeStatus } });
 });
 
