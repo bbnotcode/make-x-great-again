@@ -196,9 +196,24 @@ const SCRIPT = String.raw`
         var v=variantClass(opts.okVariant);
         var fields=(opts.fields||[]);
         var fHtml=fields.map(function(f){
+          var val=f.value!=null?String(f.value):'';
+          var ctrl;
+          if(f.type==='select'){
+            var opts2=(f.options||[]).map(function(o){
+              var ov=(o&&typeof o==='object')?o.value:o;
+              var ol=(o&&typeof o==='object')?(o.label!=null?o.label:o.value):o;
+              return '<option value="'+E(ov)+'"'+(String(ov)===val?' selected':'')+'>'+E(ol)+'</option>';
+            }).join('');
+            ctrl='<select id="mxf_'+f.name+'" name="'+f.name+'"'+(f.required?' required':'')+'>'+opts2+'</select>';
+          } else if(f.type==='textarea'){
+            ctrl='<textarea id="mxf_'+f.name+'" name="'+f.name+'" rows="'+(f.rows||3)+'"'
+              +' placeholder="'+E(f.placeholder||'')+'"'+(f.required?' required':'')+'>'+E(val)+'</textarea>';
+          } else {
+            ctrl='<input id="mxf_'+f.name+'" name="'+f.name+'" type="'+E(f.type||'text')+'"'
+              +' value="'+E(val)+'" placeholder="'+E(f.placeholder||'')+'" autocomplete="off"'+(f.required?' required':'')+'>';
+          }
           return '<div class="fld"><label for="mxf_'+f.name+'">'+E(f.label||f.name)+(f.required?'<span class="req">*</span>':'')+'</label>'
-            +'<input id="mxf_'+f.name+'" name="'+f.name+'" type="'+E(f.type||'text')+'"'
-            +' placeholder="'+E(f.placeholder||'')+'" autocomplete="off"'+(f.required?' required':'')+'>'
+            +ctrl
             +(f.hint?'<div class="hint">'+E(f.hint)+'</div>':'')
           +'</div>';
         }).join('');
@@ -257,6 +272,24 @@ const SCRIPT = String.raw`
     return '<button class="theme-btn" type="button" onclick="window.__mxgaTheme()" aria-label="切换亮/暗主题" title="auto → light → dark">'
       + ${JSON.stringify(ICON_AUTO)} + ${JSON.stringify(ICON_LIGHT)} + ${JSON.stringify(ICON_DARK)}
       + '</button>';
+  }
+  // Unified per-tab header. Every tab opens with the same anatomy so the
+  // console reads as one product: title + count on the left, a one-line
+  // description under it, and the tab's primary action(s) pinned right.
+  //   o.title   — escaped plain text (may include a leading emoji)
+  //   o.count   — already-formatted string/number, or null to omit the pill
+  //   o.desc    — trusted inline HTML (links / <b>), callers control it
+  //   o.actions — trusted inline HTML (buttons), or '' for none
+  function viewHead(o){
+    return '<div class="view-head">'
+      +'<div class="vh-main">'
+        +'<div class="vh-title">'+E(o.title||'')
+          +(o.count!=null?'<span class="vh-count">'+o.count+'</span>':'')
+        +'</div>'
+        +(o.desc?'<div class="vh-desc">'+o.desc+'</div>':'')
+      +'</div>'
+      +(o.actions?'<div class="vh-actions">'+o.actions+'</div>':'')
+    +'</div>';
   }
 
   function renderShell(){
@@ -370,8 +403,14 @@ const SCRIPT = String.raw`
     var anyExplicit=qFilters.uid||qFilters.handle||qFilters.evidence||qFilters.display_name||qFilters.reasons;
     var advOpen=!!anyExplicit;
     var nActive=activeFilterCount();
+    var qTotal=(stats&&stats.queue!=null)?fmtN(stats.queue):(queue.length+(queueCursor?'+':''));
     v.innerHTML=
-      '<div class="search-bar">'
+      viewHead({
+        title:'待审队列',
+        count:qTotal,
+        desc:'AI 与举报汇入的待裁决账号。<b style="color:var(--danger)">拉黑</b> → 进公榜 · <b style="color:var(--ok)">白名单</b> → 永不再扫 · 驳回 / 移除 → 不公开。点击列头可排序。'
+      })
+      +'<div class="search-bar">'
         +'<form class="filter-form queue" id="qForm">'
           +'<label class="filter-field"><span>搜索</span><input id="qSearch" class="search-input" type="search" autocomplete="off" placeholder="handle / uid / 推文内容 / 理由" value="'+E(qFilters.q||'')+'"></label>'
           +'<div class="filter-actions">'
@@ -403,7 +442,6 @@ const SCRIPT = String.raw`
           +chip('uncertain','不确定')
           +chip('legit','正常账号')
         +'</div>'
-        +'<div class="r"><label class="status">点击列头排序 ↕</label></div>'
       +'</div>'
       +'<div class="batch" id="batch">'
         +'<label class="meta" title="全选当前过滤范围。Shift+点 可在两次勾选间一次性勾选范围">'
@@ -798,13 +836,13 @@ const SCRIPT = String.raw`
         }).join('')
       : '<div class="empty">还没有规则。点右上角「+ 新增规则」加第一条 —— 比如 pattern=「约炮」field=「任一字段」action=「拉黑」就能把绝大多数色情号在 LLM 前直接拦下。</div>';
     v.innerHTML=
-      '<div class="toolbar">'
-        +'<div class="status">'+E(hint)+'</div>'
-        +'<div class="r">'
-          +'<button class="btn sm" onclick="window.__xss.rulesApplyAll()">扫所有规则到队列</button>'
+      viewHead({
+        title:'关键字规则',
+        count:fmtN(rulesList.length),
+        desc:E(hint),
+        actions:'<button class="btn sm" onclick="window.__xss.rulesApplyAll()">扫所有规则到队列</button>'
           +'<button class="btn sm primary" onclick="window.__xss.ruleAdd()">+ 新增规则</button>'
-        +'</div>'
-      +'</div>'
+      })
       +'<div class="rules-head">'
         +'<span>启用</span><span>规则</span><span>命中</span><span>最近</span><span></span>'
       +'</div>'
@@ -919,11 +957,27 @@ const SCRIPT = String.raw`
       title:'新增关键字规则',
       body:'pattern 为字面子串，大小写不敏感。命中 → 跳过 LLM，按 action 落地。',
       fields:[
-        {name:'pattern',label:'关键字 / 子串',required:true,placeholder:'如：约炮、@target_dispatch、电报 @',hint:'匹配前两边 lower()'},
-        {name:'field',label:'匹配字段（handle / display_name / bio / tweet / any）',required:true,placeholder:'any'},
-        {name:'action',label:'命中动作（blacklist / whitelist / reject）',placeholder:'blacklist',hint:'默认 blacklist：直接进公榜'},
-        {name:'verdict_label',label:'判定标签（spam / porn_bot / likely_spam / uncertain / legit）',placeholder:'spam'},
-        {name:'note',label:'备注（仅你看见）',placeholder:'比如：色情广告 tg 链路特征'}
+        {name:'pattern',label:'关键字 / 子串',required:true,placeholder:'如：约炮、@target_dispatch、电报 @',hint:'匹配前两边做 lower()，大小写不敏感'},
+        {name:'field',label:'匹配字段',type:'select',value:'any',options:[
+          {value:'any',label:'任一字段'},
+          {value:'handle',label:'Handle'},
+          {value:'display_name',label:'显示名'},
+          {value:'bio',label:'简介 Bio'},
+          {value:'tweet',label:'推文内容'}
+        ]},
+        {name:'action',label:'命中动作',type:'select',value:'blacklist',options:[
+          {value:'blacklist',label:'拉黑 — 直接进公榜'},
+          {value:'whitelist',label:'白名单 — 永不再扫'},
+          {value:'reject',label:'驳回 — 不公开'}
+        ]},
+        {name:'verdict_label',label:'判定标签',type:'select',value:'spam',options:[
+          {value:'spam',label:'垃圾营销'},
+          {value:'porn_bot',label:'色情广告号'},
+          {value:'likely_spam',label:'疑似垃圾'},
+          {value:'uncertain',label:'不确定'},
+          {value:'legit',label:'正常账号'}
+        ]},
+        {name:'note',label:'备注（仅你可见）',type:'textarea',placeholder:'比如：色情广告 tg 链路特征'}
       ],
       okLabel:'创建',
       okVariant:'primary'
@@ -1032,16 +1086,15 @@ const SCRIPT = String.raw`
       ? {target:'whitelist',label:'确认加白',cls:'ok'}
       : {target:'blacklist',label:'确认拉黑',cls:'blacklist'};
     v.innerHTML=
-      '<div class="ahdr">'
-        +'<div class="ahdr-l">🤖 agent '+E(bucketZh)+' <span class="ahdr-n" id="agN">'+fmtN(agentRows.length)+(agentCursor?'+':'')+'</span></div>'
-        +'<div class="ahdr-r"><span class="hint">'
-          +(bucket==='pending'
-            ? 'agent 看过但拿不准的条目。可能信号薄弱、可能账号已被 X 封、可能你需要亲眼看一眼。'
-            : bucket==='blacklist'
-              ? 'agent 给出高置信 spam 判定，尚未公开。点 "确认拉黑" 升级到公榜（公开拉黑）。'
-              : 'agent 给出高置信 legit 判定，尚未进白名单。点 "确认加白" 才会真正入官方白名单。')
-        +'</span></div>'
-      +'</div>'
+      viewHead({
+        title:'🤖 agent · '+bucketZh,
+        count:fmtN(agentRows.length)+(agentCursor?'+':''),
+        desc:(bucket==='pending'
+          ? 'agent 看过但拿不准的条目。可能信号薄弱、可能账号已被 X 封、可能你需要亲眼看一眼。'
+          : bucket==='blacklist'
+            ? 'agent 给出高置信 spam 判定，尚未公开。点「确认拉黑」升级到公榜（公开拉黑）。'
+            : 'agent 给出高置信 legit 判定，尚未进白名单。点「确认加白」才会真正入官方白名单。')
+      })
       +'<div class="batch" id="agbatch">'
         +'<label class="meta" title="全选已加载范围。Shift+点 可在两次勾选间一次性勾选范围">'
           +'<input type="checkbox" id="selAllA" aria-label="全选已加载范围">'
@@ -1255,10 +1308,15 @@ const SCRIPT = String.raw`
   }
   function loadLog(more){
     var v=$('view');
-    if(!more){v.innerHTML='<div class="log" id="log">'
+    if(!more){v.innerHTML=
+      viewHead({
+        title:'审计日志',
+        desc:'每一次加入、移除、白名单、驳回都留痕。完整数据每 6h 镜像到仓库 <a href="'+GH+'/tree/main/data" target="_blank">data/</a>，git history 可审计。'
+      })
+      +'<div class="log" id="log">'
       +'<div class="lrow head"><span>时间</span><span>动作</span><span>角色</span><span>账号</span><span>备注</span></div>'
       +'</div>'
-      +'<div style="text-align:center;padding:18px"><button class="btn sm" id="lm">加载更多</button></div>';
+      +'<div class="more-foot"><button class="btn sm" id="lm">加载更多</button></div>';
       logCursor=null;$('lm').addEventListener('click',function(){loadLog(true)})}
     setStatus('加载中…');
     api('/v1/admin/log?limit=50'+(logCursor?'&before='+logCursor:'')).then(function(r){
@@ -1307,13 +1365,13 @@ const SCRIPT = String.raw`
     var totalLbl=(stats&&stats.whitelist!=null)?fmtN(stats.whitelist):(whitelist.length+(wlCursor?'+':''));
     var searching=!!wlSearch;
     v.innerHTML=
-      '<div class="toolbar">'
-        +'<div class="status">共 <b style="color:var(--fg)">'+totalLbl+'</b> 个白名单账号 · 它们不会再被 AI 扫描，也不接受举报'
-          +(searching?' · 当前搜索 <b style="color:var(--fg)">'+E(wlSearch)+'</b>':'')+'</div>'
-        +'<div class="r">'
-          +'<button class="btn sm primary" onclick="window.__xss.wlAdd()">+ 加入白名单</button>'
-        +'</div>'
-      +'</div>'
+      viewHead({
+        title:'白名单',
+        count:totalLbl,
+        desc:'白名单账号不会再被 AI 扫描，被举报也会被吞掉。'
+          +(searching?' · 当前搜索 <b>'+E(wlSearch)+'</b>':''),
+        actions:'<button class="btn sm primary" onclick="window.__xss.wlAdd()">+ 加入白名单</button>'
+      })
       +'<div class="search-bar">'
         +'<form class="filter-form" id="wlForm">'
           +'<label class="filter-field"><span>搜索</span><input id="wlSearch" class="search-input" type="search" value="'+E(wlSearch)+'" placeholder="handle / uid / 显示名 / 备注"></label>'
@@ -1482,10 +1540,12 @@ const SCRIPT = String.raw`
     var totalLbl=(stats&&stats.blacklist!=null)?fmtN(stats.blacklist):(blacklist.length+(blCursor?'+':''));
     var searching=!!blSearch;
     v.innerHTML=
-      '<div class="toolbar">'
-        +'<div class="status">共 <b style="color:var(--fg)">'+totalLbl+'</b> 个已公榜账号 · 在 <a href="/list" target="_blank">/list</a> 公开可见 · 误判直接 → 白名单 / 驳回'
-          +(searching?' · 当前搜索 <b style="color:var(--fg)">'+E(blSearch)+'</b>':'')+'</div>'
-      +'</div>'
+      viewHead({
+        title:'黑名单',
+        count:totalLbl,
+        desc:'已公榜账号，在 <a href="/list" target="_blank">/list</a> 公开可见。误判可直接 → <b>白名单</b> 或 <b>驳回</b>。'
+          +(searching?' · 当前搜索 <b>'+E(blSearch)+'</b>':'')
+      })
       +'<div class="search-bar">'
         +'<form class="filter-form" id="blForm">'
           +'<label class="filter-field"><span>搜索</span><input id="blSearch" class="search-input" type="search" value="'+E(blSearch)+'" placeholder="handle / uid / 显示名 / 证据 / 理由"></label>'
