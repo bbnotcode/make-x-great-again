@@ -2721,16 +2721,9 @@ app.get("/list", (c) => {
 // Standalone admin console (separate from the consumer extension). The
 // ADMIN_TOKEN is entered here by the maintainer and kept in localStorage —
 // it never ships in the public extension. Page is noindex,nofollow.
-app.get("/admin", (c) => {
-  pageHeaders(c, 0);
-  c.header("Cache-Control", "no-store");
-  return c.html(adminHtml());
-});
-
-// Serve the React/shadcn SPA shell (static/app/index.html). During the
-// migration this lives at /admin.next so the working /admin stays untouched
-// until the React console reaches parity; then /admin flips here and the
-// legacy renderer is removed.
+// Serve the React/shadcn SPA shell (static/app/index.html). The bundle under
+// /app/* is served straight from the assets binding; this route hands back the
+// shell with admin-appropriate headers so React can boot.
 async function serveAppShell(c: Context): Promise<Response> {
   const res = await c.env.ASSETS.fetch(new URL("/app/index.html", c.req.url));
   const html = await res.text();
@@ -2741,7 +2734,16 @@ async function serveAppShell(c: Context): Promise<Response> {
   c.header("X-Content-Type-Options", "nosniff");
   return c.body(html);
 }
-app.get("/admin.next", (c) => serveAppShell(c));
+app.get("/admin", (c) => serveAppShell(c));
+
+// Legacy string-rendered console, kept as a fallback during the React rollout.
+// Remove once the new /admin is proven in production.
+app.get("/admin.legacy", (c) => {
+  pageHeaders(c, 0);
+  c.header("Cache-Control", "no-store");
+  c.header("X-Robots-Tag", "noindex, nofollow");
+  return c.html(adminHtml());
+});
 
 // Scheduled mirror of the curated whitelist/blacklist into the upstream
 // GitHub repo as data/whitelist/v1.json and data/blacklist/v1.json.
