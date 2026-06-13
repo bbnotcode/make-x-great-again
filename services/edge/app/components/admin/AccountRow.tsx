@@ -151,7 +151,6 @@ export function AccountRow({
             title={evidence}
             className="mt-1.5 line-clamp-2 max-w-2xl rounded-md border-l-2 border-border bg-muted/40 px-2.5 py-1.5 text-[12px] italic leading-relaxed text-foreground/80"
           >
-            <span className="mr-1 select-none font-medium not-italic text-muted-foreground">发言</span>
             『{evidence}』
           </p>
         )}
