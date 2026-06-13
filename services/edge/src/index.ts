@@ -1,7 +1,8 @@
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
-import { ANALYTICS_CSP } from "./analytics";
+import { ANALYTICS_CSP, googleAnalyticsHead } from "./analytics";
+import { BRAND } from "./brand";
 import { adminHtml } from "./pages/admin";
 import { landingHtml } from "./pages/landing";
 import { listHtml } from "./pages/list";
@@ -2706,38 +2707,65 @@ function pageHeaders(c: Ctx, cacheSeconds: number): void {
   c.header("Cache-Control", `public, max-age=${cacheSeconds}, s-maxage=${cacheSeconds * 2}`);
 }
 
-// Product landing — dark-glass marketing page, no PII, no external deps.
-app.get("/", (c) => {
-  pageHeaders(c, 60);
-  return c.html(landingHtml());
-});
+// All three pages are now the React/shadcn SPA (services/edge/app, built to
+// static/app/*). The Worker fetches the shell from the ASSETS binding and
+// injects a per-route <head> (title + crawler meta + analytics) before
+// returning it — crawlers see real OG tags even though the body is client
+// rendered. The legacy string renderers stay at *.legacy as a rollback.
+const OG_BASE = BRAND.edgeBase;
+function landingHead(): string {
+  return (
+    `<title>${BRAND.name} · ${BRAND.tagline}</title>` +
+    `<meta name="description" content="MXGA 是开源 X 扩展：标出广告号和色情引流号，拉黑由你确认。Chrome / Firefox 已上架。">` +
+    `<meta property="og:title" content="${BRAND.name} · ${BRAND.tagline}">` +
+    `<meta property="og:description" content="社区共建的公开黑名单，帮你把 X 上的广告号和色情 bot 标出来。">` +
+    `<meta property="og:type" content="website"><meta property="og:url" content="${OG_BASE}/">` +
+    `<meta property="og:image" content="${OG_BASE}/og.png">` +
+    `<meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="${OG_BASE}/og.png">` +
+    googleAnalyticsHead()
+  );
+}
+function listHead(): string {
+  return (
+    `<title>公开名单 · ${BRAND.acronym}</title>` +
+    `<meta name="robots" content="noindex,follow">` +
+    `<meta name="description" content="MXGA 已确认的垃圾号公开名单 · AI 初筛，维护者复核。">` +
+    googleAnalyticsHead()
+  );
+}
 
-// Public spam board — latest 100 human_confirmed accounts (polls /v1/list).
-app.get("/list", (c) => {
-  pageHeaders(c, 30);
-  return c.html(listHtml());
-});
-
-// Standalone admin console (separate from the consumer extension). The
-// ADMIN_TOKEN is entered here by the maintainer and kept in localStorage —
-// it never ships in the public extension. Page is noindex,nofollow.
-// Serve the React/shadcn SPA shell (static/app/index.html). The bundle under
-// /app/* is served straight from the assets binding; this route hands back the
-// shell with admin-appropriate headers so React can boot.
-async function serveAppShell(c: Context): Promise<Response> {
+/** Fetch the built SPA shell and splice a per-route <head> into it. */
+async function serveAppShell(
+  c: Context,
+  opts: { head?: string; robots?: string; cache: string },
+): Promise<Response> {
   const res = await c.env.ASSETS.fetch(new URL("/app/index.html", c.req.url));
-  const html = await res.text();
+  let html = await res.text();
+  if (opts.head) html = html.replace("<title>MXGA</title>", opts.head);
   c.header("Content-Type", "text/html; charset=utf-8");
-  c.header("Cache-Control", "no-store");
-  c.header("X-Robots-Tag", "noindex, nofollow");
+  c.header("Cache-Control", opts.cache);
+  if (opts.robots) c.header("X-Robots-Tag", opts.robots);
   c.header("Referrer-Policy", "no-referrer");
   c.header("X-Content-Type-Options", "nosniff");
   return c.body(html);
 }
-app.get("/admin", (c) => serveAppShell(c));
 
-// Legacy string-rendered console, kept as a fallback during the React rollout.
-// Remove once the new /admin is proven in production.
+app.get("/", (c) => serveAppShell(c, { head: landingHead(), cache: "public, max-age=60, s-maxage=120" }));
+app.get("/list", (c) =>
+  serveAppShell(c, { head: listHead(), robots: "noindex, follow", cache: "public, max-age=30, s-maxage=60" }),
+);
+app.get("/admin", (c) => serveAppShell(c, { robots: "noindex, nofollow", cache: "no-store" }));
+
+// Legacy string-rendered pages, kept as a rollback during the React rollout.
+// Remove (along with src/pages/*.ts + styles.css) once the SPA is proven.
+app.get("/index.legacy", (c) => {
+  pageHeaders(c, 60);
+  return c.html(landingHtml());
+});
+app.get("/list.legacy", (c) => {
+  pageHeaders(c, 30);
+  return c.html(listHtml());
+});
 app.get("/admin.legacy", (c) => {
   pageHeaders(c, 0);
   c.header("Cache-Control", "no-store");
