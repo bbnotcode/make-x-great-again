@@ -18,7 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { type Account, api, AuthError, type Item, rowKey } from "@/lib/adminApi";
-import { fmtN, verdictZh, VERDICTS } from "@/lib/format";
+import { ago, fmtN, verdictZh, VERDICTS } from "@/lib/format";
 import { runBatch } from "@/lib/runBatch";
 import { useSelection } from "@/lib/useSelection";
 import { cn } from "@/lib/utils";
@@ -279,6 +279,11 @@ export function QueueTab({ onAuth, onMutated }: { onAuth: () => void; onMutated:
                 onToggle={(shift) => sel.toggle(i, shift)}
                 confidence={Math.round((a.confidence || 0) * 100)}
                 reporters={a.reporters || 0}
+                subExtra={
+                  <span title={new Date(a.last_scored || a.published_at || 0).toLocaleString("zh-CN")}>
+                    · 入队 {ago(a.last_scored || a.published_at)}
+                  </span>
+                }
                 actions={
                   <>
                     <Button size="sm" variant="destructive" onClick={() => decide(a, "approve")}>
