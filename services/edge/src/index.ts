@@ -9,6 +9,10 @@ import { listHtml } from "./pages/list";
 interface Env {
   DB: D1Database;
   ARTIFACTS: R2Bucket;
+  // Static-assets binding (wrangler [assets]). Used to fetch the built React
+  // SPA shell (static/app/index.html) so the Worker can serve it for page
+  // routes while keeping ownership of /v1/* and per-route response headers.
+  ASSETS: Fetcher;
   // LLM provider config — ALL three are Worker secrets (NOT in wrangler.toml).
   // The provider URL + model name are treated as sensitive (so the project can
   // be open-sourced without doxxing the inference dependency); the API key
@@ -2722,6 +2726,22 @@ app.get("/admin", (c) => {
   c.header("Cache-Control", "no-store");
   return c.html(adminHtml());
 });
+
+// Serve the React/shadcn SPA shell (static/app/index.html). During the
+// migration this lives at /admin.next so the working /admin stays untouched
+// until the React console reaches parity; then /admin flips here and the
+// legacy renderer is removed.
+async function serveAppShell(c: Context): Promise<Response> {
+  const res = await c.env.ASSETS.fetch(new URL("/app/index.html", c.req.url));
+  const html = await res.text();
+  c.header("Content-Type", "text/html; charset=utf-8");
+  c.header("Cache-Control", "no-store");
+  c.header("X-Robots-Tag", "noindex, nofollow");
+  c.header("Referrer-Policy", "no-referrer");
+  c.header("X-Content-Type-Options", "nosniff");
+  return c.body(html);
+}
+app.get("/admin.next", (c) => serveAppShell(c));
 
 // Scheduled mirror of the curated whitelist/blacklist into the upstream
 // GitHub repo as data/whitelist/v1.json and data/blacklist/v1.json.

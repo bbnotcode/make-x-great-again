@@ -27,6 +27,9 @@ not_found_handling = "none"
 # Don't auto-redirect /foo → /foo/ on directory-like requests; we serve
 # images, not browseable subdirs.
 html_handling = "none"
+# Binding so the Worker can fetch the built React SPA shell (static/app/
+# index.html) and serve it for the page routes (/admin, later / and /list).
+binding = "ASSETS"
 
 # D1 — curation source of truth. Create with:
 #   npx wrangler d1 create xss-db
