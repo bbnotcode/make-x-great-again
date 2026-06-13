@@ -55,7 +55,9 @@ export interface Account {
   last_decided_at?: number;
   last_decided_by?: string;
   reasons?: string;
-  evidence?: string;
+  /** The X post / 发言 that triggered the verdict — shown in review rows so
+   *  the content itself can be judged for spam. */
+  evidence_text?: string;
   // agent staging fields
   agent_label?: string;
   agent_confidence?: number;
