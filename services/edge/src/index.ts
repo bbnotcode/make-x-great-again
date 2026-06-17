@@ -269,7 +269,12 @@ async function classify(env: Env, s: Signals): Promise<Verdict> {
     body: JSON.stringify({
       model: env.LLM_API_MODEL,
       temperature: 0,
-      max_tokens: 600,
+      // Reasoning models (e.g. deepseek-v4-pro) spend tokens on hidden
+      // reasoning that counts toward max_tokens; give headroom so the JSON
+      // answer is never truncated under high reasoning effort.
+      max_tokens: 2048,
+      thinking: { type: "enabled" },
+      reasoning_effort: "high",
       messages: [
         { role: "system", content: SYSTEM },
         { role: "user", content: userPrompt(s) },
