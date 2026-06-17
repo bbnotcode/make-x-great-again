@@ -66,6 +66,27 @@ const CLASSIFY_MAX_PER_WINDOW = 20;
 const APPEAL_MAX_PER_WINDOW = 5;
 const BLOOM_SIZE = 65_536; // 8 KB bit array
 const BLOOM_HASHES = 7;
+// Per-status freshness TTL gating LLM re-classification on /v1/classify.
+// The cache key (signals_hash) includes recentTweets, so it busts on every
+// new tweet — and the same spam account is seen by many viewers with slightly
+// different timelines. Without a TTL one account gets re-classified dozens of
+// times. An account that already has a verdict is reused (no LLM) until its
+// status' TTL lapses. Terminal/settled statuses (human/agent decisions) are
+// never re-scored: writeAccount preserves them anyway, so re-running the LLM
+// only burns tokens. An exact signals_hash match still returns cached for ANY
+// status regardless of these TTLs.
+const NEVER_RESCORE = Number.POSITIVE_INFINITY;
+const RESCORE_TTL_MS: Record<string, number> = {
+  human_confirmed: NEVER_RESCORE,
+  rejected: NEVER_RESCORE,
+  removed: NEVER_RESCORE,
+  whitelisted: NEVER_RESCORE, // also short-circuited earlier; here for safety
+  agent_whitelist: NEVER_RESCORE,
+  agent_blacklist: NEVER_RESCORE,
+  auto_legit: 30 * 86_400_000, // legit rarely flips; re-check monthly at most
+  auto_pending_review: 24 * 3_600_000, // still ambiguous — allow a daily re-look
+  agent_pending: 7 * 86_400_000,
+};
 const BLOOM_SHARD_SIZE = 500; // accounts per logical shard in the JSON artifact
 
 interface PublishedShardEntry {
@@ -433,6 +454,9 @@ interface AccountRow {
   model: string | null;
   signals_hash: string | null;
   status: string;
+  // Last time this row was (re)scored — used to gate LLM re-classification
+  // by a per-status freshness TTL (see RESCORE_TTL_MS).
+  last_scored: number;
   // Included so the write path can tell the caller "I matched by uid even
   // though your handle is new" (used by the rename-detection log line).
   handle: string;
@@ -453,7 +477,7 @@ async function findAccount(
   if (uid) {
     const byUid =
       (await env.DB.prepare(
-        `SELECT rowid, verdict_label, confidence, reasons, model, signals_hash, status, handle, x_user_id
+        `SELECT rowid, verdict_label, confidence, reasons, model, signals_hash, status, last_scored, handle, x_user_id
            FROM accounts
           WHERE x_user_id=?
           ORDER BY CASE WHEN status='whitelisted' THEN 0 ELSE 1 END,
@@ -473,7 +497,7 @@ async function findAccount(
   // Whitelisted wins; among the rest, matching uid wins over handle-only.
   return (
     (await env.DB.prepare(
-      `SELECT rowid, verdict_label, confidence, reasons, model, signals_hash, status, handle, x_user_id
+      `SELECT rowid, verdict_label, confidence, reasons, model, signals_hash, status, last_scored, handle, x_user_id
          FROM accounts
         WHERE lower(handle)=?
           AND (? IS NULL OR x_user_id IS NULL OR x_user_id=?)
@@ -975,19 +999,28 @@ app.post("/v1/classify", async (c) => {
       },
     });
   }
-  if (prev && prev.signals_hash === h) {
-    await updateAccountSignalSnapshot(c.env, prev.rowid, signalSnapshot(s));
-    return c.json({
-      cached: true,
-      record: {
-        verdict: {
-          label: prev.verdict_label,
-          confidence: prev.confidence,
-          reasons: JSON.parse(prev.reasons || "[]"),
+  // Reuse the existing verdict (no LLM) when either the signals are byte-for-byte
+  // unchanged, OR the account already has a verdict that's still fresh per its
+  // status TTL. The latter collapses the recentTweets-drift re-classification
+  // storm (same account, many viewers/times) that dominated LLM spend.
+  if (prev) {
+    const exact = prev.signals_hash === h;
+    const ttl = RESCORE_TTL_MS[prev.status];
+    const fresh = ttl !== undefined && Date.now() - prev.last_scored < ttl;
+    if (exact || fresh) {
+      await updateAccountSignalSnapshot(c.env, prev.rowid, signalSnapshot(s));
+      return c.json({
+        cached: true,
+        record: {
+          verdict: {
+            label: prev.verdict_label,
+            confidence: prev.confidence,
+            reasons: JSON.parse(prev.reasons || "[]"),
+          },
+          status: prev.status,
         },
-        status: prev.status,
-      },
-    });
+      });
+    }
   }
   // Fast-path: keyword rules. Match before spending an LLM call. A hit routes
   // the account straight to the rule's destination status (default 'blacklist'

@@ -36,6 +36,10 @@ interface Account {
   status: string;
   verdict_label: string;
   confidence: number;
+  signals_hash?: string | null;
+  last_scored?: number;
+  reasons?: string | null;
+  model?: string | null;
 }
 
 interface Report {
@@ -304,10 +308,19 @@ async function reporterFp(raw = "gh:42", salt = "test-report-salt"): Promise<str
   return `rpt:${hex.slice(0, 32)}`;
 }
 
+// Counts how many times the (mocked) LLM endpoint is hit, so reuse tests can
+// assert "no LLM call". Reset it at the top of each test that inspects it.
+let llmCalls = 0;
 globalThis.fetch = async (input: string | URL | Request) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   if (url === "https://api.github.com/user") {
     return Response.json({ id: 42, created_at: "2020-01-01T00:00:00Z" });
+  }
+  if (url.startsWith("https://llm.invalid")) {
+    llmCalls++;
+    return Response.json({
+      choices: [{ message: { content: '{"label":"spam","confidence":0.9,"reasons":["fresh"]}' } }],
+    });
   }
   return originalFetch(input);
 };
@@ -426,6 +439,63 @@ test("classify endpoint returns 400 on a malformed body (invalid handle charset)
     env(db),
   );
   assert.equal(res.status, 400);
+});
+
+function classifyRequest(recentTweets: string[]): Request {
+  return new Request("https://x.test/v1/classify", {
+    method: "POST",
+    headers: { authorization: "Bearer ok-token", "content-type": "application/json" },
+    body: JSON.stringify({ userId: "100", handle: "target", displayName: "T", recentTweets }),
+  });
+}
+
+test("classify reuses a fresh prior verdict on signal drift without calling the LLM", async () => {
+  const db = new MockDB();
+  // Already-decided legit account, scored just now. New tweets (different
+  // signals_hash) must NOT trigger a re-classification.
+  db.accounts = [
+    {
+      rowid: 1,
+      handle: "target",
+      x_user_id: "100",
+      status: "auto_legit",
+      verdict_label: "legit",
+      confidence: 0.92,
+      reasons: '["benign"]',
+      signals_hash: "stale-hash",
+      last_scored: Date.now(),
+    },
+  ];
+  llmCalls = 0;
+  const res = await worker.fetch(classifyRequest(["a brand new tweet that drifts the hash"]), env(db));
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as { cached?: boolean; record?: { verdict?: { label?: string } } };
+  assert.equal(body.cached, true);
+  assert.equal(body.record?.verdict?.label, "legit");
+  assert.equal(llmCalls, 0); // freshness TTL short-circuited the LLM
+});
+
+test("classify re-scores a stale prior verdict (TTL lapsed) via the LLM", async () => {
+  const db = new MockDB();
+  db.accounts = [
+    {
+      rowid: 1,
+      handle: "target",
+      x_user_id: "100",
+      status: "auto_legit",
+      verdict_label: "legit",
+      confidence: 0.92,
+      reasons: '["benign"]',
+      signals_hash: "stale-hash",
+      last_scored: Date.now() - 40 * 86_400_000, // older than the 30d auto_legit TTL
+    },
+  ];
+  llmCalls = 0;
+  const res = await worker.fetch(classifyRequest(["promo spam now"]), env(db));
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as { cached?: boolean };
+  assert.equal(body.cached, false);
+  assert.equal(llmCalls, 1); // TTL lapsed → fresh classification
 });
 
 test("report endpoint returns 400 on a malformed body instead of 500", async () => {
