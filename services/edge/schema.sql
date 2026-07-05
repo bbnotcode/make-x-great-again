@@ -81,6 +81,8 @@ CREATE TABLE IF NOT EXISTS review_log (
   note       TEXT,
   at         INTEGER NOT NULL
 );
+-- /v1/appeal dedupe filters (action, at); without this it full-scans review_log.
+CREATE INDEX IF NOT EXISTS idx_review_log_action_at ON review_log(action, at);
 
 -- Maintainer-curated keyword rules. Matched against incoming Signals at
 -- /v1/classify time BEFORE the LLM call: a hit short-circuits the verdict,
@@ -111,6 +113,9 @@ CREATE TABLE IF NOT EXISTS publications (
   json_key      TEXT NOT NULL,              -- R2 object key for shard JSON
   meta_key      TEXT NOT NULL,              -- R2 object key for meta.json
   count         INTEGER NOT NULL,           -- # of human_confirmed accounts
+  pending_count INTEGER,                     -- # of auto_pending_review at publish
+                                             -- time; lets /v1/list/meta skip a
+                                             -- full-partition scan per request
   published_at  INTEGER NOT NULL            -- epoch ms
 );
 CREATE INDEX IF NOT EXISTS idx_publications_version ON publications(version);
@@ -122,6 +127,9 @@ CREATE TABLE IF NOT EXISTS rate_log (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_rate_log_fp_time ON rate_log(fp, created_at);
+-- The periodic `DELETE FROM rate_log WHERE created_at<?` needs created_at as
+-- the leading column (idx_rate_log_fp_time leads with fp) or it full-scans.
+CREATE INDEX IF NOT EXISTS idx_rate_log_created_at ON rate_log(created_at);
 
 -- Reporter bans: admin-maintained anti-abuse blocklist keyed by the same
 -- HMAC reporter fingerprint used by reports/rate_log. Temporary bans expire

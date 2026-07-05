@@ -57,12 +57,20 @@ const AUTO_AI_PUBLISH_CONF = 0.95;
 // future re-evaluation), but a fresh throwaway account can't help flip
 // status to human_confirmed. 90d is a common drive-by abuse cutoff.
 const REPORTER_MIN_AGE_DAYS = 90;
+// Max handles a single keyword-rule hit may auto-promote from a post's
+// @-mentions. Caps the blast radius of a forged tweet that lists many victims;
+// mention-promotion is also gated on an aged reporter identity at the call site.
+const MENTION_PROMOTE_MAX = 3;
 const REPORT_WINDOW_MS = 60 * 60_000;
 const REPORT_MAX_PER_WINDOW = 10;
-// /v1/classify is the cost endpoint (paid LLM call + D1 writes) — cap it per
-// reporter fingerprint (or per IP when anonymous). /v1/appeal is fully
-// unauthenticated, so it gets a tighter per-IP cap.
-const CLASSIFY_MAX_PER_WINDOW = 20;
+// /v1/classify is the cost endpoint — cap it per reporter fingerprint (or per
+// IP when anonymous). The cap gates ONLY the LLM path: cache/TTL reuse and
+// keyword-rule hits short-circuit before the throttle (see the handler), so a
+// browser extension scanning a timeline burns budget only on genuinely-novel
+// accounts. Sized for that — 60 fresh classifications/hour/identity is ample
+// headroom for real discovery while still bounding worst-case LLM spend.
+// /v1/appeal is fully unauthenticated, so it gets a tighter per-IP cap.
+const CLASSIFY_MAX_PER_WINDOW = 60;
 const APPEAL_MAX_PER_WINDOW = 5;
 const BLOOM_SIZE = 65_536; // 8 KB bit array
 const BLOOM_HASHES = 7;
@@ -177,11 +185,14 @@ const Signals = z.object({
     .string()
     .trim()
     .regex(/^@?[A-Za-z0-9_]{1,15}$/, "handle must be a valid X handle"),
-  displayName: z.string().default(""),
-  bio: z.string().default(""),
-  recentTweets: z.array(z.string()).max(20).default([]),
-  triggeringComment: z.string().optional(),
-  threadTopic: z.string().optional(),
+  // Free-text fields are TRUNCATED (not rejected) so a legit client sending a
+  // long premium tweet still classifies, while a hostile/broken client can't
+  // pad the LLM prompt to burn input tokens. Bounds total prompt to a few KB.
+  displayName: z.string().transform((s) => s.slice(0, 200)).default(""),
+  bio: z.string().transform((s) => s.slice(0, 500)).default(""),
+  recentTweets: z.array(z.string().transform((s) => s.slice(0, 500))).max(20).default([]),
+  triggeringComment: z.string().transform((s) => s.slice(0, 1000)).optional(),
+  threadTopic: z.string().transform((s) => s.slice(0, 500)).optional(),
   accountCreatedAt: z.string().max(80).optional(),
   accountAgeDays: z.number().optional(),
   followersCount: z.number().optional(),
@@ -283,31 +294,113 @@ recentTweets:
 ${s.recentTweets.map((t, i) => `  ${i + 1}. ${t}`).join("\n") || "  (none)"}`;
 }
 
+/**
+ * Pull the verdict object out of a raw completion. Reasoning models (minimax,
+ * deepseek, …) wrap the answer in ```json fences, prepend chain-of-thought
+ * prose that itself contains braces ("the account {@handle} looks off"), or
+ * emit an echo object before the real one — a greedy first-`{`…last-`}` match
+ * mis-parses all of these. Instead scan for every string-aware brace-balanced
+ * {...} span and return the first that parses AND carries a "label" key, so
+ * stray braces in prose/strings can't derail it.
+ */
+function extractVerdictJson(txt: string): unknown {
+  const objs: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < txt.length; i++) {
+    const ch = txt[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') {
+      inStr = true;
+    } else if (ch === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === "}" && depth > 0) {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        objs.push(txt.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+  for (const c of objs) {
+    try {
+      const o = JSON.parse(c);
+      if (o && typeof o === "object" && "label" in o) return o;
+    } catch {
+      // not valid JSON (prose with braces) — keep scanning
+    }
+  }
+  for (let i = objs.length - 1; i >= 0; i--) {
+    try {
+      return JSON.parse(objs[i]);
+    } catch {
+      // ignore
+    }
+  }
+  throw new Error(`no JSON object in model output: ${txt.slice(0, 200)}`);
+}
+
+interface ChatChoice {
+  message: { content?: string | null; reasoning_content?: string | null };
+  finish_reason?: string;
+}
+
 async function classify(env: Env, s: Signals): Promise<Verdict> {
-  const res = await fetch(`${env.LLM_API_BASE}/chat/completions`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${env.LLM_API_KEY}`, "content-type": "application/json" },
-    body: JSON.stringify({
-      model: env.LLM_API_MODEL,
-      temperature: 0,
-      // Reasoning models (e.g. deepseek-v4-pro) spend tokens on hidden
-      // reasoning that counts toward max_tokens; give headroom so the JSON
-      // answer is never truncated under high reasoning effort.
-      max_tokens: 2048,
-      thinking: { type: "enabled" },
-      reasoning_effort: "high",
-      messages: [
-        { role: "system", content: SYSTEM },
-        { role: "user", content: userPrompt(s) },
-      ],
-    }),
-  });
-  if (!res.ok) throw new Error(`LLM ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const j = (await res.json()) as { choices: { message: { content: string } }[] };
-  const txt = j.choices[0]?.message?.content ?? "";
-  const m = txt.match(/\{[\s\S]*\}/);
-  if (!m) throw new Error("no JSON from model");
-  return Verdict.parse(JSON.parse(m[0]));
+  const messages: { role: string; content: string }[] = [
+    { role: "system", content: SYSTEM },
+    { role: "user", content: userPrompt(s) },
+  ];
+
+  let lastErr: unknown;
+  // Two attempts: a single self-correcting retry recovers from a malformed or
+  // truncated first answer (re-asking concisely also dodges runaway reasoning).
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetch(`${env.LLM_API_BASE}/chat/completions`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${env.LLM_API_KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        model: env.LLM_API_MODEL,
+        temperature: 0,
+        // Reasoning models (e.g. deepseek-v4-pro, minimax-m3) spend tokens on
+        // hidden reasoning that counts toward max_tokens; give ample headroom
+        // so the JSON answer is never truncated under high reasoning effort.
+        max_tokens: 4096,
+        thinking: { type: "enabled" },
+        reasoning_effort: "high",
+        messages,
+      }),
+    });
+    if (!res.ok) throw new Error(`LLM ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const j = (await res.json()) as { choices: ChatChoice[] };
+    const choice = j.choices[0];
+    // Some reasoning models leave `content` empty and put the answer (or just
+    // the JSON) in `reasoning_content` — fall back to it before giving up.
+    const txt = (choice?.message?.content || choice?.message?.reasoning_content || "").trim();
+    try {
+      return Verdict.parse(extractVerdictJson(txt));
+    } catch (err) {
+      lastErr = err;
+      const truncated = choice?.finish_reason === "length";
+      messages.push(
+        { role: "assistant", content: txt.slice(0, 2000) },
+        {
+          role: "user",
+          content: truncated
+            ? "Your reply was cut off. Reply with ONLY the compact JSON verdict object, no reasoning, no markdown fences."
+            : "That was not valid. Reply with ONLY the JSON verdict object in the exact required shape, no prose, no markdown fences.",
+        },
+      );
+    }
+  }
+  throw new Error(`LLM did not return a valid verdict: ${String(lastErr)}`);
 }
 
 function normalizeHandle(handle: string): string {
@@ -539,7 +632,24 @@ interface AccountWrite {
   followingCount?: number | null;
 }
 
-async function writeAccount(env: Env, w: AccountWrite): Promise<AccountRow | null> {
+// Tolerant parse for the `reasons` JSON column. A single malformed value
+// (legacy import, manual SQL edit) must not 500 the classify cache path or
+// silently break the 6h GitHub mirror — degrade to a single-element array.
+function safeReasons(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? v : [String(v)];
+  } catch {
+    return [raw];
+  }
+}
+
+async function writeAccount(
+  env: Env,
+  w: AccountWrite,
+  retried = false,
+): Promise<AccountRow | null> {
   const prev = await findAccount(env, w.handle, w.uid);
   if (prev) {
     await env.DB.prepare(
@@ -609,35 +719,44 @@ async function writeAccount(env: Env, w: AccountWrite): Promise<AccountRow | nul
     return findAccount(env, w.handle, w.uid);
   }
 
-  await env.DB.prepare(
-    `INSERT INTO accounts
-       (x_user_id,handle,display_name,avatar_url,account_created_at,account_age_days,
-        followers_count,following_count,verdict_label,confidence,reasons,model,
-        status,source,signals_hash,evidence_text,first_seen,last_scored,published_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-  )
-    .bind(
-      w.uid,
-      w.handle,
-      w.displayName,
-      w.avatarUrl ?? null,
-      w.accountCreatedAt ?? null,
-      w.accountAgeDays ?? null,
-      w.followersCount ?? null,
-      w.followingCount ?? null,
-      w.verdictLabel,
-      w.confidence,
-      w.reasons,
-      w.model ?? null,
-      w.status,
-      w.source,
-      w.signalsHash ?? null,
-      w.evidenceText ?? null,
-      w.now,
-      w.now,
-      w.publishedAt ?? null,
+  try {
+    await env.DB.prepare(
+      `INSERT INTO accounts
+         (x_user_id,handle,display_name,avatar_url,account_created_at,account_age_days,
+          followers_count,following_count,verdict_label,confidence,reasons,model,
+          status,source,signals_hash,evidence_text,first_seen,last_scored,published_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
-    .run();
+      .bind(
+        w.uid,
+        w.handle,
+        w.displayName,
+        w.avatarUrl ?? null,
+        w.accountCreatedAt ?? null,
+        w.accountAgeDays ?? null,
+        w.followersCount ?? null,
+        w.followingCount ?? null,
+        w.verdictLabel,
+        w.confidence,
+        w.reasons,
+        w.model ?? null,
+        w.status,
+        w.source,
+        w.signalsHash ?? null,
+        w.evidenceText ?? null,
+        w.now,
+        w.now,
+        w.publishedAt ?? null,
+      )
+      .run();
+  } catch (err) {
+    // A concurrent classify of the same account (common: many viewers see the
+    // same spam reply at once) can insert the canonical uid row between our
+    // findAccount miss and this INSERT, tripping idx_accounts_uid_uq. Re-resolve
+    // and take the UPDATE path once, rather than 500-ing after the LLM was paid.
+    if (!retried) return writeAccount(env, w, true);
+    throw err;
+  }
   // Fresh INSERT — only call cleanup when we just created a uid-bearing row.
   // (Race protection: if another writer added a handle-only sibling between
   // findAccount and INSERT, this collapses it.) For pure null-uid INSERTs
@@ -885,6 +1004,102 @@ function statusForRuleAction(action: string): "human_confirmed" | "whitelisted" 
   return "human_confirmed"; // 'blacklist' default
 }
 
+// Mention-promotion allowlist — handles that must NEVER be auto-blacklisted via
+// the @-mention path below, even if a spam tweet @-mentions them. These are
+// official/utility accounts a spam post might legitimately tag (e.g. asking
+// @grok to "summarize", or @-ing @x support). Lowercased, no leading '@'.
+const MENTION_BLACKLIST_SKIP = new Set([
+  "grok",
+  "gork", // common misspelling that still resolves to the assistant
+  "x",
+  "elonmusk",
+  "support",
+  "safety",
+  "premium",
+  "verified",
+  "twitter",
+  "twittersupport",
+]);
+
+// Pull unique, normalized @mentions out of a post body. We scan only the tweet
+// text (recentTweets + triggeringComment) — the "正文" where promoted handles
+// appear — not bio/display-name, to keep this conservative. X handles are
+// [A-Za-z0-9_]{1,15}; the '@' must not be preceded by a word char (so email
+// locals like "foo@bar" don't match) and must be followed by a boundary (so a
+// 16+ char run — not a real handle — is skipped rather than truncated).
+function extractMentions(s: Signals): string[] {
+  const text = [s.triggeringComment ?? "", ...s.recentTweets].join("\n");
+  const out = new Set<string>();
+  const re = /(?:^|[^A-Za-z0-9_@])@([A-Za-z0-9_]{1,15})\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) out.add(m[1].toLowerCase());
+  return [...out];
+}
+
+// When a 'blacklist' keyword rule fires, any account @-mentioned in the post
+// body is almost always the spam target being promoted — the matched account is
+// frequently a throwaway whose only job is to point at the "main" handle. So we
+// auto-blacklist those mentions too, minus:
+//   - the matched account's own handle,
+//   - the curated MENTION_BLACKLIST_SKIP allowlist (official/utility accounts),
+//   - any handle a human has already ruled on (whitelisted/rejected/removed) or
+//     that's already on the public list (human_confirmed) — nothing to do.
+// Each promotion is a handle-only row (we have no uid for a bare @mention) and
+// is logged with actor='rule:<id>' so it is traceable and reversible, exactly
+// like the primary rule hit. Returns the list of newly-promoted handles.
+async function autoBlacklistMentions(
+  env: Env,
+  rule: KeywordRule,
+  s: Signals,
+  now: number,
+): Promise<string[]> {
+  const own = normalizeHandle(s.handle);
+  const promoted: string[] = [];
+  for (const handle of extractMentions(s)) {
+    if (promoted.length >= MENTION_PROMOTE_MAX) break;
+    if (handle === own) continue;
+    if (MENTION_BLACKLIST_SKIP.has(handle)) continue;
+    const prev = await findAccount(env, handle, null);
+    // Only auto-promote when there's nothing to step on: a brand-new handle, or
+    // one still in an auto_* limbo. Any human decision or an existing public
+    // listing is left untouched.
+    if (prev && prev.status !== "auto_pending_review" && prev.status !== "auto_legit") {
+      continue;
+    }
+    const reasons = [
+      `auto-blacklisted: @-mentioned by spam account @${own} which matched keyword rule "${rule.pattern}"`,
+    ];
+    await writeAccount(env, {
+      uid: null,
+      handle,
+      displayName: "",
+      verdictLabel: rule.verdict_label,
+      confidence: 1.0,
+      reasons: JSON.stringify(reasons),
+      model: null,
+      status: "human_confirmed",
+      source: "auto_keyword_mention",
+      evidenceText: evidenceText(s),
+      now,
+      publishedAt: now,
+    });
+    await env.DB.prepare(
+      "INSERT INTO review_log (x_user_id, handle, action, actor, note, at) VALUES (?,?,?,?,?,?)",
+    )
+      .bind(
+        null,
+        handle,
+        "keyword_mention_blacklist",
+        `rule:${rule.id}`,
+        `promoted from @${own} (matched "${rule.pattern}" on ${rule.field})`,
+        now,
+      )
+      .run();
+    promoted.push(handle);
+  }
+  return promoted;
+}
+
 const app = new Hono<{ Bindings: Env }>();
 
 // CORS is scoped to the public read/report surface only. The admin and agent
@@ -910,10 +1125,17 @@ const HOUR_MS = 3600_000;
 const DAY_MS = 24 * HOUR_MS;
 
 app.get("/v1/health", async (c) => {
+  // Read the published count from the 24-row publications ledger instead of
+  // `count(*)` over the ~97K human_confirmed partition — /v1/health is public,
+  // uncached, and often polled by uptime monitors, so the full-partition scan
+  // was a standing D1 rows-read cost (~100K rows/call). The published count is
+  // ≤10 min stale (cron cadence), which is fine for a liveness probe.
   const r = await c.env.DB.prepare(
-    "SELECT count(*) n FROM accounts WHERE status='human_confirmed'",
-  ).first<{ n: number }>();
-  return c.json({ ok: true, published: r?.n ?? 0 });
+    "SELECT count FROM publications ORDER BY published_at DESC LIMIT 1",
+  )
+    .first<{ count: number }>()
+    .catch(() => null);
+  return c.json({ ok: true, published: r?.count ?? 0 });
 });
 
 // Public membership check — only human_confirmed (the public list).
@@ -932,9 +1154,16 @@ app.get("/v1/check", async (c) => {
   if (cached) return cached;
 
   const ph = ids.map(() => "?").join(",");
+  // `+status` (the SQLite no-op unary plus) deliberately disqualifies the
+  // composite status indexes so the planner drives off idx_accounts_uid via
+  // the `x_user_id IN (...)` list. Without it the planner picked
+  // idx_accounts_status_confidence and SCANNED EVERY human_confirmed row
+  // (~97K) on every call — this batch lookup is the extension's hottest
+  // endpoint, so that was the dominant source of D1 rows-read. Measured:
+  // 96,763 rows/call → 4 rows/call. Status is still filtered, just not via index.
   const rows = await c.env.DB.prepare(
     `SELECT x_user_id, verdict_label, confidence FROM accounts
-     WHERE status='human_confirmed' AND x_user_id IN (${ph})`,
+     WHERE x_user_id IN (${ph}) AND +status='human_confirmed'`,
   )
     .bind(...ids)
     .all<{ x_user_id: string; verdict_label: string; confidence: number }>();
@@ -959,20 +1188,12 @@ app.post("/v1/classify", async (c) => {
   } catch (err) {
     return c.json({ error: "bad_request", detail: (err as Error).message }, 400);
   }
-  // Throttle — this is the paid-LLM + D1-write path, so it must never be
-  // unlimited. Keyed by a salted fingerprint of the GitHub identity (or the
-  // connecting IP when anonymous); fails closed when REPORT_SALT is unset so
-  // raw identities never land in rate_log.
-  const rateId = who.id === "anon" ? `ip:${c.req.header("cf-connecting-ip") ?? "unknown"}` : who.id;
-  const rateFp = await throttleFingerprint(c.env, "classify", rateId);
-  if (!rateFp) {
-    return c.json({ error: "report_salt_required", detail: "REPORT_SALT not configured" }, 503);
-  }
-  const rateNow = Date.now();
-  if (!(await throttleOk(c.env, rateFp, rateNow, CLASSIFY_MAX_PER_WINDOW))) {
-    return c.json({ error: "rate_limited", retryAfterMs: REPORT_WINDOW_MS }, 429);
-  }
-  await recordReportRate(c.env, rateFp, rateNow);
+  // NOTE: the per-identity throttle is enforced later, immediately before the
+  // LLM call — NOT here. Every short-circuit below (viewer-ignore, whitelist,
+  // signals_hash/TTL reuse, keyword rules) returns without spending an LLM
+  // call, so they must stay free: a browser extension classifies every account
+  // in the timeline and is almost entirely cache hits, which would otherwise
+  // exhaust the window on free lookups and 429 the genuinely-new accounts.
   const s: Signals = { ...parsed, handle: normalizeHandle(parsed.handle) };
   if (viewerScopedIgnore(s)) {
     return c.json({
@@ -1015,7 +1236,7 @@ app.post("/v1/classify", async (c) => {
           verdict: {
             label: prev.verdict_label,
             confidence: prev.confidence,
-            reasons: JSON.parse(prev.reasons || "[]"),
+            reasons: safeReasons(prev.reasons),
           },
           status: prev.status,
         },
@@ -1068,23 +1289,57 @@ app.post("/v1/classify", async (c) => {
         now,
       ),
     ]);
+    // Propagation: a 'blacklist' rule hit promotes any account the spam post
+    // @-mentions in its body — the promoted "main" handle these throwaways point
+    // at — to the public list as well. Whitelist/reject rules don't propagate.
+    // Mention-promotion is the highest-abuse surface (it publishes handles the
+    // caller merely typed into a tweet body). Gate it on an aged GitHub identity
+    // so a throwaway/anon caller can't weaponize it, and cap the count below.
+    const promotedMentions =
+      ruleHit.action === "blacklist" && who.ageDays >= REPORTER_MIN_AGE_DAYS
+        ? await autoBlacklistMentions(c.env, ruleHit, s, now)
+        : [];
     return c.json({
       cached: false,
       record: { verdict, status },
       matchedRule: { id: ruleHit.id, pattern: ruleHit.pattern, field: ruleHit.field },
+      ...(promotedMentions.length ? { promotedMentions } : {}),
     });
   }
-  const verdict = await classify(c.env, s);
+  // Throttle the EXPENSIVE path only. We reached here past every cache/rule
+  // short-circuit, so this request WILL spend an LLM call — the cost the cap
+  // exists to bound. Keyed by a salted fingerprint of the GitHub identity (or
+  // the connecting IP when anonymous); fails closed when REPORT_SALT is unset
+  // so raw identities never land in rate_log.
   const now = Date.now();
+  const rateId = who.id === "anon" ? `ip:${c.req.header("cf-connecting-ip") ?? "unknown"}` : who.id;
+  const rateFp = await throttleFingerprint(c.env, "classify", rateId);
+  if (!rateFp) {
+    return c.json({ error: "report_salt_required", detail: "REPORT_SALT not configured" }, 503);
+  }
+  if (!(await throttleOk(c.env, rateFp, now, CLASSIFY_MAX_PER_WINDOW))) {
+    return c.json({ error: "rate_limited", retryAfterMs: REPORT_WINDOW_MS }, 429);
+  }
+  await recordReportRate(c.env, rateFp, now);
+  const verdict = await classify(c.env, s);
   // Auto-publish high-confidence AI spam straight to the public list — the
   // mirror image of the auto_legit fast-accept below. Only the classify path
   // does this; the report path stays manual-confirm-only (its inherited
   // verdicts are the noisy ones). writeAccount still preserves any prior human
   // decision (human_confirmed/rejected/removed/whitelisted), so this can never
   // override a maintainer, and /v1/appeal remains the fallback.
+  // Corroboration gate: classify signals are entirely client-supplied and are
+  // never verified against the real X account, so a fabricated payload could
+  // otherwise publish an arbitrary victim to the public list. Require BOTH a
+  // numeric uid (a bare handle is trivial to target; a uid is the account's
+  // immutable id, far harder to weaponize against a chosen victim) AND an aged
+  // GitHub identity. When the gate fails the verdict still lands in the
+  // maintainer review queue (writeStatus below) instead of auto-publishing.
   const aiAutoPublish =
     (verdict.label === "spam" || verdict.label === "porn_bot") &&
-    verdict.confidence >= AUTO_AI_PUBLISH_CONF;
+    verdict.confidence >= AUTO_AI_PUBLISH_CONF &&
+    uid !== null &&
+    who.ageDays >= REPORTER_MIN_AGE_DAYS;
   // High-confidence legit verdicts are cached but kept out of the maintainer
   // queue. /admin/queue still only selects status='auto_pending_review', so
   // auto_legit rows are invisible there but the next /v1/classify hit still
@@ -1875,9 +2130,18 @@ function reviewLogStmt(
   ).bind(xUserId, handle, action, "admin", note, now);
 }
 
+// An optional numeric id (x_user_id / github id). Tolerates an explicit JSON
+// null — clients commonly spread a possibly-null id field — by normalizing it
+// to undefined so the rest of the pipeline sees `string | undefined`.
+const optionalNumericId = z
+  .string()
+  .regex(/^\d+$/)
+  .nullish()
+  .transform((v) => v ?? undefined);
+
 const DecideBody = z.object({
   handle: z.string().min(1),
-  xUserId: z.string().regex(/^\d+$/).optional(),
+  xUserId: optionalNumericId,
   // Unknown actions used to silently map to "rejected" via statusForAction —
   // they are an explicit 400 now.
   action: z.enum(["approve", "reject", "remove", "whitelist"]),
@@ -1915,7 +2179,7 @@ const DecideBatchBody = z.object({
     .array(
       z.object({
         handle: z.string().min(1),
-        xUserId: z.string().regex(/^\d+$/).optional(),
+        xUserId: optionalNumericId,
       }),
     )
     .min(1)
@@ -1952,7 +2216,7 @@ const WhitelistBatchBody = z.object({
     .array(
       z.object({
         handle: z.string().min(1),
-        xUserId: z.string().regex(/^\d+$/).optional(),
+        xUserId: optionalNumericId,
       }),
     )
     .min(1)
@@ -2282,7 +2546,7 @@ app.post("/v1/admin/keyword-rules/apply-to-queue", async (c) => {
 //     so it stays out of the published list but the audit is preserved)
 const WhitelistAdd = z.object({
   handle: z.string().min(1).max(64),
-  xUserId: z.string().regex(/^\d+$/).optional(),
+  xUserId: optionalNumericId,
   displayName: z.string().max(120).default(""),
   avatarUrl: z.string().url().optional(),
   note: z.string().max(200).default(""),
@@ -2527,23 +2791,31 @@ app.get("/v1/list/meta", async (c) => {
   if (cached) return cached;
 
   const now = Date.now();
+  // `count` and `pending` come from the 24-row publications ledger (snapshotted
+  // by the 10-min publish cron) instead of full-partition COUNTs — this endpoint
+  // used to scan ~185K rows per cache miss, the same failure class as the D1
+  // rows-read incident. `day`/`week`/`latest` still need live values but ride
+  // idx_accounts_status_published_at: the range is bounded to the last 7 days
+  // (a few thousand rows) and `latest` is a single-row index seek.
   const r = await c.env.DB.prepare(
-    `SELECT count(*) n,
-            max(published_at) latest,
-            sum(CASE WHEN published_at >= ? THEN 1 ELSE 0 END) AS day,
-            sum(CASE WHEN published_at >= ? THEN 1 ELSE 0 END) AS week,
-            (SELECT count(*) FROM accounts WHERE status='auto_pending_review') AS pending
-       FROM accounts WHERE status='human_confirmed'`,
+    `SELECT
+       (SELECT published_at FROM accounts
+          WHERE status='human_confirmed' AND published_at IS NOT NULL
+          ORDER BY published_at DESC LIMIT 1) AS latest,
+       count(*) AS week,
+       sum(CASE WHEN published_at >= ? THEN 1 ELSE 0 END) AS day
+     FROM accounts
+    WHERE status='human_confirmed' AND published_at >= ?`,
   )
     .bind(now - DAY_MS, now - 7 * DAY_MS)
-    .first<{ n: number; latest: number | null; day: number; week: number; pending: number }>();
+    .first<{ latest: number | null; week: number; day: number }>();
 
   // The publication row is OPTIONAL — the payload already degrades to
   // `artifacts: null` when there isn't one. Treat any failure here (e.g. a
   // freshly-migrated DB that is missing the table) as "no publication yet"
   // rather than letting it 500 the whole public endpoint.
   const pub = await c.env.DB.prepare(
-    "SELECT version, bloom_key, json_key, meta_key, count, published_at FROM publications ORDER BY published_at DESC LIMIT 1",
+    "SELECT version, bloom_key, json_key, meta_key, count, pending_count, published_at FROM publications ORDER BY published_at DESC LIMIT 1",
   )
     .first<{
       version: string;
@@ -2551,6 +2823,7 @@ app.get("/v1/list/meta", async (c) => {
       json_key: string;
       meta_key: string;
       count: number;
+      pending_count: number | null;
       published_at: number;
     }>()
     .catch((err) => {
@@ -2559,12 +2832,17 @@ app.get("/v1/list/meta", async (c) => {
     });
 
   const payload = {
-    count: r?.n ?? 0,
+    count: pub?.count ?? 0,
     day: r?.day ?? 0,
     week: r?.week ?? 0,
-    pending: r?.pending ?? 0,
+    pending: pub?.pending_count ?? 0,
+    // `generatedAt` is the artifact sync time (landing's "刚刚同步"); `latestAt`
+    // is the newest confirmed entry, which is what the list's "最近一条" reflects
+    // and what `/v1/list` sorts by. They diverge when accounts are confirmed
+    // after the last publication artifact was regenerated.
     generatedAt: pub?.published_at ?? r?.latest ?? null,
-    version: pub?.version ?? `d1-${r?.n ?? 0}`,
+    latestAt: r?.latest ?? null,
+    version: pub?.version ?? `d1-${pub?.count ?? 0}`,
     artifacts: pub
       ? {
           bloom: `/v1/artifacts/${pub.bloom_key}`,
@@ -2685,18 +2963,22 @@ app.get("/v1/list", async (c) => {
     return cached;
   }
 
+  // reporters via a correlated subquery (NOT a CTE + LEFT JOIN). The old
+  // `WITH rep AS (... GROUP BY ...)` materialized the full reports table and
+  // nested-loop-joined it against the page, reading ~200K rows to return 100
+  // — at the live data sizes that single query was responsible for billions
+  // of D1 rows-read/week. The correlated form rides idx_reports_unique's
+  // leading `handle` column and reads ~the page size (matches the indexed
+  // pattern already used by /v1/admin/blacklist and /v1/admin/queue).
   const rows = await c.env.DB.prepare(
-    `WITH rep AS (
-       SELECT handle, x_user_id, count(DISTINCT reporter_fp) AS n
-         FROM reports WHERE reporter_fp IS NOT NULL
-        GROUP BY handle, x_user_id
-     )
-     SELECT a.x_user_id, a.handle, a.display_name, a.avatar_url,
+    `SELECT a.x_user_id, a.handle, a.display_name, a.avatar_url,
             a.verdict_label, a.confidence, a.reasons, a.evidence_text, a.published_at,
-            coalesce(rep.n, 0) AS reporters
+            (SELECT count(DISTINCT r.reporter_fp)
+               FROM reports r
+              WHERE r.handle = a.handle
+                AND ifnull(r.x_user_id,'') = ifnull(a.x_user_id,'')
+                AND r.reporter_fp IS NOT NULL) AS reporters
        FROM accounts a
-       LEFT JOIN rep ON rep.handle = a.handle
-                    AND ifnull(rep.x_user_id,'') = ifnull(a.x_user_id,'')
       WHERE a.status='human_confirmed'
         AND a.published_at IS NOT NULL
         AND (?1 IS NULL OR a.published_at < ?1)
@@ -2935,17 +3217,14 @@ async function mirrorToGitHub(
   // warn below, which fires before we ever silently truncate again.
   const BL_EXPORT_LIMIT = 50000;
   const bl = await env.DB.prepare(
-    `WITH rep AS (
-       SELECT handle, x_user_id, count(DISTINCT reporter_fp) AS n
-         FROM reports WHERE reporter_fp IS NOT NULL
-        GROUP BY handle, x_user_id
-     )
-     SELECT a.x_user_id, a.handle, a.verdict_label, a.confidence,
+    `SELECT a.x_user_id, a.handle, a.verdict_label, a.confidence,
             a.reasons, a.evidence_text, a.published_at,
-            coalesce(rep.n, 0) AS reporters
+            (SELECT count(DISTINCT r.reporter_fp)
+               FROM reports r
+              WHERE r.handle = a.handle
+                AND ifnull(r.x_user_id,'') = ifnull(a.x_user_id,'')
+                AND r.reporter_fp IS NOT NULL) AS reporters
        FROM accounts a
-       LEFT JOIN rep ON rep.handle = a.handle
-                    AND ifnull(rep.x_user_id,'') = ifnull(a.x_user_id,'')
       WHERE a.status='human_confirmed' AND a.published_at IS NOT NULL
       ORDER BY a.published_at DESC LIMIT ${BL_EXPORT_LIMIT}`,
   ).all<{
@@ -2998,7 +3277,7 @@ async function mirrorToGitHub(
         x_user_id: r.x_user_id,
         verdict_label: r.verdict_label,
         confidence: r.confidence,
-        reasons: r.reasons ? JSON.parse(r.reasons) : [],
+        reasons: safeReasons(r.reasons),
         evidence_text: r.evidence_text,
         reporters: r.reporters,
         published_at: r.published_at,
@@ -3081,7 +3360,7 @@ app.get("/v1/agent/queue", async (c) => {
 // We never touch status=human_confirmed or status=whitelisted — stale agent
 // decisions lose the race and return 409 without changing audit state.
 const AgentDecideBody = z.object({
-  x_user_id: z.string().regex(/^\d+$/).optional(),
+  x_user_id: optionalNumericId,
   handle: z.string().min(1).max(64),
   decision: z.enum(["blacklist", "whitelist", "pending", "annotate"]),
   label: z.enum(["spam", "porn_bot", "likely_spam", "uncertain", "legit"]),
@@ -3298,7 +3577,7 @@ app.get("/v1/admin/agent-list", async (c) => {
 // and this promotion path can't drift behaviorally.
 const AgentPromoteBody = z.object({
   handle: z.string().min(1),
-  x_user_id: z.string().regex(/^\d+$/).optional(),
+  x_user_id: optionalNumericId,
   target: z.enum(["blacklist", "whitelist", "reject", "requeue"]),
 });
 const AgentPromoteBatch = z.object({
@@ -3307,7 +3586,7 @@ const AgentPromoteBatch = z.object({
     .array(
       z.object({
         handle: z.string().min(1),
-        x_user_id: z.string().regex(/^\d+$/).optional(),
+        x_user_id: optionalNumericId,
       }),
     )
     .min(1)
@@ -3472,6 +3751,14 @@ async function publishArtifacts(env: Env): Promise<void> {
   const accounts = rows.results ?? [];
   if (!accounts.length) return;
 
+  // Snapshot the pending-review count here (one bounded scan per 10-min run) so
+  // /v1/list/meta can read it from the ledger instead of scanning the whole
+  // auto_pending_review partition on every request.
+  const pendingRow = await env.DB.prepare(
+    "SELECT count(*) n FROM accounts WHERE status='auto_pending_review'",
+  ).first<{ n: number }>();
+  const pendingCount = pendingRow?.n ?? 0;
+
   const bloomItems = accounts.flatMap((a) =>
     [a.handle, a.x_user_id].filter((v): v is string => !!v),
   );
@@ -3553,11 +3840,71 @@ async function publishArtifacts(env: Env): Promise<void> {
     },
   );
 
+  // ON CONFLICT keeps count/pending_count fresh every run even when the
+  // confirmed set (and thus the version key) is unchanged, without bumping
+  // published_at (so "latest publication" ordering stays stable) or re-writing
+  // R2 objects. That way /v1/list/meta's pending never goes stale between
+  // confirmed-set changes.
   await env.DB.prepare(
-    "INSERT OR IGNORE INTO publications (version, bloom_key, json_key, meta_key, count, published_at) VALUES (?,?,?,?,?,?)",
+    `INSERT INTO publications (version, bloom_key, json_key, meta_key, count, pending_count, published_at)
+     VALUES (?,?,?,?,?,?,?)
+     ON CONFLICT(version) DO UPDATE SET count=excluded.count, pending_count=excluded.pending_count`,
   )
-    .bind(version, bloomKey, jsonKey, metaKey, accounts.length, now)
+    .bind(version, bloomKey, jsonKey, metaKey, accounts.length, pendingCount, now)
     .run();
+}
+
+// R2 retention. publishArtifacts writes 3 objects (~23 MB, dominated by the
+// shards JSON) every time the confirmed set changes — up to every 10 min — and
+// historically NEVER deleted the old ones, so the bucket grew without bound
+// (69.9 GB / ~10K objects by 2026-06-30, ~+2.8 GB/day). Clients only ever need
+// the newest version (advertised by /v1/list/meta), so keep a small rollback
+// window and sweep the rest. List-based (not just ledger-based) so it also
+// reclaims pre-ledger orphan objects. Bounded per run so the initial backlog
+// drains over a few cron ticks without risking a long invocation.
+const KEEP_PUBLICATIONS = 24;
+const PRUNE_MAX_DELETE_PER_RUN = 2000;
+
+async function prunePublications(env: Env): Promise<void> {
+  // Objects referenced by the newest KEEP_PUBLICATIONS versions — never delete
+  // these (the live version is always among them).
+  const keep = await env.DB.prepare(
+    "SELECT bloom_key, json_key, meta_key FROM publications ORDER BY published_at DESC LIMIT ?",
+  )
+    .bind(KEEP_PUBLICATIONS)
+    .all<{ bloom_key: string; json_key: string; meta_key: string }>();
+  const keepSet = new Set<string>();
+  for (const p of keep.results ?? []) {
+    keepSet.add(p.bloom_key);
+    keepSet.add(p.json_key);
+    keepSet.add(p.meta_key);
+  }
+  // Safety: if we can't tell what's live, do nothing rather than nuke the bucket.
+  if (!keepSet.size) return;
+
+  const toDelete: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const listed = await env.ARTIFACTS.list({ limit: 1000, cursor });
+    for (const obj of listed.objects) {
+      if (!keepSet.has(obj.key)) toDelete.push(obj.key);
+    }
+    cursor = listed.truncated ? listed.cursor : undefined;
+  } while (cursor && toDelete.length < PRUNE_MAX_DELETE_PER_RUN);
+
+  if (!toDelete.length) return;
+  const batch = toDelete.slice(0, PRUNE_MAX_DELETE_PER_RUN);
+  // R2 batch delete accepts up to 1000 keys per call; DELETE ops are free.
+  for (let i = 0; i < batch.length; i += 1000) {
+    await env.ARTIFACTS.delete(batch.slice(i, i + 1000));
+  }
+  // Keep the ledger bounded too (rows beyond the retention window).
+  await env.DB.prepare(
+    "DELETE FROM publications WHERE id NOT IN (SELECT id FROM publications ORDER BY published_at DESC LIMIT ?)",
+  )
+    .bind(KEEP_PUBLICATIONS)
+    .run();
+  console.log(`pruned ${batch.length} stale R2 artifacts (kept ${keepSet.size})`);
 }
 
 export default {
@@ -3570,7 +3917,14 @@ export default {
     if (event.cron === "0 */6 * * *") {
       ctx.waitUntil(mirrorToGitHub(env).catch((e) => console.warn("mirror error", e)));
     } else {
-      ctx.waitUntil(publishArtifacts(env).catch((e) => console.warn("artifact publish error", e)));
+      // Publish, then prune old R2 artifacts regardless of publish outcome so
+      // the retention sweep always runs (and drains the historical backlog).
+      ctx.waitUntil(
+        publishArtifacts(env)
+          .catch((e) => console.warn("artifact publish error", e))
+          .then(() => prunePublications(env))
+          .catch((e) => console.warn("artifact prune error", e)),
+      );
     }
   },
 };

@@ -160,7 +160,7 @@ export function ListPage() {
           { n: fmtCn(meta?.count), l: "已确认总数" },
           { n: (meta && meta.week > 0 ? "+" : "") + fmtCn(meta?.week), l: "本周新增" },
           { n: meta ? fmtCn(Math.round((meta.week || 0) / 7)) : "—", l: "日均" },
-          { n: meta?.generatedAt ? agoCn(meta.generatedAt) : "—", l: "最近一条" },
+          { n: meta?.latestAt ? agoCn(meta.latestAt) : "—", l: "最近一条" },
         ].map((c, i) => (
           <div key={i} className="rounded-xl border bg-card p-4 shadow-sm">
             <div className="font-mono text-xl font-bold tabular-nums">{c.n}</div>

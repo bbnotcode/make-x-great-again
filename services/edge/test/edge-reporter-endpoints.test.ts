@@ -311,6 +311,10 @@ async function reporterFp(raw = "gh:42", salt = "test-report-salt"): Promise<str
 // Counts how many times the (mocked) LLM endpoint is hit, so reuse tests can
 // assert "no LLM call". Reset it at the top of each test that inspects it.
 let llmCalls = 0;
+// The raw `message.content` the mocked LLM returns. Tests that exercise the
+// JSON extractor override this to simulate fenced / reasoning-prose answers.
+const DEFAULT_LLM_CONTENT = '{"label":"spam","confidence":0.9,"reasons":["fresh"]}';
+let llmContent = DEFAULT_LLM_CONTENT;
 globalThis.fetch = async (input: string | URL | Request) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   if (url === "https://api.github.com/user") {
@@ -318,9 +322,7 @@ globalThis.fetch = async (input: string | URL | Request) => {
   }
   if (url.startsWith("https://llm.invalid")) {
     llmCalls++;
-    return Response.json({
-      choices: [{ message: { content: '{"label":"spam","confidence":0.9,"reasons":["fresh"]}' } }],
-    });
+    return Response.json({ choices: [{ message: { content: llmContent } }] });
   }
   return originalFetch(input);
 };
@@ -401,7 +403,7 @@ test("classify endpoint returns 429 once the per-reporter throttle is exhausted"
   const db = new MockDB();
   const fp = await reporterFp("classify|gh:42");
   const now = Date.now();
-  for (let i = 0; i < 20; i++) db.rateLog.push({ fp, created_at: now - i * 1000 });
+  for (let i = 0; i < 60; i++) db.rateLog.push({ fp, created_at: now - i * 1000 });
   const res = await worker.fetch(
     new Request("https://x.test/v1/classify", {
       method: "POST",
@@ -411,7 +413,7 @@ test("classify endpoint returns 429 once the per-reporter throttle is exhausted"
     env(db),
   );
   assert.equal(res.status, 429);
-  assert.equal(db.rateLog.length, 20); // throttled request adds no sample
+  assert.equal(db.rateLog.length, 60); // throttled request adds no sample
 });
 
 test("classify endpoint fails closed (503) when REPORT_SALT is unset", async () => {
@@ -475,6 +477,36 @@ test("classify reuses a fresh prior verdict on signal drift without calling the 
   assert.equal(llmCalls, 0); // freshness TTL short-circuited the LLM
 });
 
+test("classify cache hit is served even when the throttle budget is exhausted", async () => {
+  // Regression: the per-identity cap must gate only the LLM path, never the
+  // free cache-reuse short-circuit. A browser extension scanning a timeline is
+  // almost all cache hits — they must not 429 once the window fills.
+  const db = new MockDB();
+  const fp = await reporterFp("classify|gh:42");
+  const now = Date.now();
+  for (let i = 0; i < 60; i++) db.rateLog.push({ fp, created_at: now - i * 1000 }); // budget full
+  db.accounts = [
+    {
+      rowid: 1,
+      handle: "target",
+      x_user_id: "100",
+      status: "auto_legit",
+      verdict_label: "legit",
+      confidence: 0.92,
+      reasons: '["benign"]',
+      signals_hash: "stale-hash",
+      last_scored: Date.now(),
+    },
+  ];
+  llmCalls = 0;
+  const res = await worker.fetch(classifyRequest(["drifted tweet"]), env(db));
+  assert.equal(res.status, 200); // not 429 — cache hit bypasses the throttle
+  const body = (await res.json()) as { cached?: boolean };
+  assert.equal(body.cached, true);
+  assert.equal(llmCalls, 0); // no LLM call → no budget consumed
+  assert.equal(db.rateLog.length, 60); // cache hit records no rate sample
+});
+
 test("classify re-scores a stale prior verdict (TTL lapsed) via the LLM", async () => {
   const db = new MockDB();
   db.accounts = [
@@ -497,6 +529,52 @@ test("classify re-scores a stale prior verdict (TTL lapsed) via the LLM", async 
   assert.equal(body.cached, false);
   assert.equal(llmCalls, 1); // TTL lapsed → fresh classification
 });
+
+// Reasoning models (minimax-m3, deepseek, …) wrap the verdict in ```json
+// fences, prepend chain-of-thought prose containing stray braces, or emit an
+// echo object first. A greedy first-`{`…last-`}` match mis-parsed all of these
+// and stranded the account unclassified — these must all parse cleanly now.
+for (const [shape, content] of [
+  ["fenced json", '```json\n{"label":"spam","confidence":0.8,"reasons":["promo"]}\n```'],
+  [
+    "prose with braces before the object",
+    'The account {@target} looks off-topic. Verdict:\n{"label":"spam","confidence":0.8,"reasons":["promo"]}',
+  ],
+  [
+    "echo object then the real verdict",
+    '{"note":"analyzing {target}"}\nFinal answer:\n{"label":"spam","confidence":0.8,"reasons":["promo"]}',
+  ],
+  [
+    "trailing prose with braces after the object",
+    '{"label":"spam","confidence":0.8,"reasons":["promo"]}\nNote: matches {redirect} template.',
+  ],
+] as const) {
+  test(`classify parses a verdict from ${shape}`, async () => {
+    const db = new MockDB();
+    db.accounts = [
+      {
+        rowid: 1,
+        handle: "target",
+        x_user_id: "100",
+        status: "auto_legit",
+        verdict_label: "legit",
+        confidence: 0.92,
+        reasons: '["benign"]',
+        signals_hash: "stale-hash",
+        last_scored: Date.now() - 40 * 86_400_000, // stale → forces a fresh LLM call
+      },
+    ];
+    llmContent = content;
+    try {
+      const res = await worker.fetch(classifyRequest(["promo spam now"]), env(db));
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as { record?: { verdict?: { label?: string } } };
+      assert.equal(body.record?.verdict?.label, "spam");
+    } finally {
+      llmContent = DEFAULT_LLM_CONTENT;
+    }
+  });
+}
 
 test("report endpoint returns 400 on a malformed body instead of 500", async () => {
   const db = new MockDB();

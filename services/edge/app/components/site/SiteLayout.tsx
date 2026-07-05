@@ -40,8 +40,8 @@ export function SiteLayout({
 }) {
   return (
     <div className="mx-auto max-w-[1080px] px-6 sm:px-7">
-      <header className="flex items-center justify-between py-5">
-        <Link to="/" className="flex items-center gap-2 font-semibold" aria-label={BRAND.name + " 首页"}>
+      <header className="sticky top-0 z-30 -mx-6 flex items-center justify-between border-b border-border/60 px-6 py-4 backdrop-blur-md transition-colors supports-[backdrop-filter]:bg-background/70 sm:-mx-7 sm:px-7">
+        <Link to="/" className="flex items-center gap-2 font-semibold tracking-tight" aria-label={BRAND.name + " 首页"}>
           <img src="/mxga-mark.png" alt="" width={32} height={32} className="size-8" />
           <span>{BRAND.acronym}</span>
         </Link>

@@ -43,7 +43,7 @@ function StoreBadge({
       target="_blank"
       rel="noopener"
       onClick={(e) => onInstall(e, href)}
-      className={`group inline-flex min-w-[212px] items-center gap-3.5 rounded-xl border px-4 py-2.5 shadow-sm transition hover:-translate-y-0.5 hover:border-muted-foreground/50 hover:shadow-md ${warm ? "bg-gradient-to-b from-warning/5 to-card" : "bg-card"}`}
+      className={`group inline-flex min-w-[212px] cursor-pointer items-center gap-3.5 rounded-2xl border border-border/70 px-4 py-2.5 transition-all duration-200 hover:-translate-y-0.5 hover:border-foreground/25 hover:shadow-lg hover:shadow-black/5 ${warm ? "bg-gradient-to-b from-warning/5 to-card" : "bg-card"}`}
     >
       <img src={logo} alt="" width={34} height={34} className="size-[34px]" />
       <span className="flex flex-col">
@@ -72,17 +72,20 @@ function HeroStats() {
     { n: fmtCn(meta?.pending), l: "待复核" },
   ];
   return (
-    <div className="w-full max-w-sm">
-      <div className="grid grid-cols-2 gap-3">
+    <div className="w-full max-w-sm overflow-hidden rounded-2xl border border-border/70 bg-card">
+      <div className="grid grid-cols-2">
         {cells.map((c, i) => (
-          <div key={i} className="rounded-xl border bg-card p-3.5 shadow-sm">
+          <div
+            key={i}
+            className={`p-4 ${i % 2 === 0 ? "border-r border-border/60" : ""} ${i < 2 ? "border-b border-border/60" : ""}`}
+          >
             <div className="font-mono text-2xl font-bold tabular-nums">{c.n}</div>
             <div className="mt-0.5 text-[12px] text-muted-foreground">{c.l}</div>
           </div>
         ))}
       </div>
-      <p className="mt-3 flex items-center justify-center gap-1.5 text-[12px] text-muted-foreground">
-        <span className="size-1.5 rounded-full bg-success" />
+      <p className="flex items-center justify-center gap-1.5 border-t border-border/60 bg-muted/30 py-2 text-[11.5px] text-muted-foreground">
+        <span className="size-1.5 animate-pulse rounded-full bg-success" />
         {meta?.generatedAt ? "刚刚同步 " + agoCn(meta.generatedAt) : "每分钟同步"}
       </p>
     </div>
@@ -120,38 +123,46 @@ function LiveFeed() {
     return () => clearInterval(id);
   }, []);
   return (
-    <section className="mt-10">
-      <div className="mb-3 flex items-center justify-between">
-        <span className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-muted-foreground">
-          <span className="size-1.5 animate-pulse rounded-full bg-destructive" /> 最近处理 · 20 秒更新
-        </span>
-        <Link to="/list" className="text-[12.5px] text-muted-foreground hover:text-foreground">
-          完整名单 →
+    <section className="mt-20">
+      <div className="mb-4 flex items-end justify-between">
+        <div>
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            <span className="size-1.5 animate-pulse rounded-full bg-destructive" /> Live
+          </span>
+          <h2 className="mt-1.5 text-xl font-semibold tracking-tight">最近处理</h2>
+        </div>
+        <Link
+          to="/list"
+          className="inline-flex items-center gap-1 text-[12.5px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+        >
+          完整名单 <ChevronRight className="size-3.5" />
         </Link>
       </div>
-      <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
+      <div className="overflow-hidden rounded-2xl border border-border/70 bg-card">
         {rows.length === 0 ? (
-          <div className="px-4 py-10 text-center text-sm text-muted-foreground">{status}</div>
+          <div className="px-4 py-12 text-center text-sm text-muted-foreground">{status}</div>
         ) : (
-          rows.map((r, i) => {
-            const lbl = r.verdict_label || "uncertain";
-            return (
-              <div key={feedKey(r)} className="flex items-center gap-3 border-b px-4 py-2.5 last:border-0">
-                <span className="w-7 font-mono text-[11px] text-muted-foreground">#{String(i + 1).padStart(2, "0")}</span>
-                <FeedAvatar handle={r.handle} url={r.avatar_url} className="size-8" />
-                <div className="min-w-0 flex-1">
-                  <a href={"https://x.com/" + r.handle} target="_blank" rel="noopener noreferrer" className="truncate text-sm font-medium hover:text-info">
-                    {(r.display_name || "").trim() || "@" + r.handle}
-                  </a>
-                  <div className="text-[11px] text-muted-foreground">{VERDICT_ZH[lbl] || lbl}</div>
+          <div className="divide-y divide-border/60">
+            {rows.map((r, i) => {
+              const lbl = r.verdict_label || "uncertain";
+              return (
+                <div key={feedKey(r)} className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-accent/40">
+                  <span className="w-7 font-mono text-[11px] tabular-nums text-muted-foreground">{String(i + 1).padStart(2, "0")}</span>
+                  <FeedAvatar handle={r.handle} url={r.avatar_url} className="size-8" />
+                  <div className="min-w-0 flex-1">
+                    <a href={"https://x.com/" + r.handle} target="_blank" rel="noopener noreferrer" className="truncate text-sm font-medium hover:text-info">
+                      {(r.display_name || "").trim() || "@" + r.handle}
+                    </a>
+                    <div className="text-[11px] text-muted-foreground">{VERDICT_ZH[lbl] || lbl}</div>
+                  </div>
+                  <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                    {Math.round((r.confidence || 0) * 100)}%
+                  </span>
+                  <span className="hidden text-[11px] tabular-nums text-muted-foreground sm:block">{agoCn(r.published_at)}</span>
                 </div>
-                <span className="font-mono text-xs tabular-nums text-muted-foreground">
-                  {Math.round((r.confidence || 0) * 100)}%
-                </span>
-                <span className="hidden text-[11px] text-muted-foreground sm:block">{agoCn(r.published_at)}</span>
-              </div>
-            );
-          })
+              );
+            })}
+          </div>
         )}
       </div>
     </section>
@@ -171,14 +182,14 @@ function TrendCharts() {
   const sum = (a: { count: number }[]) => a.reduce((s, p) => s + (p.count || 0), 0);
   const plus = (n: number) => (n > 0 ? "+" + fmtCn(n) : fmtCn(n));
   return (
-    <section className="mt-12 grid grid-cols-1 gap-4 lg:grid-cols-2">
-      <div className="rounded-xl border bg-card p-4 shadow-sm">
-        <header className="mb-2 flex items-end justify-between">
+    <section className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="rounded-2xl border border-border/70 bg-card p-5">
+        <header className="mb-3 flex items-end justify-between">
           <div>
-            <h2 className="text-[15px] font-semibold">过去 24 小时</h2>
+            <h3 className="text-[15px] font-semibold">过去 24 小时</h3>
             <p className="text-[12px] text-muted-foreground">每小时新增 spam</p>
           </div>
-          <strong className="font-mono tabular-nums">{plus(sum(hourly))}</strong>
+          <strong className="font-mono text-lg tabular-nums">{plus(sum(hourly))}</strong>
         </header>
         <ResponsiveContainer width="100%" height={150}>
           <AreaChart data={hourly} margin={{ top: 6, right: 6, left: 6, bottom: 0 }}>
@@ -198,13 +209,13 @@ function TrendCharts() {
           </AreaChart>
         </ResponsiveContainer>
       </div>
-      <div className="rounded-xl border bg-card p-4 shadow-sm">
-        <header className="mb-2 flex items-end justify-between">
+      <div className="rounded-2xl border border-border/70 bg-card p-5">
+        <header className="mb-3 flex items-end justify-between">
           <div>
-            <h2 className="text-[15px] font-semibold">过去一周</h2>
+            <h3 className="text-[15px] font-semibold">过去一周</h3>
             <p className="text-[12px] text-muted-foreground">每天处理 spam</p>
           </div>
-          <strong className="font-mono tabular-nums">{plus(sum(daily))}</strong>
+          <strong className="font-mono text-lg tabular-nums">{plus(sum(daily))}</strong>
         </header>
         <ResponsiveContainer width="100%" height={150}>
           <BarChart data={daily} margin={{ top: 6, right: 6, left: 6, bottom: 0 }}>
@@ -261,9 +272,9 @@ export function LandingPage() {
 
   return (
     <SiteLayout current="home">
-      <section className="grid grid-cols-1 items-start gap-10 py-10 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <section className="grid grid-cols-1 items-center gap-10 py-12 sm:py-16 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="max-w-2xl">
-          <span className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11.5px] font-semibold text-muted-foreground">
+          <span className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/60 px-3 py-1 text-[11.5px] font-semibold text-muted-foreground backdrop-blur">
             <span className="size-1.5 rounded-full bg-success" />
             {X_ICON} Chrome &amp; Firefox 扩展 · {BRAND.license} 开源
           </span>
@@ -297,14 +308,20 @@ export function LandingPage() {
             <span>已上架 Chrome / Firefox</span> · <span>手动拉黑</span> · <span>不存身份</span> · <span>开源</span>
           </p>
         </div>
-        <div className="flex flex-col items-center gap-5">
-          <img src="/mxga-hero.png" alt="" width={320} height={320} className="w-64 lg:w-80" />
+        <div className="flex flex-col items-center gap-6">
+          <div className="relative">
+            <div
+              aria-hidden
+              className="absolute inset-0 -z-10 scale-90 rounded-full bg-info/20 blur-3xl"
+            />
+            <img src="/mxga-hero.png" alt="" width={320} height={320} className="w-60 drop-shadow-xl lg:w-72" />
+          </div>
           <HeroStats />
         </div>
       </section>
 
-      <aside className="flex items-start gap-4 rounded-xl border border-warning/40 bg-warning/5 p-5">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-warning/15 text-warning">
+      <aside className="flex items-start gap-4 rounded-2xl border border-warning/30 bg-warning/[0.06] p-5">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-warning/15 text-warning">
           <TriangleAlert className="size-5" />
         </span>
         <div className="min-w-0">
@@ -321,33 +338,41 @@ export function LandingPage() {
       <LiveFeed />
       <TrendCharts />
 
-      <section className="mt-12">
-        <h2 className="text-xl font-semibold tracking-tight">先救评论区，再做深</h2>
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <section className="mt-20">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Roadmap</p>
+        <h2 className="mt-1.5 text-2xl font-semibold tracking-tight">先救评论区，再做深</h2>
+        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {PILLARS.map((p) => (
-            <div key={p.n} className="flex items-start gap-3 rounded-xl border bg-card p-4 shadow-sm">
-              <span className="font-mono text-sm text-muted-foreground">{p.n}</span>
+            <div
+              key={p.n}
+              className="group flex items-start gap-3 rounded-2xl border border-border/70 bg-card p-4 transition-colors hover:border-foreground/15 hover:bg-accent/30"
+            >
+              <span className="font-mono text-sm text-muted-foreground/70">{p.n}</span>
               <div className="min-w-0 flex-1">
                 <h3 className="text-[15px] font-semibold">{p.h}</h3>
-                <p className="mt-1 text-[13px] text-muted-foreground">{p.p}</p>
+                <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">{p.p}</p>
               </div>
-              <span className={`text-[11px] font-semibold ${p.tone}`}>{p.s}</span>
+              <span className={`shrink-0 text-[11px] font-semibold ${p.tone}`}>{p.s}</span>
             </div>
           ))}
         </div>
       </section>
 
-      <section className="mt-12">
-        <h2 className="text-xl font-semibold tracking-tight">规则公开，误伤可撤</h2>
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <section className="mt-20">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Trust</p>
+        <h2 className="mt-1.5 text-2xl font-semibold tracking-tight">规则公开，误伤可撤</h2>
+        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
           {TRUST.map((t) => (
-            <div key={t.h} className="flex items-start gap-3 rounded-xl border bg-card p-4 shadow-sm">
-              <span className={`flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted ${t.c}`}>
+            <div
+              key={t.h}
+              className="flex items-start gap-3 rounded-2xl border border-border/70 bg-card p-4 transition-colors hover:border-foreground/15 hover:bg-accent/30"
+            >
+              <span className={`flex size-9 shrink-0 items-center justify-center rounded-xl bg-muted ${t.c}`}>
                 <t.Icon className="size-[18px]" />
               </span>
               <div>
                 <h3 className="text-[15px] font-semibold">{t.h}</h3>
-                <p className="mt-1 text-[13px] text-muted-foreground">{t.p}</p>
+                <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">{t.p}</p>
               </div>
             </div>
           ))}

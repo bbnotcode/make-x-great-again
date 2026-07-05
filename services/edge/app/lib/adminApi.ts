@@ -121,11 +121,14 @@ export const api = {
   log: (qs: string) => req<{ log: LogEntry[]; nextCursor: number | null }>("/v1/admin/log" + qs),
   rules: () => req<{ rules: Rule[] }>("/v1/admin/keyword-rules"),
 
-  decide: (handle: string, xUserId: string | undefined, action: string) =>
+  decide: (handle: string, xUserId: string | undefined | null, action: string) =>
     req<{ ok: boolean }>("/v1/admin/decide", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ handle, xUserId, action }),
+      // List endpoints return x_user_id: null for accounts without a numeric
+      // id; coerce null/"" to undefined so JSON.stringify drops the key
+      // (the API's zod schema accepts undefined but rejects null).
+      body: JSON.stringify({ handle, xUserId: xUserId || undefined, action }),
     }),
   decideBatch: (action: string, items: Item[]) =>
     req<{ ok: boolean; error?: string }>("/v1/admin/decide-batch", {

@@ -18,6 +18,7 @@ export interface Meta {
   week: number;
   pending: number;
   generatedAt?: number;
+  latestAt?: number;
 }
 export interface TrendPoint {
   at: number;
