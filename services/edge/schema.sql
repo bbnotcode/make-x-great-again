@@ -14,6 +14,10 @@ CREATE TABLE IF NOT EXISTS accounts (
   verdict_label TEXT NOT NULL,              -- spam|porn_bot|likely_spam|uncertain|legit
   confidence    REAL NOT NULL,
   reasons       TEXT,                       -- json array
+  category      TEXT,                       -- porn|crypto|gambling|resource|marketing|other
+                                            -- canonical spam category; NULL = uncategorized
+                                            -- (pre-backfill legacy). Drives the client's
+                                            -- per-category action policy.
   model         TEXT,
   status        TEXT NOT NULL DEFAULT 'auto_pending_review',
                                             -- auto_pending_review | human_confirmed | rejected
@@ -96,6 +100,8 @@ CREATE TABLE IF NOT EXISTS keyword_rules (
   field         TEXT NOT NULL,                 -- handle|display_name|bio|tweet|any
   action        TEXT NOT NULL DEFAULT 'blacklist', -- blacklist|whitelist|reject
   verdict_label TEXT NOT NULL DEFAULT 'spam',  -- the label written into accounts on hit
+  category      TEXT,                          -- category stamped onto accounts on hit;
+                                               -- NULL = derive from verdict_label/pattern
   enabled       INTEGER NOT NULL DEFAULT 1,
   note          TEXT,                          -- maintainer free-text reminder
   created_at    INTEGER NOT NULL,
@@ -116,6 +122,8 @@ CREATE TABLE IF NOT EXISTS publications (
   pending_count INTEGER,                     -- # of auto_pending_review at publish
                                              -- time; lets /v1/list/meta skip a
                                              -- full-partition scan per request
+  lite_key      TEXT,                        -- R2 key of the compact lite artifact
+                                             -- (schema v2: id/handle/label+category)
   published_at  INTEGER NOT NULL            -- epoch ms
 );
 CREATE INDEX IF NOT EXISTS idx_publications_version ON publications(version);
