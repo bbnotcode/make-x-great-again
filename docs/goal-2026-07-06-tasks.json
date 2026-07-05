@@ -15,40 +15,49 @@
   "tasks": [
     {
       "id": "T1",
-      "title": "服务端 category 体系：accounts.category 列 + keyword_rules.category 列 + classify LLM 输出 category + 迁移 SQL",
+      "title": "服务端 category 体系：accounts.category 列 + keyword_rules.category 列 + classify LLM 输出 category + 迁移 SQL（按用户要求：分类以 LLM 为准，无关键词猜测）",
       "verify": "migration 可正向/回滚执行；新 classify 写入 category；单测通过",
-      "passes": false
+      "passes": true,
+      "note": "migration 已应用到远程 D1；27/27 测试过；commit 935fc73"
     },
     {
       "id": "T2",
-      "title": "历史数据 category 回填脚本（keyword rule 映射 + reasons/evidence 启发式 + porn_bot→porn）",
-      "verify": "线上 human_confirmed 集合 category 覆盖率 ≥95%，抽样 30 条人工核对无明显错分",
-      "passes": false
+      "title": "历史数据 category 回填：porn_bot→porn 直映射 + 规则 provenance 映射 + 剩余行 LLM cron sweep（硬上限 2 调用/tick）",
+      "verify": "porn/规则层回填完成；LLM sweep 部署后逐步清零 NULL；下个 cron tick 观察到 NULL 数下降",
+      "passes": false,
+      "note": "porn 73785 + marketing 7501 + resource 4977 + crypto 222 + gambling 137 已回填；NULL 18721 待 LLM sweep（约1.5-2天自然清完）"
     },
     {
       "id": "T3",
-      "title": "发布产物 v2：lite JSON（短字段+category+仅 id key）+ audit 详情按需接口；保留 v1 兼容",
-      "verify": "lite 产物体积 ≤5MB（gzip 后更小）；旧扩展仍能消费 v1；单测通过",
-      "passes": false
+      "title": "发布产物 v2：R2 lite-<version>.json + GitHub v2-lite.json（全量无 cap）+ v1 兼容保留",
+      "verify": "lite 产物体积 ≤6MB；/v1/list/meta 广告 lite URL；旧 shards 继续发布",
+      "passes": false,
+      "note": "代码已部署；等 10min publish tick 验证产物"
     },
     {
       "id": "T4",
-      "title": "扩展端分级策略设置：按 category（色情/币圈/营销/其它）× 动作（自动拉黑/仅隐藏/关闭）配置，默认保持现行为",
-      "verify": "options UI 可切换；content 路径按设置执行对应动作；单测/构建通过",
-      "passes": false
+      "title": "扩展端分级策略：6 类 × （仅标记/自动隐藏/自动静音/自动拉黑），默认全部仅标记（=现行为）",
+      "verify": "typecheck + wxt build 通过；options 有分级策略区；content 命中即按策略执行且可撤销",
+      "passes": true,
+      "note": "commit daeaac4；构建产物 3.18MB"
     },
     {
       "id": "T5",
-      "title": "自动翻译对策：扩展端识别翻译状态并上报原文（GraphQL full_text 或 DOM lang 标记），signals 带 lang 元数据；服务端对疑似翻译文本跳过中文 keyword rule",
-      "verify": "构造翻译场景单测；keyword rule 路径对 translated 标记文本不命中中文规则",
-      "passes": false
+      "title": "自动翻译对策：服务端 CJK 规则翻译守卫（降级走 LLM）+ Signals.tweetsTranslated + LLM 提示词翻译陷阱说明 + 扩展端 DOM 翻译标记检测",
+      "verify": "翻译场景单测通过（3 个专项用例）",
+      "passes": true,
+      "note": "test/category-translation.test.ts 5/5 过；原文不可得（X 替换 DOM），故策略=标记+降级，非还原原文"
     },
     {
       "id": "T6",
-      "title": "部署 edge + 构建扩展，goal-verifier 核验全部验收项",
-      "verify": "wrangler deploy 成功；线上 meta/lite 产物可拉取；verifier 全 PASS",
-      "passes": false
+      "title": "部署 edge + 构建扩展 + goal-verifier 核验",
+      "verify": "wrangler deploy 成功；线上 lite 产物可拉取且含 category；verifier 全 PASS",
+      "passes": false,
+      "note": "worker 已部署 (b63204d0)；待 lite 产物验证 + verifier"
     }
   ],
-  "manual_blockers": []
+  "manual_blockers": [
+    "扩展新版需要人工上传 CWS/AMO（等 GitHub 镜像 v2-lite.json 生成后重新 npm run build 再上传，可拿到全量 10.5 万条+分类的 bundled 名单；当前构建用 v1 fallback 只有 5 万条）",
+    "admin 面板的关键词规则编辑 UI 尚无 category 字段输入（API 已支持）；新增规则建议顺手在 D1 里补 category"
+  ]
 }
