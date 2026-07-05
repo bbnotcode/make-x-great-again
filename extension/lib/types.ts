@@ -29,6 +29,10 @@ export interface Signals {
   accountAgeDays?: number;
   followersCount?: number;
   followingCount?: number;
+  /** The tweet texts above are X machine-translations, not the author's own
+   *  words (original unavailable in the DOM). Consumers must not treat the
+   *  surface language as an author signal. */
+  tweetsTranslated?: boolean;
 }
 
 /** Background messages — strictly local now (no remote classify/confirm). */

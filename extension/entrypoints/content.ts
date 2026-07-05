@@ -237,12 +237,36 @@ export default defineContentScript({
     }
 
     function renderLocalIndex(anchor: HTMLElement, key: string, sig: Signals, entry: IndexEntry) {
-      badgeFor(anchor, key, sig, entry.verdict, undefined, "list");
-      pushFinding(sig, entry.verdict, "local-index");
       if (!hitPublicSeen.has(key)) {
         hitPublicSeen.add(key);
         void bumpStat("hitPublic");
       }
+      // Per-category action policy: "badge" keeps the classic mark-only
+      // behavior; hide/mute/block fire immediately (the account is on the
+      // human-confirmed public list — every auto action is reversible from
+      // the 隐藏记录 tab, and mute/block additionally ride the user's own X
+      // session like the manual path).
+      const action = settings.categoryActions[entry.category] ?? "badge";
+      if (action === "badge") {
+        badgeFor(anchor, key, sig, entry.verdict, undefined, "list");
+        pushFinding(sig, entry.verdict, "local-index");
+        return;
+      }
+      void addBlocked(key);
+      if (sig.userId) void addBlocked(sig.userId);
+      void addBlockRecord({
+        id: key,
+        handle: sig.handle,
+        ...(sig.displayName ? { displayName: sig.displayName } : {}),
+        ...(sig.avatarUrl ? { avatarUrl: sig.avatarUrl } : {}),
+        verdict: entry.verdict,
+        source: "auto",
+        ts: Date.now(),
+      });
+      void bumpStats({ blocks: 1 });
+      void bumpStat("blocked");
+      if (action === "mute" || action === "block") void applyXAction(action, sig);
+      hideTweet(anchor);
     }
 
     async function process(sig: Signals, anchor: HTMLElement) {

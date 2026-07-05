@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BRAND } from "../../lib/brand";
+import { CATEGORY_ZH, SPAM_CATEGORIES, type SpamCategory } from "../../lib/category";
 import { categorizeReason, categorizeReasons } from "../../lib/reason-category";
 import {
   type ActionMode,
+  type CategoryAction,
   type Settings,
   getSettings,
+  setCategoryAction,
   setSetting,
 } from "../../lib/settings";
 import {
@@ -354,6 +357,7 @@ function Blocklist() {
   );
   const src: Record<string, string> = {
     manual: "手动",
+    auto: "分级策略",
     block_all: "一键全部",
     list_hit: "公榜命中",
     cache_hit: "缓存命中",
@@ -583,6 +587,65 @@ async function ensureXPermission(): Promise<boolean> {
   }
 }
 
+const CATEGORY_HINT: Record<SpamCategory, string> = {
+  porn: "约炮 / 上门 / 引流到主页的色情机器人",
+  crypto: "荐币、空投、合约喊单、股票投放",
+  gambling: "博彩、体育投注、棋牌推广",
+  resource: "网盘资源自取、盗版资源引流",
+  marketing: "广告矩阵、涨粉、通用营销引流",
+  other: "已确认是垃圾号但未归入以上类别",
+};
+
+const CATEGORY_ACTIONS: { value: CategoryAction; label: string; needsX: boolean }[] = [
+  { value: "badge", label: "仅标记", needsX: false },
+  { value: "hide", label: "自动隐藏", needsX: false },
+  { value: "mute", label: "自动静音", needsX: true },
+  { value: "block", label: "自动拉黑", needsX: true },
+];
+
+/** One category row: name + hint on the left, 4-way segmented control on the
+ *  right. mute/block request the optional x.com permission first, exactly
+ *  like the manual 处理方式 selector. */
+function CategoryPolicyRow({
+  cat,
+  value,
+  onChange,
+}: {
+  cat: SpamCategory;
+  value: CategoryAction;
+  onChange: (a: CategoryAction) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-border-2 p-3">
+      <div className="min-w-[150px]">
+        <span className="font-medium text-fg">{CATEGORY_ZH[cat]}</span>
+        <span className="block text-[12px] text-fg-3">{CATEGORY_HINT[cat]}</span>
+      </div>
+      <div className="flex overflow-hidden rounded-md border border-border-2">
+        {CATEGORY_ACTIONS.map((a) => {
+          const active = value === a.value;
+          return (
+            <button
+              key={a.value}
+              type="button"
+              onClick={() => onChange(a.value)}
+              className={`px-2.5 py-1.5 text-[12px] transition ${
+                active
+                  ? a.value === "block"
+                    ? "bg-danger/15 font-semibold text-danger"
+                    : "bg-card-hi font-semibold text-fg"
+                  : "text-fg-3 hover:text-fg"
+              }`}
+            >
+              {a.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function Settings() {
   const [cleared, setCleared] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
@@ -605,6 +668,20 @@ function Settings() {
     }
     setPermDenied(false);
     await save("actionMode", mode);
+  };
+  const changeCategoryAction = async (cat: SpamCategory, action: CategoryAction) => {
+    if (action === "mute" || action === "block") {
+      const ok = await ensureXPermission();
+      if (!ok) {
+        setPermDenied(true);
+        return;
+      }
+    }
+    setPermDenied(false);
+    await setCategoryAction(cat, action);
+    setSt((p) =>
+      p ? { ...p, categoryActions: { ...p.categoryActions, [cat]: action } } : p,
+    );
   };
   return (
     <Page title="设置" sub="配置仅存于本机">
@@ -670,6 +747,27 @@ function Settings() {
                 未授权访问 x.com，已保持当前处理方式。X 静音 / 拉黑需要该权限才能调用 X 接口。
               </p>
             )}
+          </section>
+        )}
+
+        {st && (
+          <section>
+            <SectionH>分级策略</SectionH>
+            <p className="mb-3 text-[12px] text-fg-3">
+              公共黑名单里的账号按垃圾类型分级处理。「仅标记」维持现状（只挂角标，等你手动点）；
+              「自动隐藏 / 静音 / 拉黑」在命中名单时立即执行，无需点击。分类由服务端 AI
+              结合账号整体信息判定并随名单下发；所有自动处理都可在「隐藏记录」里撤销。
+            </p>
+            <div className="space-y-2">
+              {SPAM_CATEGORIES.map((cat) => (
+                <CategoryPolicyRow
+                  key={cat}
+                  cat={cat}
+                  value={st.categoryActions[cat] ?? "badge"}
+                  onChange={(a) => changeCategoryAction(cat, a)}
+                />
+              ))}
+            </div>
           </section>
         )}
 
