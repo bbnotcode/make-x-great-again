@@ -6,7 +6,13 @@ import { CATEGORY_ZH } from "../lib/category";
 import { LIST_KEY, WL_KEY } from "../lib/list-sync";
 import { type IndexEntry, isWhitelisted, lookupLocal, warmLocalIndex } from "../lib/local-index";
 import { matchLocalRules } from "../lib/local-rules";
-import { type ActionMode, getSettings, onSettingsChange } from "../lib/settings";
+import {
+  type ActionMode,
+  type Settings,
+  getSettings,
+  onSettingsChange,
+  setSetting,
+} from "../lib/settings";
 import { bumpStat } from "../lib/stats";
 import { addBlockRecord, bumpStats } from "../lib/store";
 import type { Signals, Verdict } from "../lib/types";
@@ -32,6 +38,12 @@ function articleOf(node: Element | null): HTMLElement | null {
 /** User-facing verb for the configured action mode. */
 function actionVerb(mode: ActionMode): string {
   return mode === "block" ? "拉黑" : mode === "mute" ? "静音" : "隐藏";
+}
+
+/** How many spam categories currently escalate beyond "badge" — shown as the
+ *  hint next to the bubble's 自动处理 switch. */
+function autoCategoryCount(s: Settings): number {
+  return Object.values(s.categoryActions).filter((a) => a !== "badge").length;
 }
 
 /** Fire X's native mute/block (best-effort, paced) with one retry. The local
@@ -116,6 +128,9 @@ export default defineContentScript({
     if (!settings.enabled) return; // master off → don't init (applies next load)
     onSettingsChange((s) => {
       settings = s;
+      // Keep the bubble's 自动处理 switch + hint in sync (options page or
+      // another tab may have flipped it).
+      bubbleApi?.setAutoProcess(s.autoProcess, autoCategoryCount(s));
     });
 
     // Warm local data structures
@@ -263,7 +278,9 @@ export default defineContentScript({
       // auto action is reversible from the 隐藏记录 tab, and mute/block
       // additionally ride the user's own X session like the manual path).
       const action = settings.categoryActions[entry.category] ?? "badge";
-      if (action === "badge") {
+      // 自动处理 master switch off → everything degrades to mark-only,
+      // regardless of the per-category policy.
+      if (action === "badge" || !settings.autoProcess) {
         badgeFor(anchor, key, sig, entry.verdict, undefined, badgeSource);
         pushFinding(sig, entry.verdict, badgeSource === "rule" ? "local-rule" : "local-index");
         return;
@@ -273,6 +290,11 @@ export default defineContentScript({
       void bumpStats({ blocks: 1 });
       void bumpStat("blocked");
       hideTweet(anchor);
+      // Auto-processed accounts still show up in the bubble panel — as
+      // display-only rows driven through markAuto (checkbox disabled,
+      // button is a status chip). Chips + radar pill counts follow.
+      pushFinding(sig, entry.verdict, badgeSource === "rule" ? "local-rule" : "local-index");
+      bubbleApi?.markAuto(key, "processing");
       // Record AFTER the X action settles so the 隐藏记录 row can state
       // honestly whether the native mute/block actually landed — a silent
       // fire-and-forget here is how "自动拉黑" degrades into hide-only
@@ -292,6 +314,7 @@ export default defineContentScript({
           source: "auto",
           ts: Date.now(),
         });
+        bubbleApi?.markAuto(key, xOk ? "done" : "failed");
       })();
     }
 
@@ -457,7 +480,15 @@ export default defineContentScript({
           onDismiss() {
             dismissed = true;
           },
-        }, settings.bubblePos, actionVerb(settings.actionMode));
+          onToggleAuto(v: boolean) {
+            // Persist; the onSettingsChange listener updates `settings` (and
+            // echoes the new state back into the bubble, a no-op here).
+            void setSetting("autoProcess", v);
+          },
+        }, settings.bubblePos, actionVerb(settings.actionMode), {
+          autoProcess: settings.autoProcess,
+          autoCategoryCount: autoCategoryCount(settings),
+        });
         container.appendChild(bubble.el);
         if (!settings.bubble) bubble.el.style.display = "none";
         bubbleApi = bubble;

@@ -27,6 +27,7 @@ export interface Settings {
   bubblePos: "tr" | "br"; // top-right / bottom-right
   actionMode: ActionMode; // what "隐藏" does to a flagged account
   categoryActions: CategoryActions; // per-category automatic action on list hits
+  autoProcess: boolean; // master kill-switch for categoryActions auto hide/mute/block
   edgeBase: string; // advanced: override the public-list site base URL (links only)
 }
 
@@ -47,6 +48,7 @@ export const DEFAULTS: Settings = {
   bubblePos: "tr",
   actionMode: "local",
   categoryActions: { ...DEFAULT_CATEGORY_ACTIONS },
+  autoProcess: true,
   edgeBase: "",
 };
 

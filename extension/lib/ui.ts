@@ -144,6 +144,35 @@ export const STYLE = `
   border-width: 0 1.5px 1.5px 0; transform: rotate(45deg);
 }
 .xss-row-cb:disabled { opacity: .35; cursor: default; }
+
+/* 自动处理 master switch (card header area) — themed mini toggle. */
+.auto-row {
+  display: flex; align-items: center; gap: 7px; margin-top: 9px;
+  font-size: 11.5px; font-weight: 600; color: var(--text);
+}
+.auto-row .auto-hint {
+  margin-left: auto; font-size: 10.5px; font-weight: 500;
+  color: var(--muted); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis;
+}
+.xss-sw {
+  position: relative; width: 30px; height: 18px; flex: none; padding: 0;
+  border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--muted) 28%, transparent);
+  transition: background .16s ease, border-color .16s ease;
+}
+.xss-sw::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 12px; height: 12px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,.35);
+  transition: transform .16s ease;
+}
+.xss-sw[aria-checked="true"] { background: var(--brand); border-color: var(--brand); }
+.xss-sw[aria-checked="true"]::after { transform: translateX(12px); }
+@media (prefers-reduced-motion: reduce) {
+  .xss-sw, .xss-sw::after { transition: none; }
+}
 .row { display: flex; gap: 14px; margin-top: 10px; font-size: 12px; }
 .lnk { color: var(--muted); cursor: pointer; }
 .lnk:hover { color: var(--text); }
@@ -368,6 +397,15 @@ export interface BubbleHandlers {
   onProcess: (keys: string[], onProgress: (key: string, ok: boolean) => void) => void;
   onReviewEach: () => void;
   onDismiss: () => void;
+  /** 自动处理 master switch flipped from the card header. */
+  onToggleAuto?: (v: boolean) => void;
+}
+
+export interface BubbleOpts {
+  /** Initial 自动处理 switch state (settings.autoProcess). */
+  autoProcess?: boolean;
+  /** How many spam categories currently escalate beyond "badge". */
+  autoCategoryCount?: number;
 }
 
 /** Collapsed pill ⇄ expanded card. Default resting state = pill.
@@ -376,6 +414,7 @@ export function createBubble(
   h: BubbleHandlers,
   pos: "tr" | "br" = "tr",
   verb = "隐藏",
+  opts: BubbleOpts = {},
 ) {
   const root = document.createElement("div");
   root.className = `xss xss-bubble${pos === "br" ? " br" : ""}`;
@@ -400,12 +439,18 @@ export function createBubble(
   const deselected = new Set<string>();
   // Rows already rendered once — suppresses the slide-in replay on rerender.
   const seenRows = new Set<string>();
+  // Rows driven by the AUTO path (per-category policy): the extension acts
+  // on its own, so the checkbox and per-row button are display-only.
+  const autoRows = new Set<string>();
+  let autoOn = opts.autoProcess ?? true;
+  let autoCats = opts.autoCategoryCount ?? 0;
 
   // Must match content.ts keyOf(): userId first, `h:${handle}` fallback.
   const rowKey = (f: Finding) => f.userId || `h:${f.handle}`;
   const stateOf = (f: Finding): RowState | "pending" =>
     rowState.get(rowKey(f)) ?? "pending";
   const selectable = (f: Finding) => {
+    if (autoRows.has(rowKey(f))) return false; // auto rows are not user-actionable
     const st = stateOf(f);
     return st === "pending" || st === "failed";
   };
@@ -562,12 +607,36 @@ export function createBubble(
     });
   }
 
+  /** Header-area 自动处理 switch + tiny hint showing how many categories the
+   *  per-category policy currently escalates (options 页的分级策略). */
+  function autoRowMarkup() {
+    const hint = autoOn
+      ? autoCats > 0
+        ? `分级策略 · ${autoCats} 类自动`
+        : "分级策略 · 全部仅标记"
+      : "已暂停 · 仅标记";
+    return `<div class="auto-row">
+      <button class="xss-sw" data-auto role="switch" aria-checked="${autoOn}"
+        aria-label="自动处理"></button>
+      <span>自动处理</span>
+      <span class="auto-hint">${hint}</span>
+    </div>`;
+  }
+  function bindAutoRow() {
+    card.querySelector("[data-auto]")?.addEventListener("click", () => {
+      autoOn = !autoOn;
+      h.onToggleAuto?.(autoOn); // persists to settings; content.ts reacts
+      renderCard();
+    });
+  }
+
   function renderCard() {
     if (!findings.length) {
       card.innerHTML = `
         <div class="hd">${icon("shield-check", "var(--brand)", 16)}
           <span>${BRAND.acronym} 已启用</span>
           <span class="x" data-x>${icon("x", "currentColor", 14)}</span></div>
+        ${autoRowMarkup()}
         <div class="sub" style="display:block;line-height:1.6">
           正在被动检查本页账号。发现可疑的垃圾/色情机器人时，会在这里提示并提供一键处理。</div>
         <div class="row"><span class="lnk" data-gov>为什么 / 治理</span></div>`;
@@ -575,6 +644,7 @@ export function createBubble(
       card.querySelector("[data-gov]")?.addEventListener("click", () =>
         window.open(BRAND.governance, "_blank", "noopener"),
       );
+      bindAutoRow();
       return;
     }
     const s = stats();
@@ -597,6 +667,7 @@ export function createBubble(
       <div class="hd">${icon("shield-alert", "var(--brand)", 16)}
         <span>${selectableCount || s.running ? `本页发现 ${findings.length} 个可疑账号` : `本页已处理 ${s.done} 个账号`}</span>
         <span class="x" data-x>${icon("x", "currentColor", 14)}</span></div>
+      ${autoRowMarkup()}
       <div class="sub">
         <span class="metric" title="本页命中的可疑账号">
           <i style="background:var(--danger)"></i><b>${s.found}</b><em>命中</em>
@@ -636,6 +707,7 @@ export function createBubble(
             ]
               .filter(Boolean)
               .join(" ");
+            const isAuto = autoRows.has(id);
             const canPick = selectable(f);
             const checked = canPick && !deselected.has(id);
             const actClass =
@@ -648,8 +720,14 @@ export function createBubble(
                     : st === "failed"
                       ? "xss-act retry"
                       : "xss-act";
-            const actText =
-              st === "done"
+            // Auto rows: the button is a pure status chip, never an action.
+            const actText = isAuto
+              ? st === "done"
+                ? "已处理"
+                : st === "failed"
+                  ? "失败"
+                  : "处理中"
+              : st === "done"
                 ? `已${verb}`
                 : st === "processing"
                   ? `${verb}中`
@@ -658,7 +736,8 @@ export function createBubble(
                     : st === "failed"
                       ? "重试"
                       : verb;
-            const actDisabled = st === "done" || st === "processing" || st === "queued";
+            const actDisabled =
+              isAuto || st === "done" || st === "processing" || st === "queued";
             return `<div class="${rowCls}">
               <input type="checkbox" class="xss-row-cb" data-sel="${esc(id)}"
                 aria-label="选中 @${esc(f.handle)}"
@@ -668,10 +747,10 @@ export function createBubble(
                 <div class="qname">${name}</div>
                 <div class="qmeta" style="color:${col}">@${esc(f.handle)} · ${m.zh} ${(f.verdict.confidence * 100).toFixed(0)}%</div>
                 ${snip ? `<div class="qsnip">${snip}</div>` : ""}
-                ${st === "processing" ? `<div class="qnote" style="color:var(--danger)">正在${verb}…</div>` : ""}
+                ${st === "processing" ? `<div class="qnote" style="color:var(--danger)">${isAuto ? "自动处理中…" : `正在${verb}…`}</div>` : ""}
                 ${st === "queued" ? `<div class="qnote" style="color:var(--brand)">排队等待处理</div>` : ""}
-                ${st === "failed" ? `<div class="qnote" style="color:var(--warn)">处理失败 · <a href="https://x.com/${esc(f.handle)}" target="_blank" rel="noopener" style="color:var(--warn)">手动处理</a></div>` : ""}
-                ${st === "done" ? `<div class="qnote" style="color:var(--safe)">✓ 已${verb}</div>` : ""}
+                ${st === "failed" ? `<div class="qnote" style="color:var(--warn)">${isAuto ? "自动处理失败" : "处理失败"} · <a href="https://x.com/${esc(f.handle)}" target="_blank" rel="noopener" style="color:var(--warn)">手动处理</a></div>` : ""}
+                ${st === "done" ? `<div class="qnote" style="color:var(--safe)">✓ 已${isAuto ? "自动处理" : verb}</div>` : ""}
               </div>
               <button class="${actClass}" data-one="${esc(id)}"${actDisabled ? " disabled" : ""}>${actText}</button>
             </div>`;
@@ -689,6 +768,7 @@ export function createBubble(
       }
       <div class="row"><span class="lnk" data-each>逐个查看处理</span>
         <span class="lnk" data-ign>忽略本页</span></div>`;
+    bindAutoRow();
     card.querySelector("[data-x]")?.addEventListener("click", collapse);
     card.querySelector("[data-ign]")?.addEventListener("click", () => {
       h.onDismiss();
@@ -785,6 +865,7 @@ export function createBubble(
       for (const k of [...rowState.keys()]) if (!live.has(k)) rowState.delete(k);
       for (const k of [...deselected]) if (!live.has(k)) deselected.delete(k);
       for (const k of [...seenRows]) if (!live.has(k)) seenRows.delete(k);
+      for (const k of [...autoRows]) if (!live.has(k)) autoRows.delete(k);
       root.style.display = "";
       renderPill();
       if (open) renderCard();
@@ -799,6 +880,23 @@ export function createBubble(
     setScanning(n: number) {
       scanning = Math.max(0, n);
       if (!open) renderPill();
+    },
+    /** AUTO path: content.ts pushed the finding, then drives its row state
+     *  here as the X action progresses. Marks the row as auto-driven —
+     *  checkbox disabled, per-row button becomes a status chip. Chips,
+     *  progress bar and the radar pill all re-derive from rowState. */
+    markAuto(key: string, st: "processing" | "done" | "failed") {
+      autoRows.add(key);
+      rowState.set(key, st);
+      renderPill();
+      if (open) renderCard();
+    },
+    /** Sync the header switch when settings change elsewhere (options page
+     *  or another tab). Optionally refresh the category-count hint. */
+    setAutoProcess(v: boolean, categoryCount?: number) {
+      autoOn = v;
+      if (categoryCount !== undefined) autoCats = categoryCount;
+      if (open) renderCard();
     },
   };
 }
