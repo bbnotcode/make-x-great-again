@@ -4113,8 +4113,12 @@ async function prunePublications(env: Env): Promise<void> {
 // calls per 10-min tick (cost ceiling ~288 calls/day), and the sweep is
 // self-extinguishing — once no NULL-category rows remain it selects nothing
 // and never calls the LLM again.
-const BACKFILL_ROWS_PER_CALL = 40;
-const BACKFILL_CALLS_PER_TICK = 2;
+// 16 rows/call keeps the answer JSON small enough that a reasoning model
+// can't blow through max_tokens (the original 40-row batches deterministically
+// truncated at temperature 0 and stalled the sweep — see ORDER BY RANDOM()
+// note below).
+const BACKFILL_ROWS_PER_CALL = 16;
+const BACKFILL_CALLS_PER_TICK = 3;
 
 const BackfillAnswer = z.object({
   categories: z
@@ -4143,13 +4147,18 @@ interface BackfillRow {
 
 async function backfillCategories(env: Env): Promise<void> {
   if (!env.LLM_API_BASE || !env.LLM_API_KEY) return;
+  // ORDER BY RANDOM(), not rowid: with a deterministic order + temperature 0,
+  // a batch whose content makes the model fail (e.g. runaway reasoning →
+  // truncation) is re-selected and re-fails every tick, freezing the sweep.
+  // Random sampling makes every tick draw a different batch, so no subset of
+  // rows can block the rest.
   const rows = await env.DB.prepare(
     `SELECT rowid, handle, display_name, evidence_text, reasons
        FROM accounts
       WHERE status='human_confirmed'
         AND verdict_label IN ('spam','likely_spam')
         AND category IS NULL
-      ORDER BY rowid
+      ORDER BY RANDOM()
       LIMIT ?`,
   )
     .bind(BACKFILL_ROWS_PER_CALL * BACKFILL_CALLS_PER_TICK)
@@ -4164,38 +4173,53 @@ async function backfillCategories(env: Env): Promise<void> {
       const evidence = (r.evidence_text ?? "").slice(0, 200);
       return `${idx}. @${r.handle} | name: ${r.display_name || "(empty)"} | evidence: ${evidence || "(none)"} | reasons: ${reasons || "(none)"}`;
     });
-    let answer: z.infer<typeof BackfillAnswer>;
-    try {
-      const res = await fetch(`${env.LLM_API_BASE}/chat/completions`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${env.LLM_API_KEY}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          model: env.LLM_API_MODEL,
-          temperature: 0,
-          max_tokens: 4096,
-          messages: [
-            { role: "system", content: BACKFILL_SYSTEM },
-            { role: "user", content: lines.join("\n") },
-          ],
-        }),
-      });
-      if (!res.ok) throw new Error(`LLM ${res.status}`);
-      const j = (await res.json()) as { choices: ChatChoice[] };
-      const txt = (
-        j.choices[0]?.message?.content ||
-        j.choices[0]?.message?.reasoning_content ||
-        ""
-      ).trim();
-      answer = BackfillAnswer.parse(extractVerdictJson(txt));
-    } catch (e) {
-      // Transient LLM failure — stop this tick; the next tick retries the
-      // same rows (they are still category IS NULL).
-      console.warn("category backfill LLM error", e);
-      return;
+    let answer: z.infer<typeof BackfillAnswer> | null = null;
+    const messages: { role: string; content: string }[] = [
+      { role: "system", content: BACKFILL_SYSTEM },
+      { role: "user", content: lines.join("\n") },
+    ];
+    // Two attempts, mirroring classify(): the retry asks for the compact JSON
+    // only, which recovers from truncated / prose-wrapped first answers.
+    for (let attempt = 0; attempt < 2 && !answer; attempt++) {
+      try {
+        const res = await fetch(`${env.LLM_API_BASE}/chat/completions`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${env.LLM_API_KEY}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            model: env.LLM_API_MODEL,
+            temperature: 0,
+            max_tokens: 8192,
+            messages,
+          }),
+        });
+        if (!res.ok) throw new Error(`LLM ${res.status}`);
+        const j = (await res.json()) as { choices: ChatChoice[] };
+        const choice = j.choices[0];
+        const txt = (choice?.message?.content || choice?.message?.reasoning_content || "").trim();
+        try {
+          answer = BackfillAnswer.parse(extractVerdictJson(txt));
+        } catch (parseErr) {
+          messages.push(
+            { role: "assistant", content: txt.slice(0, 1500) },
+            {
+              role: "user",
+              content:
+                'Reply with ONLY the compact JSON object {"categories":[{"i":<n>,"c":"<category>"}...]} covering every row — no reasoning, no markdown fences.',
+            },
+          );
+          if (attempt === 1) console.warn("category backfill parse error", parseErr);
+        }
+      } catch (e) {
+        console.warn("category backfill LLM error", e);
+        break; // network/HTTP failure — skip this batch, try the next one
+      }
     }
+    // A failed batch no longer aborts the tick: with random sampling the next
+    // batch is a different draw, so one bad batch can't stall the sweep.
+    if (!answer) continue;
     const updates = answer.categories
       .filter((a) => a.i >= 0 && a.i < batch.length)
       .map((a) =>
