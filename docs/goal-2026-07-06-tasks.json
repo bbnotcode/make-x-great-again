@@ -24,8 +24,8 @@
       "id": "T2",
       "title": "历史数据 category 回填：porn_bot→porn 直映射 + 规则 provenance 映射 + 剩余行 LLM cron sweep（硬上限 2 调用/tick）",
       "verify": "porn/规则层回填完成；LLM sweep 部署后逐步清零 NULL；下个 cron tick 观察到 NULL 数下降",
-      "passes": false,
-      "note": "porn 73785 + marketing 7501 + resource 4977 + crypto 222 + gambling 137 已回填；NULL 18721 待 LLM sweep（约1.5-2天自然清完）"
+      "passes": true,
+      "note": "porn 74K + 规则层 12.9K 已回填；sweep 曾因确定性毒批次卡死在 18441（fix 2017818：随机采样+16行批+重试+跳批），修复后单 tick -32，约 3-4 天清零，自动收敛"
     },
     {
       "id": "T3",
@@ -52,8 +52,8 @@
       "id": "T6",
       "title": "部署 edge + 构建扩展 + goal-verifier 核验",
       "verify": "wrangler deploy 成功；线上 lite 产物可拉取且含 category；verifier 全 PASS",
-      "passes": false,
-      "note": "worker 已部署 (b63204d0)；待 lite 产物验证 + verifier"
+      "passes": true,
+      "note": "两次部署（b63204d0 + sweep fix 390dc36e）；goal-verifier 全项 PASS；扩展已用全量 v2-lite 重建（106,497 条，待人工上架）"
     }
   ],
   "manual_blockers": [
