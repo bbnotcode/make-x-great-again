@@ -374,7 +374,7 @@ export interface BadgeActions {
 /** Inline pill on the author row; hover/focus → popover with reasons. */
 /** source: 'fresh' = just classified (rise-in); 'list'/'cache' = already on
  *  record → instant calm "known" marker, no processing implied. */
-export type BadgeSource = "fresh" | "list" | "cache";
+export type BadgeSource = "fresh" | "list" | "cache" | "rule";
 
 export function createBadge(
   v: Verdict | null,
@@ -392,15 +392,17 @@ export function createBadge(
   }
   const meta = LABEL[v.label];
   const color = `var(${meta.varName})`;
-  const known = source === "list" || source === "cache";
+  const known = source === "list" || source === "cache" || source === "rule";
   el.className = `xss-badge ${known ? "known" : "fresh"}`;
   el.style.borderColor = color;
   const tip =
     source === "list"
       ? "命中公共名单"
-      : source === "cache"
-        ? "本地缓存命中"
-        : "首次发现（本机首次判定，已记录待人工确认）";
+      : source === "rule"
+        ? "命中官方关键词规则（本机比对）"
+        : source === "cache"
+          ? "本地缓存命中"
+          : "首次发现（本机首次判定，已记录待人工确认）";
   el.title = tip;
   // known → solid brand dot; fresh → hollow "first discovery" ring + 首发 tag
   const mark = known

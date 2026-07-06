@@ -3425,6 +3425,21 @@ async function mirrorToGitHub(
   );
 
   const liteList = liteRows.results ?? [];
+  const mirrorRuleField: Record<string, string> = {
+    handle: "h",
+    display_name: "d",
+    bio: "b",
+    tweet: "t",
+    any: "a",
+  };
+  const mirrorRules = (await getKeywordRules(env))
+    .filter((r) => r.action === "blacklist")
+    .map((r) => [
+      r.pattern,
+      mirrorRuleField[r.field] ?? "a",
+      (r.verdict_label === "porn_bot" ? "p" : "s") +
+        (CATEGORY_CODE[(categoryForRule(r) ?? "other") as SpamCategory] ?? "o"),
+    ]);
   const lite = await publish(
     "data/blacklist/v2-lite.json",
     {
@@ -3435,6 +3450,7 @@ async function mirrorToGitHub(
       categories: Object.fromEntries(
         (Object.entries(CATEGORY_CODE) as [SpamCategory, string][]).map(([k, v]) => [v, k]),
       ),
+      rules: mirrorRules,
       entries: liteList.map((r) => [
         r.x_user_id ?? "",
         r.handle,
@@ -3973,6 +3989,27 @@ async function publishArtifacts(env: Env): Promise<void> {
     (a.verdict_label === "porn_bot" ? "p" : "s") +
       (CATEGORY_CODE[(a.category ?? "other") as SpamCategory] ?? "o"),
   ]);
+  // Ship the enabled blacklist keyword rules with the artifact so clients can
+  // flag first-seen template accounts (brand-new throwaways not yet on the
+  // list) locally, with zero upload. Same maintainer-curated rules the server
+  // uses as its pre-LLM fast path; the client applies the same translation
+  // guard. Compact row: [pattern, fieldCode, labelCode+categoryCode].
+  const RULE_FIELD_CODE: Record<string, string> = {
+    handle: "h",
+    display_name: "d",
+    bio: "b",
+    tweet: "t",
+    any: "a",
+  };
+  const liteRules = (await getKeywordRules(env))
+    .filter((r) => r.action === "blacklist")
+    .map((r) => [
+      r.pattern,
+      RULE_FIELD_CODE[r.field] ?? "a",
+      (r.verdict_label === "porn_bot" ? "p" : "s") +
+        (CATEGORY_CODE[(categoryForRule(r) ?? "other") as SpamCategory] ?? "o"),
+    ]);
+
   const liteArtifact = {
     schema: 2,
     version,
@@ -3982,6 +4019,7 @@ async function publishArtifacts(env: Env): Promise<void> {
     categories: Object.fromEntries(
       (Object.entries(CATEGORY_CODE) as [SpamCategory, string][]).map(([k, v]) => [v, k]),
     ),
+    rules: liteRules,
     entries: liteEntries,
   };
 

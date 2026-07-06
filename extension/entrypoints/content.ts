@@ -2,7 +2,9 @@ import { addBlocked, isBlockedSync, warm as warmBlocklist } from "../lib/blockli
 import { BRAND } from "../lib/brand";
 import { type Cached, cacheGet, signalsHash } from "../lib/cache";
 import { extractFromArticle, extractProfile, extractThreadTopic } from "../lib/detect";
-import { type IndexEntry, lookupLocal, warmLocalIndex } from "../lib/local-index";
+import { CATEGORY_ZH } from "../lib/category";
+import { type IndexEntry, isWhitelisted, lookupLocal, warmLocalIndex } from "../lib/local-index";
+import { matchLocalRules } from "../lib/local-rules";
 import { type ActionMode, getSettings, onSettingsChange } from "../lib/settings";
 import { bumpStat } from "../lib/stats";
 import { addBlockRecord, bumpStats } from "../lib/store";
@@ -236,20 +238,26 @@ export default defineContentScript({
       pushFinding(sig, c.verdict, "cache");
     }
 
-    function renderLocalIndex(anchor: HTMLElement, key: string, sig: Signals, entry: IndexEntry) {
+    function renderLocalIndex(
+      anchor: HTMLElement,
+      key: string,
+      sig: Signals,
+      entry: IndexEntry,
+      badgeSource: BadgeSource = "list",
+    ) {
       if (!hitPublicSeen.has(key)) {
         hitPublicSeen.add(key);
         void bumpStat("hitPublic");
       }
       // Per-category action policy: "badge" keeps the classic mark-only
       // behavior; hide/mute/block fire immediately (the account is on the
-      // human-confirmed public list — every auto action is reversible from
-      // the 隐藏记录 tab, and mute/block additionally ride the user's own X
-      // session like the manual path).
+      // human-confirmed public list or hit a maintainer-curated rule — every
+      // auto action is reversible from the 隐藏记录 tab, and mute/block
+      // additionally ride the user's own X session like the manual path).
       const action = settings.categoryActions[entry.category] ?? "badge";
       if (action === "badge") {
-        badgeFor(anchor, key, sig, entry.verdict, undefined, "list");
-        pushFinding(sig, entry.verdict, "local-index");
+        badgeFor(anchor, key, sig, entry.verdict, undefined, badgeSource);
+        pushFinding(sig, entry.verdict, badgeSource === "rule" ? "local-rule" : "local-index");
         return;
       }
       void addBlocked(key);
@@ -301,6 +309,32 @@ export default defineContentScript({
         const entry = lookupLocal(sig.userId, sig.handle);
         if (entry) {
           renderLocalIndex(anchor, key, sig, entry);
+          return;
+        }
+
+        // 3.5 Maintainer-curated keyword rules, shipped with the synced list.
+        // Catches first-seen template accounts (brand-new porn-bot throwaways
+        // not yet on the public list) with zero upload. Whitelist wins.
+        const ruleHit = matchLocalRules(sig);
+        if (ruleHit && !isWhitelisted(sig.userId, sig.handle)) {
+          renderLocalIndex(
+            anchor,
+            key,
+            sig,
+            {
+              userId: sig.userId ?? "",
+              handle: sig.handle,
+              verdict: {
+                label: ruleHit.label,
+                confidence: 0.95,
+                reasons: [`命中官方规则「${ruleHit.pattern}」 · ${CATEGORY_ZH[ruleHit.category]}`],
+              },
+              category: ruleHit.category,
+              source: "community",
+              updatedAt: new Date().toISOString(),
+            },
+            "rule",
+          );
           return;
         }
 

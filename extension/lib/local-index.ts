@@ -3,7 +3,15 @@
 // userId and handle, and hot-swaps when the background sync stores a newer
 // list (no page reload needed).
 import { CATEGORY_ZH, type SpamCategory, categoryFromCode } from "./category";
-import { LIST_KEY, type StoredList, getStoredList } from "./list-sync";
+import {
+  LIST_KEY,
+  type StoredList,
+  type StoredWhitelist,
+  WL_KEY,
+  getStoredList,
+  getStoredWhitelist,
+} from "./list-sync";
+import { setLocalRules } from "./local-rules";
 import type { Label, Verdict } from "./types";
 
 const CODE_TO_LABEL: Record<string, Label> = { p: "porn_bot", s: "spam" };
@@ -22,7 +30,22 @@ export interface IndexEntry {
 // ---- In-memory lookup structures ----
 let userIdMap: Map<string, IndexEntry> | null = null;
 let handleMap: Map<string, IndexEntry> | null = null;
+// Official whitelist — accounts here are never returned by lookupLocal,
+// whatever the blacklist says. Safety valve for false positives / appeals.
+let wlIds = new Set<string>();
+let wlHandles = new Set<string>();
 let warmed = false;
+
+function buildWhitelist(wl: StoredWhitelist): void {
+  const ids = new Set<string>();
+  const handles = new Set<string>();
+  for (const [uid, handle] of wl.entries) {
+    if (uid) ids.add(uid);
+    if (handle) handles.add(handle.toLowerCase());
+  }
+  wlIds = ids;
+  wlHandles = handles;
+}
 
 function buildMaps(list: StoredList): void {
   const nextById = new Map<string, IndexEntry>();
@@ -51,15 +74,16 @@ function buildMaps(list: StoredList): void {
   }
   userIdMap = nextById;
   handleMap = nextByHandle;
+  setLocalRules(list.rules);
 }
 
 // Hot-swap: when the background sync writes a newer list, every open context
 // rebuilds its maps without a reload.
 try {
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === "local" && changes[LIST_KEY]?.newValue) {
-      buildMaps(changes[LIST_KEY].newValue as StoredList);
-    }
+    if (area !== "local") return;
+    if (changes[LIST_KEY]?.newValue) buildMaps(changes[LIST_KEY].newValue as StoredList);
+    if (changes[WL_KEY]?.newValue) buildWhitelist(changes[WL_KEY].newValue as StoredWhitelist);
   });
 } catch {
   /* not an extension context (tests) — non-fatal */
@@ -70,6 +94,8 @@ try {
  *  null until the download lands and the onChanged hook swaps the maps in. */
 export async function warmLocalIndex(): Promise<void> {
   if (warmed) return;
+  const wl = await getStoredWhitelist();
+  if (wl) buildWhitelist(wl);
   const stored = await getStoredList();
   if (stored) {
     buildMaps(stored);
@@ -97,8 +123,19 @@ export function lookupByHandle(handle: string): IndexEntry | null {
   return handleMap?.get(handle.toLowerCase()) ?? null;
 }
 
-/** Lookup by userId first, fall back to handle. */
+/** Official-whitelist membership — shared guard for every local detection
+ *  path (list lookup AND local keyword rules). */
+export function isWhitelisted(userId?: string, handle?: string): boolean {
+  if (userId && wlIds.has(userId)) return true;
+  if (handle && wlHandles.has(handle.toLowerCase())) return true;
+  return false;
+}
+
+/** Lookup by userId first, fall back to handle. Whitelisted accounts are
+ *  never reported as hits. */
 export function lookupLocal(userId?: string, handle?: string): IndexEntry | null {
+  if (userId && wlIds.has(userId)) return null;
+  if (handle && wlHandles.has(handle.toLowerCase())) return null;
   if (userId) {
     const byId = lookupByUserId(userId);
     if (byId) return byId;

@@ -17,9 +17,22 @@ export interface StoredList {
   fetchedAt: number; // epoch ms of the successful download
   count: number;
   entries: LiteRow[];
+  /** Maintainer-curated blacklist keyword rules shipped with the artifact:
+   *  [pattern, fieldCode, labelCode+categoryCode]. Absent in older caches. */
+  rules?: [string, string, string][];
 }
 
 export const LIST_KEY = "xss:list:v2";
+export const WL_KEY = "xss:whitelist:v1";
+
+/** Official whitelist row: [x_user_id ("" when unknown), handle]. Accounts
+ *  on it are NEVER badged / auto-processed — the safety valve against
+ *  blacklist false positives. */
+export interface StoredWhitelist {
+  fetchedAt: number;
+  count: number;
+  entries: [string, string][];
+}
 
 // Refuse to overwrite a good cached list with a suspiciously tiny one — a
 // half-deployed or corrupted artifact must not wipe local protection.
@@ -35,6 +48,7 @@ interface LiteArtifact {
   version?: string;
   count?: number;
   entries?: unknown;
+  rules?: unknown;
 }
 
 export async function getStoredList(): Promise<StoredList | null> {
@@ -47,15 +61,34 @@ export async function getStoredList(): Promise<StoredList | null> {
   }
 }
 
+export async function getStoredWhitelist(): Promise<StoredWhitelist | null> {
+  try {
+    const got = await chrome.storage.local.get(WL_KEY);
+    const v = got[WL_KEY] as StoredWhitelist | undefined;
+    return v && Array.isArray(v.entries) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 async function edgeBase(): Promise<string> {
   const s = await getSettings();
   return (s.edgeBase || BRAND.edgeBase).replace(/\/+$/, "");
 }
 
-let syncing: Promise<{ updated: boolean; version?: string; error?: string }> | null = null;
+export interface SyncResult {
+  updated: boolean;
+  version?: string;
+  black?: number;
+  white?: number;
+  error?: string;
+}
 
-/** Download the latest lite artifact if the published version changed.
- *  Serialized: concurrent callers share one in-flight sync. */
+let syncing: Promise<SyncResult> | null = null;
+
+/** Download the latest lite blacklist (when the published version changed,
+ *  or always with force) plus the official whitelist (tiny — refreshed on
+ *  every attempt). Serialized: concurrent callers share one in-flight sync. */
 export function syncList(force = false) {
   if (!syncing) {
     syncing = doSync(force).finally(() => {
@@ -65,29 +98,51 @@ export function syncList(force = false) {
   return syncing;
 }
 
-async function doSync(force: boolean): Promise<{ updated: boolean; version?: string; error?: string }> {
+async function syncWhitelist(base: string): Promise<number | undefined> {
+  try {
+    const res = await fetch(`${base}/v1/whitelist`, { cache: "no-cache" });
+    if (!res.ok) return undefined;
+    const j = (await res.json()) as { list?: { x_user_id?: string | null; handle?: string }[] };
+    if (!Array.isArray(j.list)) return undefined;
+    const entries: [string, string][] = j.list
+      .filter((r) => r && typeof r.handle === "string")
+      .map((r) => [r.x_user_id ?? "", r.handle as string]);
+    const next: StoredWhitelist = { fetchedAt: Date.now(), count: entries.length, entries };
+    await chrome.storage.local.set({ [WL_KEY]: next });
+    return entries.length;
+  } catch {
+    return undefined; // whitelist refresh is best-effort; keep the old cache
+  }
+}
+
+async function doSync(force: boolean): Promise<SyncResult> {
   try {
     const base = await edgeBase();
+    // Whitelist first: it is a few KB and must stay fresh even when the
+    // blacklist version hasn't moved (an appeal that whitelists someone
+    // should reach clients on the next sync, not the next list release).
+    const white = await syncWhitelist(base);
+
     const metaRes = await fetch(`${base}/v1/list/meta`, { cache: "no-cache" });
-    if (!metaRes.ok) return { updated: false, error: `meta ${metaRes.status}` };
+    if (!metaRes.ok) return { updated: false, white, error: `meta ${metaRes.status}` };
     const meta = (await metaRes.json()) as ListMeta;
     const litePath = meta.artifacts?.lite;
-    if (!litePath) return { updated: false, error: "no lite artifact advertised" };
+    if (!litePath) return { updated: false, white, error: "no lite artifact advertised" };
 
     const stored = await getStoredList();
     if (!force && stored && meta.version && stored.version === meta.version) {
-      return { updated: false, version: stored.version };
+      return { updated: false, version: stored.version, black: stored.count, white };
     }
 
     const liteRes = await fetch(`${base}${litePath}`);
-    if (!liteRes.ok) return { updated: false, error: `lite ${liteRes.status}` };
+    if (!liteRes.ok) return { updated: false, white, error: `lite ${liteRes.status}` };
     const lite = (await liteRes.json()) as LiteArtifact;
     if (lite.schema !== 2 || !Array.isArray(lite.entries)) {
-      return { updated: false, error: "unexpected lite schema" };
+      return { updated: false, white, error: "unexpected lite schema" };
     }
     const entries = lite.entries as LiteRow[];
     if (entries.length < MIN_SANE_ENTRIES) {
-      return { updated: false, error: `implausibly small list (${entries.length})` };
+      return { updated: false, white, error: `implausibly small list (${entries.length})` };
     }
 
     const next: StoredList = {
@@ -95,9 +150,10 @@ async function doSync(force: boolean): Promise<{ updated: boolean; version?: str
       fetchedAt: Date.now(),
       count: entries.length,
       entries,
+      ...(Array.isArray(lite.rules) ? { rules: lite.rules as [string, string, string][] } : {}),
     };
     await chrome.storage.local.set({ [LIST_KEY]: next });
-    return { updated: true, version: next.version };
+    return { updated: true, version: next.version, black: next.count, white };
   } catch (e) {
     return { updated: false, error: e instanceof Error ? e.message : String(e) };
   }

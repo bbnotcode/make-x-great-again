@@ -52,7 +52,7 @@ export default defineBackground(() => {
               },
             });
           } else if (msg.type === "list-sync") {
-            sendResponse({ ok: true, data: await syncList() });
+            sendResponse({ ok: true, data: await syncList(!!msg.force) });
           } else if (msg.type === "stats") {
             const { getStats } = await import("../lib/stats");
             sendResponse({ ok: true, data: await getStats() });

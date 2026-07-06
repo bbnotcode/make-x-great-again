@@ -10,6 +10,7 @@ import {
   setCategoryAction,
   setSetting,
 } from "../../lib/settings";
+import { getStoredList, getStoredWhitelist } from "../../lib/list-sync";
 import {
   type BlockRecord,
   type CacheRow,
@@ -274,12 +275,124 @@ const td = "border-b border-border px-3 py-2.5 align-middle whitespace-nowrap";
 const th = `${td} text-[10.5px] font-semibold uppercase tracking-[0.06em] text-fg-3`;
 const trHover = "transition hover:bg-card-hi";
 
+const CAT_COLOR: Record<string, string> = {
+  porn: "#a855f7",
+  crypto: "#f59e0b",
+  gambling: "#ec4899",
+  resource: "#3b82f6",
+  marketing: "#ef4444",
+  other: "#71717a",
+};
+
+const relTime = (ts: number | null | undefined): string => {
+  if (!ts) return "从未";
+  const m = Math.max(0, Math.round((Date.now() - ts) / 60000));
+  if (m < 1) return "刚刚";
+  if (m < 60) return `${m} 分钟前`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} 小时前`;
+  return `${Math.floor(h / 24)} 天前`;
+};
+
+interface ListState {
+  black: number;
+  white: number;
+  version: string | null;
+  fetchedAt: number | null;
+  rules: number;
+  catDist: Record<string, number>;
+}
+
+async function readListState(): Promise<ListState> {
+  const [list, wl] = await Promise.all([getStoredList(), getStoredWhitelist()]);
+  const catDist: Record<string, number> = {};
+  if (list) {
+    for (const e of list.entries) {
+      const code = String(e[2])[1] ?? "o";
+      catDist[code] = (catDist[code] ?? 0) + 1;
+    }
+  }
+  return {
+    black: list?.count ?? 0,
+    white: wl?.count ?? 0,
+    version: list?.version ?? null,
+    fetchedAt: list?.fetchedAt ?? null,
+    rules: list?.rules?.length ?? 0,
+    catDist,
+  };
+}
+
+/** 名单状态卡：黑/白名单规模、版本、同步时间 + 手动「立即更新」。 */
+function ListStatusCard({ ls, onRefreshed }: { ls: ListState; onRefreshed: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const refresh = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = (await chrome.runtime.sendMessage({ type: "list-sync", force: true })) as {
+        ok: boolean;
+        data?: { updated?: boolean; black?: number; white?: number; error?: string };
+        error?: string;
+      };
+      const d = r?.data;
+      if (r?.ok && d && !d.error) {
+        setMsg(d.updated ? `已更新 · 黑名单 ${d.black?.toLocaleString()} 条` : "已是最新版本");
+        onRefreshed();
+      } else {
+        setMsg(`更新失败：${d?.error ?? r?.error ?? "未知错误"}`);
+      }
+    } catch (e) {
+      setMsg(`更新失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mb-8 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3">
+      <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-[13px]">
+        <span>
+          <b className="font-mono text-[16px] tabular-nums">{ls.black.toLocaleString("zh-CN")}</b>
+          <span className="ml-1 text-fg-3">黑名单</span>
+        </span>
+        <span>
+          <b className="font-mono text-[16px] tabular-nums">{ls.white.toLocaleString("zh-CN")}</b>
+          <span className="ml-1 text-fg-3">白名单</span>
+        </span>
+        <span>
+          <b className="font-mono text-[16px] tabular-nums">{ls.rules}</b>
+          <span className="ml-1 text-fg-3">检测规则</span>
+        </span>
+        <span className="text-[12px] text-fg-3">
+          上次同步 {relTime(ls.fetchedAt)}
+          {ls.version ? ` · ${ls.version.slice(0, 14)}…` : ""} · 每 6 小时自动同步
+        </span>
+      </div>
+      <div className="flex items-center gap-3">
+        {msg && <span className="text-[12px] text-fg-3">{msg}</span>}
+        <Btn onClick={refresh} disabled={busy}>
+          {busy ? "同步中…" : "立即更新"}
+        </Btn>
+      </div>
+    </div>
+  );
+}
+
 function Overview() {
   const [s, setS] = useState<Awaited<ReturnType<typeof getStats>> | null>(null);
   const [bl, setBl] = useState(0);
+  const [autoBl, setAutoBl] = useState(0);
+  const [ls, setLs] = useState<ListState | null>(null);
+  const [st, setSt] = useState<Settings | null>(null);
+  const loadLists = () => readListState().then(setLs);
   useEffect(() => {
     getStats().then(setS);
-    getBlocklist().then((l) => setBl(l.length));
+    getBlocklist().then((l) => {
+      setBl(l.length);
+      setAutoBl(l.filter((r) => r.source === "auto").length);
+    });
+    getSettings().then(setSt);
+    void loadLists();
   }, []);
   if (!s) return <Page title="概览" sub="加载中…" />;
   const d = s.byLabel;
@@ -301,14 +414,83 @@ function Overview() {
       <div className="mt-2 text-[12px] text-fg-3">{l}</div>
     </div>
   );
+  const catTotal = ls ? Object.values(ls.catDist).reduce((a, b) => a + b, 0) || 1 : 1;
+  const CAT_ORDER: [string, SpamCategory][] = [
+    ["p", "porn"],
+    ["m", "marketing"],
+    ["r", "resource"],
+    ["c", "crypto"],
+    ["g", "gambling"],
+    ["o", "other"],
+  ];
   return (
     <Page title="概览" sub="本地统计 · 数据仅存于本机，无 PII">
+      {ls && <ListStatusCard ls={ls} onRefreshed={loadLists} />}
       <div className="mb-8 grid grid-cols-4 gap-px overflow-hidden rounded-lg border border-border bg-border">
         <Card n={s.detections} l="AI 检测总数" />
         <Card n={s.cacheHits} l="缓存命中 · 省下的 LLM 调用" />
-        <Card n={bl} l="已隐藏账号" />
+        <Card n={bl} l={autoBl ? `已隐藏账号 · 其中自动 ${autoBl.toLocaleString("zh-CN")}` : "已隐藏账号"} />
         <Card n={(d.spam ?? 0) + (d.porn_bot ?? 0)} l="判定为垃圾/色情bot" />
       </div>
+
+      {ls && ls.black > 0 && (
+        <div className="mb-8">
+          <SectionH>公共黑名单构成</SectionH>
+          <div className="my-2 flex h-1.5 overflow-hidden rounded-full bg-card">
+            {CAT_ORDER.map(([code, cat]) =>
+              ls.catDist[code] ? (
+                <i
+                  key={code}
+                  style={{
+                    width: `${((ls.catDist[code] / catTotal) * 100).toFixed(1)}%`,
+                    background: CAT_COLOR[cat],
+                  }}
+                  className="block h-full"
+                  title={`${CATEGORY_ZH[cat]} · ${ls.catDist[code]}`}
+                />
+              ) : null,
+            )}
+          </div>
+          <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1.5 text-[12px] text-fg-3">
+            {CAT_ORDER.map(([code, cat]) => (
+              <span key={code} className="inline-flex items-center gap-1.5">
+                <i className="block h-2 w-2 rounded-full" style={{ background: CAT_COLOR[cat] }} />
+                {CATEGORY_ZH[cat]} {(ls.catDist[code] ?? 0).toLocaleString("zh-CN")}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {st && (
+        <div className="mb-8">
+          <div className="flex items-baseline justify-between">
+            <SectionH>分级策略</SectionH>
+            <a href="?tab=settings" className="text-[12px] text-fg-3 hover:text-fg">
+              调整 →
+            </a>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {SPAM_CATEGORIES.map((cat) => {
+              const act = st.categoryActions[cat] ?? "badge";
+              const actZh =
+                act === "badge" ? "仅标记" : act === "hide" ? "自动隐藏" : act === "mute" ? "自动静音" : "自动拉黑";
+              return (
+                <span
+                  key={cat}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] ${
+                    act === "badge" ? "border-border-2 text-fg-3" : "border-fg/30 text-fg"
+                  }`}
+                >
+                  <i className="block h-2 w-2 rounded-full" style={{ background: CAT_COLOR[cat] }} />
+                  {CATEGORY_ZH[cat]} · {actZh}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <SectionH>检测类别分布</SectionH>
       <div className="my-2 flex h-1.5 overflow-hidden rounded-full bg-card">
         {seg("porn_bot", "#a855f7")}
@@ -708,10 +890,11 @@ function Settings() {
 
         {st && (
           <section>
-            <SectionH>处理方式</SectionH>
+            <SectionH>手动处理方式</SectionH>
             <p className="mb-3 text-[12px] text-fg-3">
-              点击「隐藏」按钮时，对识别出的垃圾号默认执行哪种处理。默认仅本地隐藏（零联网）；
-              选择 X 静音 / 拉黑会用你当前的 X 登录态调用 X 自家接口，不经过我们的服务器。
+              <b className="text-fg-2">你手动点「隐藏」按钮时</b>执行的动作（角标 /
+              气泡里的按钮）。默认仅本地隐藏（零联网）；选择 X 静音 / 拉黑会用你当前的 X
+              登录态调用 X 自家接口，不经过我们的服务器。下面「自动分级策略」里的自动动作与此互相独立。
             </p>
             <div className="space-y-2">
               {ACTION_MODES.map((m) => {
@@ -752,11 +935,12 @@ function Settings() {
 
         {st && (
           <section>
-            <SectionH>分级策略</SectionH>
+            <SectionH>自动分级策略</SectionH>
             <p className="mb-3 text-[12px] text-fg-3">
-              公共黑名单里的账号按垃圾类型分级处理。「仅标记」维持现状（只挂角标，等你手动点）；
-              「自动隐藏 / 静音 / 拉黑」在命中名单时立即执行，无需点击。分类由服务端 AI
-              结合账号整体信息判定并随名单下发；所有自动处理都可在「隐藏记录」里撤销。
+              <b className="text-fg-2">命中公共黑名单或官方检测规则时自动执行</b>，无需点击。
+              「仅标记」= 不自动处理，只挂角标等你手动点（此时走上面的手动处理方式）；
+              「自动隐藏 / 静音 / 拉黑」按类别即时生效。分类由服务端 AI
+              结合账号整体信息判定并随名单下发；官方白名单账号永不处理；所有自动处理都可在「隐藏记录」里撤销。
             </p>
             <div className="space-y-2">
               {SPAM_CATEGORIES.map((cat) => (

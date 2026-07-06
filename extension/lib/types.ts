@@ -41,7 +41,7 @@ export type BgRequest =
   | { type: "health" }
   | { type: "stats" }
   | { type: "records" }
-  | { type: "list-sync" };
+  | { type: "list-sync"; force?: boolean };
 
 export interface BgResponse {
   ok: boolean;
