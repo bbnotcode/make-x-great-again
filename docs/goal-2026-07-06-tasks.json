@@ -57,7 +57,8 @@
     }
   ],
   "manual_blockers": [
-    "扩展新版需要人工上传 CWS/AMO（本地已用全量 v2-lite 重新构建：106,497 条 + 分类，.output/chrome-mv3 就绪）",
+    "扩展新版需要人工上传 CWS/AMO（.output/chrome-mv3 就绪，366KB；名单已改为运行时从官方源同步，不再打包）",
+    "CWS/AMO 商店文案需同步改口径：'Zero remote requests' → '名单从官方源自动同步（只下载公开数据，零上传）'；docs/CWS_LISTING.md / PRIVACY.md 同理",
     "admin 面板的关键词规则编辑 UI 尚无 category 字段输入（API 已支持）；新增规则建议顺手在 D1 里补 category"
   ]
 }
