@@ -7,7 +7,10 @@ import type { Label, Verdict } from "./types";
 export const STYLE = `
 :host { all: initial; }
 * { box-sizing: border-box; font-family: system-ui,-apple-system,"Segoe UI",sans-serif; }
-:root, .xss {
+/* :host is REQUIRED here: badges/popovers each live in their own shadow
+ * root, where :root/.xss match nothing — without :host every var() below
+ * fails and the badge degrades to unstyled black text (the v0.5 regression). */
+:host, :root, .xss {
   /* dark default (X dark mode) */
   --surface: rgba(13,17,23,.92); --border: rgba(255,255,255,.10);
   --shadow: 0 8px 28px rgba(0,0,0,.45); --text: #E6EDF3; --muted: #8B949E;
@@ -15,7 +18,7 @@ export const STYLE = `
   --safe: #16A34A;
 }
 @media (prefers-color-scheme: light) {
-  :root, .xss {
+  :host, :root, .xss {
     --surface: rgba(255,255,255,.96); --border: rgba(15,23,42,.12);
     --shadow: 0 8px 28px rgba(15,23,42,.18); --text: #0F172A; --muted: #475569;
     --brand: #0369A1; --danger: #DC2626; --warn: #B45309; --neutral: #475569;
@@ -61,12 +64,18 @@ export const STYLE = `
 .lnk:hover { color: var(--text); }
 svg { display: block; }
 .xss-badge {
+  --badge-color: var(--muted);
   display: inline-flex; align-items: center; gap: 5px; margin-left: 6px;
   padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;
-  vertical-align: middle; cursor: default; color: var(--text);
-  border: 1px solid var(--border);
+  vertical-align: middle; cursor: default; color: var(--badge-color);
+  border: 1px solid color-mix(in srgb, var(--badge-color) 42%, transparent);
+  background: color-mix(in srgb, var(--badge-color) 12%, transparent);
+  box-shadow: 0 1px 4px rgba(15,23,42,.08);
 }
-.xss-badge.ghost { color: var(--muted); cursor: pointer; }
+.xss-badge.ghost {
+  color: var(--muted); cursor: pointer;
+  border-color: var(--border); background: transparent; box-shadow: none;
+}
 .xss-badge.ghost:hover { color: var(--text); }
 .pop {
   position: fixed; z-index: 2147482001; width: 260px; padding: 12px;
@@ -394,7 +403,8 @@ export function createBadge(
   const color = `var(${meta.varName})`;
   const known = source === "list" || source === "cache" || source === "rule";
   el.className = `xss-badge ${known ? "known" : "fresh"}`;
-  el.style.borderColor = color;
+  // Tinted pill: bg/border derive from --badge-color via color-mix in STYLE.
+  el.style.setProperty("--badge-color", color);
   const tip =
     source === "list"
       ? "命中公共名单"
