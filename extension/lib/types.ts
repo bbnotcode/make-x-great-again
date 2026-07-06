@@ -35,8 +35,13 @@ export interface Signals {
   tweetsTranslated?: boolean;
 }
 
-/** Background messages — strictly local now (no remote classify/confirm). */
-export type BgRequest = { type: "health" } | { type: "stats" } | { type: "records" };
+/** Background messages. "list-sync" triggers the public blocklist download
+ *  (read-only GET of the official artifact; nothing is uploaded). */
+export type BgRequest =
+  | { type: "health" }
+  | { type: "stats" }
+  | { type: "records" }
+  | { type: "list-sync" };
 
 export interface BgResponse {
   ok: boolean;

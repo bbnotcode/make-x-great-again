@@ -1,8 +1,10 @@
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "wxt";
 
-// Make X Great Again (MXGA) — passive by default. The blacklist ships inside
-// the package; the default "local hide" mode makes zero remote requests.
+// Make X Great Again (MXGA) — passive by default. The public blocklist is
+// NOT bundled: the background syncs the compact lite artifact from the
+// official source over plain CORS (a read-only GET of public data — nothing
+// about the user is ever uploaded) and caches it locally.
 // X-native actions (mute / block) are opt-in: only when the user switches
 // settings.actionMode does the extension request the optional x.com host
 // permission and act on their account via X's own first-party endpoints,
@@ -22,8 +24,11 @@ export default defineConfig({
   manifest: ({ browser }) => ({
     name: "Make X Great Again (MXGA)",
     description:
-      "Passive spam / porn-bot badges for X, powered by a bundled local blacklist. Zero remote requests. Public-good, open source.",
-    permissions: ["storage"],
+      "Passive spam / porn-bot badges for X, powered by a community blacklist synced from the official public source. Uploads nothing. Public-good, open source.",
+    // alarms: periodic list refresh; unlimitedStorage: the cached list
+    // (~5MB) plus local records would otherwise crowd the 10MB default
+    // quota. Neither adds an install-time permission warning.
+    permissions: ["storage", "alarms", "unlimitedStorage"],
     // Requested at runtime (chrome.permissions.request) only when the user
     // turns on X mute/block mode — keeps the default install storage-only.
     // Chrome uses optional_host_permissions; Firefox only added that key in
@@ -38,10 +43,11 @@ export default defineConfig({
     //  - strict_min_version 109.0: the first Firefox release with Manifest V3
     //    support (we no longer ship any MAIN-world content script).
     //  - data_collection_permissions "none": no user data is ever sent to us
-    //    or any third party. The default (local) mode is fully offline; the
-    //    opt-in mute/block actions call X's own first-party endpoints with the
-    //    user's session and collect nothing. AMO requires new listings to
-    //    declare data collection since 2025-11-03.
+    //    or any third party. The list sync is a download-only GET of a public
+    //    artifact (no identifiers attached); the opt-in mute/block actions
+    //    call X's own first-party endpoints with the user's session and
+    //    collect nothing. AMO requires new listings to declare data
+    //    collection since 2025-11-03.
     ...(browser === "firefox"
       ? {
           browser_specific_settings: {

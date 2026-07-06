@@ -815,7 +815,7 @@ const About = () => (
   <Page title="关于" sub={`${BRAND.name} · 公益、开源`}>
     <div className="max-w-[680px] space-y-4 text-[13px] leading-7 text-fg-2">
       <p>
-        X(Twitter) 反垃圾 / 色情机器人扩展。被动检测、名单随扩展打包：默认「本地隐藏」模式零远程请求，不经过任何服务器。如在「设置 → 处理方式」里选择 X 静音 / 拉黑，则会用你当前的 X 登录态调用 X 自家接口对账号生效（仍不经过我们的服务器、不收集任何数据）。
+        X(Twitter) 反垃圾 / 色情机器人扩展。被动检测：公共名单由扩展定期从官方源自动同步（只下载公开名单数据，不上传任何内容），比对全部在本机完成。如在「设置 → 处理方式」里选择 X 静音 / 拉黑，则会用你当前的 X 登录态调用 X 自家接口对账号生效（仍不经过我们的服务器、不收集任何数据）。
       </p>
       <div className="grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-2">
         <div className="bg-bg p-4">
