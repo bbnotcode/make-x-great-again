@@ -270,19 +270,29 @@ export default defineContentScript({
       }
       void addBlocked(key);
       if (sig.userId) void addBlocked(sig.userId);
-      void addBlockRecord({
-        id: key,
-        handle: sig.handle,
-        ...(sig.displayName ? { displayName: sig.displayName } : {}),
-        ...(sig.avatarUrl ? { avatarUrl: sig.avatarUrl } : {}),
-        verdict: entry.verdict,
-        source: "auto",
-        ts: Date.now(),
-      });
       void bumpStats({ blocks: 1 });
       void bumpStat("blocked");
-      if (action === "mute" || action === "block") void applyXAction(action, sig);
       hideTweet(anchor);
+      // Record AFTER the X action settles so the 隐藏记录 row can state
+      // honestly whether the native mute/block actually landed — a silent
+      // fire-and-forget here is how "自动拉黑" degrades into hide-only
+      // without anyone noticing.
+      const verb = action === "mute" ? "静音" : action === "block" ? "拉黑" : "隐藏";
+      void (async () => {
+        const xOk =
+          action === "mute" || action === "block" ? await applyXAction(action, sig) : true;
+        if (!xOk) console.warn(`[MXGA] 自动${verb}：X 原生动作失败`, sig.handle, sig.userId);
+        void addBlockRecord({
+          id: key,
+          handle: sig.handle,
+          ...(sig.displayName ? { displayName: sig.displayName } : {}),
+          ...(sig.avatarUrl ? { avatarUrl: sig.avatarUrl } : {}),
+          verdict: entry.verdict,
+          reason: `${CATEGORY_ZH[entry.category]} · 自动${verb}${xOk ? "" : "（X 动作失败，仅本地隐藏）"}`,
+          source: "auto",
+          ts: Date.now(),
+        });
+      })();
     }
 
     async function process(sig: Signals, anchor: HTMLElement) {
