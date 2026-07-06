@@ -65,13 +65,15 @@ export const STYLE = `
 svg { display: block; }
 .xss-badge {
   --badge-color: var(--muted);
-  display: inline-flex; align-items: center; gap: 5px; margin-left: 6px;
-  padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;
+  display: inline-flex; align-items: center; gap: 4px; margin-left: 6px;
+  padding: 2.5px 8px; border-radius: 999px; font-size: 11px; font-weight: 750;
+  line-height: 1; white-space: nowrap;
   vertical-align: middle; cursor: default; color: var(--badge-color);
   border: 1px solid color-mix(in srgb, var(--badge-color) 42%, transparent);
   background: color-mix(in srgb, var(--badge-color) 12%, transparent);
   box-shadow: 0 1px 4px rgba(15,23,42,.08);
 }
+.xss-badge svg { flex: none; }
 .xss-badge.ghost {
   color: var(--muted); cursor: pointer;
   border-color: var(--border); background: transparent; box-shadow: none;
@@ -79,6 +81,7 @@ svg { display: block; }
 .xss-badge.ghost:hover { color: var(--text); }
 .pop {
   position: fixed; z-index: 2147482001; width: 260px; padding: 12px;
+  max-width: calc(100vw - 16px);
   font-size: 12px; color: var(--text);
 }
 .pop h4 { margin: 0 0 6px; font-size: 12px; font-weight: 700; }
@@ -94,14 +97,6 @@ svg { display: block; }
 /* ---- animated badge states (transform/opacity only) ---- */
 .xss-badge.fresh { animation: xrise .22s ease-out; }
 .xss-badge.known { animation: xpop .18s ease-out; }
-.xss-badge .kdot {
-  width: 6px; height: 6px; border-radius: 50%; background: var(--brand);
-  flex: none;
-}
-.xss-badge .ndot {
-  width: 6px; height: 6px; border-radius: 50%; flex: none;
-  border: 1.5px solid var(--warn); box-sizing: border-box;
-}
 .xss-badge .ntag {
   margin-left: 4px; padding: 0 5px; border-radius: 999px; font-size: 9px;
   font-weight: 700; color: var(--warn); border: 1px solid var(--warn);
@@ -385,6 +380,26 @@ export interface BadgeActions {
  *  record → instant calm "known" marker, no processing implied. */
 export type BadgeSource = "fresh" | "list" | "cache" | "rule";
 
+// Popover overlay — a singleton shadow host attached directly under
+// <html>. Popovers must NOT live inside the badge's own shadow root: X's
+// virtualized timeline wraps rows in transformed containers, and a
+// position:fixed element inside a transformed ancestor is positioned
+// relative to that ancestor, not the viewport — which made popovers drift
+// wildly. At the documentElement level there is no transformed ancestor.
+let overlayShadow: ShadowRoot | null = null;
+function overlay(): ShadowRoot {
+  if (overlayShadow?.host.isConnected) return overlayShadow;
+  const host = document.createElement("div");
+  host.setAttribute("data-xss-overlay", "");
+  host.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;z-index:2147483001;";
+  document.documentElement.appendChild(host);
+  overlayShadow = host.attachShadow({ mode: "open" });
+  const st = document.createElement("style");
+  st.textContent = STYLE;
+  overlayShadow.appendChild(st);
+  return overlayShadow;
+}
+
 export function createBadge(
   v: Verdict | null,
   a: BadgeActions,
@@ -413,17 +428,24 @@ export function createBadge(
         : source === "cache"
           ? "本地缓存命中"
           : "首次发现（本机首次判定，已记录待人工确认）";
-  el.title = tip;
-  // known → solid brand dot; fresh → hollow "first discovery" ring + 首发 tag
-  const mark = known
-    ? `<span class="kdot" title="${tip}"></span>`
-    : `<span class="ndot" title="${tip}"></span>`;
-  const tag = known ? "" : `<span class="ntag" title="${tip}">首发</span>`;
+  // No native title: the hover popover already carries the details, and the
+  // OS tooltip floating next to it reads as visual noise.
+  el.setAttribute("aria-label", `${meta.zh} ${(v.confidence * 100).toFixed(0)}% · ${tip}`);
+  // Clean pill: icon + label only. 首发 tag marks fresh first-discoveries.
+  const tag = known ? "" : `<span class="ntag">首发</span>`;
   el.innerHTML =
-    `${mark}${icon(meta.ic, color, 13)}<span style="color:${color}">${meta.zh} ${(v.confidence * 100).toFixed(0)}%</span>${tag}`;
+    `${icon(meta.ic, "currentColor", 12)}<span>${meta.zh} ${(v.confidence * 100).toFixed(0)}%</span>${tag}`;
 
   let pop: HTMLElement | null = null;
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
+  const onScroll = () => {
+    // A fixed popover detaches visually from its anchor the moment the page
+    // scrolls — close it instead of letting it float over unrelated content.
+    clearTimeout(hideTimer);
+    pop?.remove();
+    pop = null;
+    window.removeEventListener("scroll", onScroll, true);
+  };
   const hide = () => {
     if (pop?.matches(":hover")) {
       // Cursor is on the popover (e.g. blur fired mid-click) — stay open.
@@ -432,6 +454,7 @@ export function createBadge(
     }
     pop?.remove();
     pop = null;
+    window.removeEventListener("scroll", onScroll, true);
   };
   const scheduleHide = () => {
     clearTimeout(hideTimer);
@@ -453,16 +476,25 @@ export function createBadge(
         ${spammy ? `<button data-h>${esc(verb)}</button>` : ""}
         <button data-a title="打开 GitHub 提交误判申诉 issue">误判申诉 ↗</button>
       </div>`;
-    const r = el.getBoundingClientRect();
-    pop.style.left = `${Math.max(8, r.left)}px`;
-    pop.style.top = `${r.bottom + 6}px`;
     pop.querySelector("[data-h]")?.addEventListener("click", a.onHide);
     pop.querySelector("[data-a]")?.addEventListener("click", a.onAppeal);
     // Keep the popover open while the cursor is over it, so its buttons are
     // actually reachable.
     pop.addEventListener("mouseenter", cancelHide);
     pop.addEventListener("mouseleave", scheduleHide);
-    el.getRootNode().appendChild?.(pop);
+    // Mount in the top-level overlay (viewport-true fixed positioning),
+    // then measure and place: clamp to the viewport's right edge, flip
+    // above the badge when there is no room below.
+    overlay().appendChild(pop);
+    const r = el.getBoundingClientRect();
+    const W = pop.offsetWidth || 260;
+    const H = pop.offsetHeight || 120;
+    const left = Math.min(Math.max(8, r.left), window.innerWidth - W - 8);
+    const below = r.bottom + 6;
+    const top = below + H > window.innerHeight - 8 ? Math.max(8, r.top - H - 6) : below;
+    pop.style.left = `${left}px`;
+    pop.style.top = `${top}px`;
+    window.addEventListener("scroll", onScroll, { capture: true, passive: true });
   };
   el.addEventListener("mouseenter", show);
   el.addEventListener("focus", show);
