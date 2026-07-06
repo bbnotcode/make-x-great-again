@@ -3,6 +3,7 @@ import { BRAND } from "../lib/brand";
 import { type Cached, cacheGet, signalsHash } from "../lib/cache";
 import { extractFromArticle, extractProfile, extractThreadTopic } from "../lib/detect";
 import { CATEGORY_ZH } from "../lib/category";
+import { LIST_KEY, WL_KEY } from "../lib/list-sync";
 import { type IndexEntry, isWhitelisted, lookupLocal, warmLocalIndex } from "../lib/local-index";
 import { matchLocalRules } from "../lib/local-rules";
 import { type ActionMode, getSettings, onSettingsChange } from "../lib/settings";
@@ -465,6 +466,24 @@ export default defineContentScript({
     // user stops scrolling (no new DOM mutations). ctx-bound: stops when
     // the content script is invalidated.
     ctx.setInterval(scan, 4000);
+    // List / whitelist hot-swap (background sync or 立即更新): the lookup
+    // maps already rebuilt via local-index's own onChanged hook, but rows
+    // rendered with the OLD data keep their badge (scan skips mounted
+    // nodes). Drop every neutral badge so the next scan re-evaluates the
+    // page against the fresh list. Pending/hidden rows are untouched.
+    try {
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area !== "local" || (!changes[LIST_KEY] && !changes[WL_KEY])) return;
+        for (const host of document.querySelectorAll<HTMLElement>(".xss-mount")) {
+          // Badges live in the host's shadow root; keep pending-undo flows.
+          if (host.shadowRoot?.querySelector(".xss-badge.pending")) continue;
+          host.remove();
+        }
+        scan();
+      });
+    } catch {
+      /* non-fatal */
+    }
     scan();
   },
 });
