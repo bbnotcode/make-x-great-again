@@ -75,7 +75,7 @@ export const STYLE = `
   flex: none; font-size: 11px; font-weight: 650; color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-.card { width: 312px; padding: 14px; display: none; }
+.card { width: 312px; padding: 14px; display: none; margin-top: 10px; }
 .card.open { display: block; animation: in .18s ease-out; }
 @keyframes in { from { opacity: 0; transform: translateY(8px); } }
 .hd { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
@@ -96,6 +96,20 @@ export const STYLE = `
 .metric b { color: var(--text); font-size: 12px; font-weight: 760; line-height: 1; }
 .metric em { font-style: normal; overflow: hidden; text-overflow: ellipsis; }
 .metric i { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex: none; }
+/* The 已处理 chip doubles as a tab: done rows leave the live queue and are
+ * only listed when this chip is toggled on. */
+.metric.tab { cursor: pointer; user-select: none; transition: background .14s ease, box-shadow .14s ease; }
+.metric.tab:hover { background: color-mix(in srgb, var(--muted) 16%, transparent); }
+.metric.tab.on {
+  background: color-mix(in srgb, var(--safe) 13%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--safe) 40%, transparent);
+}
+.queue-empty {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 16px 10px; border-radius: 10px;
+  font-size: 11.5px; color: var(--muted);
+  background: color-mix(in srgb, var(--safe) 6%, transparent);
+}
 .btn {
   width: 100%; border: 0; border-radius: 10px; padding: 9px 12px;
   font-size: 13px; font-weight: 600; cursor: pointer; color: #fff;
@@ -444,6 +458,9 @@ export function createBubble(
   const autoRows = new Set<string>();
   let autoOn = opts.autoProcess ?? true;
   let autoCats = opts.autoCategoryCount ?? 0;
+  // Card list view: the live queue by default; "done" lists processed rows
+  // behind the 已处理 chip so they don't pile up under the progress bar.
+  let view: "queue" | "done" = "queue";
 
   // Must match content.ts keyOf(): userId first, `h:${handle}` fallback.
   const rowKey = (f: Finding) => f.userId || `h:${f.handle}`;
@@ -654,15 +671,20 @@ export function createBubble(
     ).length;
     const selectableCount = findings.filter(selectable).length;
     const batchTouched = s.done + s.processing + s.queued + s.failed > 0;
-    // Row order: in-flight first, then untouched/failed, done rows sink.
-    const ordered = [
-      ...findings.filter((f) => {
-        const st = stateOf(f);
-        return st === "processing" || st === "queued";
-      }),
-      ...findings.filter(selectable),
-      ...findings.filter((f) => stateOf(f) === "done"),
-    ];
+    const doneRows = findings.filter((f) => stateOf(f) === "done");
+    if (view === "done" && !doneRows.length) view = "queue";
+    // Queue view: in-flight first, then untouched/failed. Done rows live in
+    // the 已处理 tab only.
+    const ordered =
+      view === "done"
+        ? doneRows
+        : [
+            ...findings.filter((f) => {
+              const st = stateOf(f);
+              return st === "processing" || st === "queued";
+            }),
+            ...findings.filter(selectable),
+          ];
     card.innerHTML = `
       <div class="hd">${icon("shield-alert", "var(--brand)", 16)}
         <span>${selectableCount || s.running ? `本页发现 ${findings.length} 个可疑账号` : `本页已处理 ${s.done} 个账号`}</span>
@@ -678,12 +700,15 @@ export function createBubble(
         <span class="metric" title="等待处理">
           <i style="background:var(--muted)"></i><b>${waiting}</b><em>待处理</em>
         </span>
-        <span class="metric" title="${s.failed ? `失败 ${s.failed}，` : ""}已处理完成">
+        <span class="metric${doneRows.length ? " tab" : ""}${view === "done" ? " on" : ""}"
+          ${doneRows.length ? `data-tab-done role="button" tabindex="0" aria-pressed="${view === "done"}"` : ""}
+          title="${s.failed ? `失败 ${s.failed}，` : ""}已处理完成${doneRows.length ? " · 点击查看明细" : ""}">
           <i style="background:${s.failed ? "var(--warn)" : "var(--safe)"}"></i><b>${s.done}</b><em>已处理</em>
         </span>
       </div>
       ${batchTouched ? renderProgress(s) : ""}
       <div class="queue-table">
+        ${ordered.length ? "" : `<div class="queue-empty">${icon("shield-check", "var(--safe)", 13)}<span>本页命中已全部处理 · 点「已处理」查看明细</span></div>`}
         ${ordered
           .map((f) => {
             const m = LABEL[f.verdict.label];
@@ -775,6 +800,18 @@ export function createBubble(
       root.remove();
     });
     card.querySelector("[data-each]")?.addEventListener("click", h.onReviewEach);
+    const doneTab = card.querySelector<HTMLElement>("[data-tab-done]");
+    const toggleDone = () => {
+      view = view === "done" ? "queue" : "done";
+      renderCard();
+    };
+    doneTab?.addEventListener("click", toggleDone);
+    doneTab?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggleDone();
+      }
+    });
     // Per-row select toggle — uncheck excludes from the bulk action so the
     // user can opt-out specific accounts before "一键处理".
     card.querySelectorAll<HTMLInputElement>("[data-sel]").forEach((cb) => {
@@ -859,6 +896,7 @@ export function createBubble(
     el: root,
     update(f: Finding[]) {
       const grew = f.length > findings.length;
+      if (grew) view = "queue"; // new hits pull focus back to the live queue
       findings = f;
       // Prune state for rows that left the page (SPA navigation resets).
       const live = new Set(f.map(rowKey));
