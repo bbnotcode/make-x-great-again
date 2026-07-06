@@ -90,6 +90,22 @@ export interface Rule {
   last_hit_at?: number;
 }
 
+export interface WhitelistRequest {
+  id: number;
+  x_user_id?: string | null;
+  handle: string;
+  gh_age_days?: number | null;
+  note?: string | null;
+  status: string;
+  created_at: number;
+  decided_at?: number | null;
+  /** Current accounts-table state of the applicant — lets the panel flag
+   *  "this handle is already on the public blacklist" before approving. */
+  account_status?: string | null;
+  account_verdict_label?: string | null;
+  account_category?: string | null;
+}
+
 export interface LogEntry {
   at: number;
   action: string;
@@ -161,6 +177,18 @@ export const api = {
         (xUserId ? "&xUserId=" + encodeURIComponent(xUserId) : ""),
       { method: "DELETE" },
     ),
+  whitelistRequests: (status = "pending") =>
+    req<{ list: WhitelistRequest[] }>(
+      "/v1/admin/whitelist-requests?status=" + encodeURIComponent(status),
+    ),
+  whitelistRequestApprove: (id: number) =>
+    req<{ ok: boolean; status?: string }>("/v1/admin/whitelist-requests/" + id + "/approve", {
+      method: "POST",
+    }),
+  whitelistRequestReject: (id: number) =>
+    req<{ ok: boolean; status?: string }>("/v1/admin/whitelist-requests/" + id + "/reject", {
+      method: "POST",
+    }),
   whitelistRemoveBatch: (items: Item[]) =>
     req<{ ok: boolean; error?: string }>("/v1/admin/whitelist-batch", {
       method: "DELETE",

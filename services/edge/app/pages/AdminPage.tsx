@@ -8,6 +8,7 @@ import { LogTab } from "@/components/admin/LogTab";
 import { QueueTab } from "@/components/admin/QueueTab";
 import { RulesTab } from "@/components/admin/RulesTab";
 import { ThemeToggle } from "@/components/admin/ThemeToggle";
+import { WhitelistRequestsTab } from "@/components/admin/WhitelistRequestsTab";
 import { WhitelistTab } from "@/components/admin/WhitelistTab";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,6 +54,7 @@ const TABS = [
   { v: "queue", label: "待审队列", count: (s: Stats) => s.queue },
   { v: "blacklist", label: "黑名单", count: (s: Stats) => s.blacklist },
   { v: "whitelist", label: "白名单", count: (s: Stats) => s.whitelist },
+  { v: "wlRequests", label: "白名单申请", count: null },
   { v: "agentPending", label: "🤖 待定", count: (s: Stats) => s.agent_pending },
   { v: "agentBL", label: "🤖 拟拉黑", count: (s: Stats) => s.agent_blacklist },
   { v: "agentWL", label: "🤖 拟加白", count: (s: Stats) => s.agent_whitelist },
@@ -125,6 +127,7 @@ function Console({ onAuth }: { onAuth: () => void }) {
         <TabsContent value="queue"><QueueTab {...tabProps} /></TabsContent>
         <TabsContent value="blacklist"><BlacklistTab {...tabProps} /></TabsContent>
         <TabsContent value="whitelist"><WhitelistTab {...tabProps} /></TabsContent>
+        <TabsContent value="wlRequests"><WhitelistRequestsTab {...tabProps} /></TabsContent>
         <TabsContent value="agentPending"><AgentTab bucket="pending" {...tabProps} /></TabsContent>
         <TabsContent value="agentBL"><AgentTab bucket="blacklist" {...tabProps} /></TabsContent>
         <TabsContent value="agentWL"><AgentTab bucket="whitelist" {...tabProps} /></TabsContent>

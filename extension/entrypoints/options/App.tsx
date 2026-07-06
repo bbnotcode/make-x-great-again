@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { clearGh, getGhLogin, getGhToken, ghUserLogin, setGh } from "../../lib/auth";
 import { BRAND } from "../../lib/brand";
 import { CATEGORY_ZH, SPAM_CATEGORIES, type SpamCategory } from "../../lib/category";
 import { categorizeReason, categorizeReasons } from "../../lib/reason-category";
@@ -785,22 +786,44 @@ const CATEGORY_ACTIONS: { value: CategoryAction; label: string; needsX: boolean 
   { value: "block", label: "自动拉黑", needsX: true },
 ];
 
+/** cat → 1-char lite-artifact code (schema v2), for the per-category counts
+ *  shown next to the policy rows. Mirrors CODE_TO_CATEGORY in lib/category. */
+const CAT_CODE: Record<SpamCategory, string> = {
+  porn: "p",
+  crypto: "c",
+  gambling: "g",
+  resource: "r",
+  marketing: "m",
+  other: "o",
+};
+
 /** One category row: name + hint on the left, 4-way segmented control on the
  *  right. mute/block request the optional x.com permission first, exactly
- *  like the manual 处理方式 selector. */
+ *  like the manual 处理方式 selector. `count` = how many accounts of this
+ *  category are in the locally-synced public blacklist (hidden when no list). */
 function CategoryPolicyRow({
   cat,
   value,
+  count,
   onChange,
 }: {
   cat: SpamCategory;
   value: CategoryAction;
+  count?: number;
   onChange: (a: CategoryAction) => void;
 }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-border-2 p-3">
       <div className="min-w-[150px]">
         <span className="font-medium text-fg">{CATEGORY_ZH[cat]}</span>
+        {count !== undefined && (
+          <span
+            className="ml-1.5 font-mono text-[12px] tabular-nums text-fg-3"
+            title={`本地公共名单中该类别共 ${count.toLocaleString("zh-CN")} 个账号`}
+          >
+            · {count.toLocaleString("zh-CN")}
+          </span>
+        )}
         <span className="block text-[12px] text-fg-3">{CATEGORY_HINT[cat]}</span>
       </div>
       <div className="flex overflow-hidden rounded-md border border-border-2">
@@ -828,13 +851,209 @@ function CategoryPolicyRow({
   );
 }
 
+type ApplyStatus = "none" | "pending" | "approved" | "rejected";
+
+const APPLY_STATUS_ZH: Record<ApplyStatus, [string, string]> = {
+  none: ["尚未申请", "text-fg-3"],
+  pending: ["审核中", "text-warn"],
+  approved: ["已批准 ✓", "text-ok"],
+  rejected: ["已驳回", "text-danger"],
+};
+
+/** Map a /v1/whitelist/apply error response to a user-facing line. */
+function applyErrorText(status: number, error?: string): string {
+  if (status === 401) return "GitHub Token 无效或已过期，请重新生成后再试。";
+  if (status === 403 && error === "gh_account_too_young")
+    return "GitHub 账号注册需满 90 天才能申请（防滥用门槛）。";
+  if (status === 403 && error === "reporter_banned") return "该身份已被限制，无法提交申请。";
+  if (status === 409) return "已有一条待审申请（同一身份 / 同一账号同时只能有一条）。";
+  if (status === 429) return "请求太频繁，请约 1 小时后再试。";
+  if (status === 503) return "服务端暂不可用，请稍后再试。";
+  return `申请失败（HTTP ${status}${error ? ` · ${error}` : ""}）。`;
+}
+
+/** 「白名单」自助申请区：GitHub Token 做身份证明 + 提交自己的 @handle。 */
+function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
+  const base = (edgeBase || EDGE_DEFAULT).replace(/\/+$/, "");
+  const [token, setToken] = useState("");
+  const [login, setLogin] = useState<string | null>(null);
+  const [handle, setHandle] = useState("");
+  const [note, setNote] = useState("");
+  const [status, setStatus] = useState<ApplyStatus | null>(null);
+  const [statusHandle, setStatusHandle] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
+  const fetchStatus = async (tok: string) => {
+    try {
+      const res = await fetch(`${base}/v1/whitelist/apply/status`, {
+        headers: { authorization: `Bearer ${tok}` },
+      });
+      if (!res.ok) return;
+      const j = (await res.json()) as { status?: string; handle?: string };
+      if (j.status && j.status in APPLY_STATUS_ZH) {
+        setStatus(j.status as ApplyStatus);
+        setStatusHandle(j.handle ?? null);
+      }
+    } catch {
+      /* status display is best-effort */
+    }
+  };
+
+  useEffect(() => {
+    void (async () => {
+      const [tok, lg] = await Promise.all([getGhToken(), getGhLogin()]);
+      if (tok) {
+        setToken(tok);
+        setLogin(lg || null);
+        void fetchStatus(tok);
+      }
+    })();
+    // fetchStatus is stable for a given edgeBase; run once on mount.
+  }, []);
+
+  const saveToken = async () => {
+    const tok = token.trim();
+    setMsg(null);
+    if (!tok) {
+      await clearGh();
+      setLogin(null);
+      setStatus(null);
+      setMsg({ text: "已清除本机保存的 Token。", ok: true });
+      return;
+    }
+    setBusy(true);
+    const lg = await ghUserLogin(tok);
+    setBusy(false);
+    if (!lg) {
+      setMsg({ text: "Token 校验失败：GitHub 拒绝了这个 Token。", ok: false });
+      return;
+    }
+    await setGh(tok, lg);
+    setLogin(lg);
+    setMsg({ text: `已验证并保存，GitHub 身份：@${lg}`, ok: true });
+    void fetchStatus(tok);
+  };
+
+  const apply = async () => {
+    const h = handle.trim().replace(/^@+/, "");
+    setMsg(null);
+    if (!/^[A-Za-z0-9_]{1,15}$/.test(h)) {
+      setMsg({ text: "请输入合法的 X 用户名（1-15 位字母 / 数字 / 下划线）。", ok: false });
+      return;
+    }
+    const tok = token.trim();
+    if (!tok) {
+      setMsg({ text: "请先填写并保存 GitHub Token。", ok: false });
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch(`${base}/v1/whitelist/apply`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${tok}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          handle: h,
+          ...(note.trim() ? { note: note.trim().slice(0, 200) } : {}),
+        }),
+      });
+      const j = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        status?: string;
+        error?: string;
+      };
+      if (res.ok && j.status === "already_whitelisted") {
+        setMsg({ text: "该账号已在官方白名单中，无需申请。", ok: true });
+      } else if (res.ok && j.ok) {
+        setStatus("pending");
+        setStatusHandle(h);
+        setMsg({ text: "申请已提交，等待维护者审核。", ok: true });
+      } else {
+        setMsg({ text: applyErrorText(res.status, j.error), ok: false });
+      }
+    } catch (e) {
+      setMsg({ text: `网络错误：${e instanceof Error ? e.message : String(e)}`, ok: false });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const input =
+    "w-full rounded-md border border-border-2 bg-transparent px-3 py-2 text-[13px] outline-none transition focus:border-accent";
+  const [statusZh, statusCls] = status ? APPLY_STATUS_ZH[status] : ["", ""];
+
+  return (
+    <section>
+      <SectionH>白名单</SectionH>
+      <p className="mb-3 text-[12px] leading-relaxed text-fg-3">
+        把你自己的 X 账号加入官方白名单：白名单账号
+        <b className="text-fg-2">永不会被检测、标记或上榜</b>。为防滥用，需要一个
+        <b className="text-fg-2">注册满 90 天</b>的 GitHub 账号做身份证明——在 GitHub
+        生成一个 Token（无需勾选任何权限），它只保存在本机，仅发往 GitHub
+        和我们的服务用于验证身份，不会用于其他用途。
+      </p>
+      <div className="space-y-2.5">
+        <div className="flex items-center gap-2">
+          <input
+            type="password"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="GitHub Token（ghp_… / github_pat_…）"
+            autoComplete="off"
+            className={input}
+          />
+          <Btn onClick={saveToken} disabled={busy} className="flex-none">
+            验证并保存
+          </Btn>
+        </div>
+        {login && (
+          <p className="text-[12px] text-fg-3">
+            GitHub 身份：<b className="text-fg-2">@{login}</b>
+          </p>
+        )}
+        <div className="flex items-center gap-2">
+          <input
+            value={handle}
+            onChange={(e) => setHandle(e.target.value)}
+            placeholder="你的 X 用户名，如 @your_handle"
+            className={input}
+          />
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            maxLength={200}
+            placeholder="附言（选填，≤200 字）"
+            className={input}
+          />
+        </div>
+        <div className="flex items-center gap-3">
+          <Btn tier="primary" onClick={apply} disabled={busy || !token.trim()}>
+            {busy ? "提交中…" : "申请把我的 X 账号加入白名单"}
+          </Btn>
+          {status && (
+            <span className={`text-[12px] ${statusCls}`}>
+              申请状态：{statusZh}
+              {statusHandle ? ` · @${statusHandle}` : ""}
+            </span>
+          )}
+        </div>
+        {msg && <p className={`text-[12px] ${msg.ok ? "text-ok" : "text-danger"}`}>{msg.text}</p>}
+      </div>
+    </section>
+  );
+}
+
 function Settings() {
   const [cleared, setCleared] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
   const [st, setSt] = useState<Settings | null>(null);
+  const [ls, setLs] = useState<ListState | null>(null);
   const [permDenied, setPermDenied] = useState(false);
   useEffect(() => {
     getSettings().then(setSt);
+    // Loaded once so each 分级策略 row can show how many synced public-list
+    // accounts fall into its category. No list yet → counts stay hidden.
+    readListState().then(setLs);
   }, []);
   const save = async <K extends keyof Settings>(k: K, v: Settings[K]) => {
     await setSetting(k, v);
@@ -948,12 +1167,15 @@ function Settings() {
                   key={cat}
                   cat={cat}
                   value={st.categoryActions[cat] ?? "badge"}
+                  count={ls && ls.black > 0 ? (ls.catDist[CAT_CODE[cat]] ?? 0) : undefined}
                   onChange={(a) => changeCategoryAction(cat, a)}
                 />
               ))}
             </div>
           </section>
         )}
+
+        {st && <WhitelistApplySection edgeBase={st.edgeBase} />}
 
         <section>
           <SectionH>数据与隐私</SectionH>

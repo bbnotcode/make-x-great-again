@@ -1197,6 +1197,8 @@ for (const route of [
   "/v1/report",
   "/v1/appeal",
   "/v1/whitelist",
+  "/v1/whitelist/apply",
+  "/v1/whitelist/apply/status",
   "/v1/list",
   "/v1/list/*",
   "/v1/artifacts/*",
@@ -1685,6 +1687,104 @@ app.post("/v1/appeal", async (c) => {
     )
     .run();
   return c.json({ ok: true, status: "appeal_queued" }, 202);
+});
+
+// ---- Whitelist self-service applications ----
+// An extension user asks the maintainer to whitelist their own X account.
+// Same identity + anti-abuse stack as /v1/report: GitHub auth, HMAC reporter
+// fingerprint (fail-closed on missing salt), reporter bans, rate_log throttle,
+// plus a hard GH-account-age floor so throwaway accounts can't apply at all.
+const WhitelistApplyBody = z.object({
+  handle: z
+    .string()
+    .trim()
+    .regex(/^@?[A-Za-z0-9_]{1,15}$/, "handle must be a valid X handle"),
+  userId: z.string().regex(/^\d+$/).optional(),
+  note: z.string().max(200).optional(),
+});
+
+app.post("/v1/whitelist/apply", async (c) => {
+  const who = await requireReporter(c);
+  if (!who) return c.json({ error: "github_login_required" }, 401);
+  let body: z.infer<typeof WhitelistApplyBody>;
+  try {
+    body = WhitelistApplyBody.parse(await c.req.json());
+  } catch (err) {
+    return c.json({ error: "bad_request", detail: (err as Error).message }, 400);
+  }
+  // Hard age floor — unlike reports (stored but not counted), an underage
+  // application is rejected outright: the whole point of the whitelist is
+  // trust, and a fresh GH account carries none.
+  if (who.ageDays < REPORTER_MIN_AGE_DAYS) {
+    return c.json({ error: "gh_account_too_young", minAgeDays: REPORTER_MIN_AGE_DAYS }, 403);
+  }
+  const fp = await reporterFingerprint(c.env, who.id);
+  // Fail closed like the report path: never store a raw gh:<id>.
+  if (!fp) {
+    return c.json({ error: "report_salt_required", detail: "REPORT_SALT not configured" }, 503);
+  }
+  const now = Date.now();
+  const aliases = reporterAliases(fp, who.id);
+  const ban = await activeReporterBan(c.env, aliases, now);
+  if (ban) {
+    return c.json({ error: "reporter_banned", reason: ban.reason ?? "banned" }, 403);
+  }
+  if (!(await throttleOk(c.env, fp, now, REPORT_MAX_PER_WINDOW))) {
+    return c.json({ error: "rate_limited", retryAfterMs: REPORT_WINDOW_MS }, 429);
+  }
+
+  const handle = normalizeHandle(body.handle);
+  const uid = body.userId ?? null;
+
+  // Already whitelisted → nothing to apply for.
+  const cur = await findAccount(c.env, handle, uid);
+  if (cur?.status === "whitelisted") {
+    return c.json({ ok: true, status: "already_whitelisted" });
+  }
+
+  // One pending application per fingerprint AND per target handle.
+  const dup = await c.env.DB.prepare(
+    `SELECT id FROM whitelist_requests
+      WHERE status='pending' AND (reporter_fp=? OR lower(handle)=?)
+      LIMIT 1`,
+  )
+    .bind(fp, handle)
+    .first<{ id: number }>();
+  if (dup) return c.json({ error: "already_pending" }, 409);
+
+  await c.env.DB.prepare(
+    `INSERT INTO whitelist_requests
+       (x_user_id, handle, reporter_fp, gh_age_days, note, status, created_at)
+     VALUES (?,?,?,?,?,'pending',?)`,
+  )
+    .bind(uid, handle, fp, who.ageDays, body.note?.trim() || null, now)
+    .run();
+  await c.env.DB.prepare(
+    "INSERT INTO review_log (x_user_id,handle,action,actor,note,at) VALUES (?,?,?,?,?,?)",
+  )
+    .bind(uid, handle, "whitelist_apply", reporterActor(fp), `age=${who.ageDays}d`, now)
+    .run();
+  await recordReportRate(c.env, fp, now);
+  return c.json({ ok: true, status: "pending" });
+});
+
+// Latest application status for the calling identity — the extension's
+// options page polls this to show pending/approved/rejected.
+app.get("/v1/whitelist/apply/status", async (c) => {
+  const who = await requireReporter(c);
+  if (!who) return c.json({ error: "github_login_required" }, 401);
+  const fp = await reporterFingerprint(c.env, who.id);
+  if (!fp) {
+    return c.json({ error: "report_salt_required", detail: "REPORT_SALT not configured" }, 503);
+  }
+  const row = await c.env.DB.prepare(
+    `SELECT status, handle, created_at FROM whitelist_requests
+      WHERE reporter_fp=? ORDER BY id DESC LIMIT 1`,
+  )
+    .bind(fp)
+    .first<{ status: string; handle: string; created_at: number }>();
+  if (!row) return c.json({ status: "none" });
+  return c.json({ status: row.status, handle: row.handle, created_at: row.created_at });
 });
 
 // ---- Admin (守门员) ----
@@ -2663,21 +2763,20 @@ const WhitelistAdd = z.object({
   note: z.string().max(200).default(""),
 });
 
-app.post("/v1/admin/whitelist", async (c) => {
-  if (!(await admin(c))) return c.json({ error: "forbidden" }, 403);
-  let body: z.infer<typeof WhitelistAdd>;
-  try {
-    body = WhitelistAdd.parse(await c.req.json());
-  } catch (err) {
-    return c.json({ error: "bad_request", detail: (err as Error).message }, 400);
-  }
-  const uid = body.xUserId ?? null;
-  const now = Date.now();
-  const reasons = JSON.stringify(["whitelisted by admin", body.note].filter(Boolean));
-  // Upsert as whitelisted. If a row already exists (auto_pending_review,
-  // auto_legit, rejected, removed, even human_confirmed) the admin's
-  // explicit action wins.
-  await c.env.DB.prepare(
+// Upsert an account as whitelisted. If a row already exists
+// (auto_pending_review, auto_legit, rejected, removed, even human_confirmed)
+// the admin's explicit action wins. Shared by POST /v1/admin/whitelist and
+// the whitelist-request approve endpoint so the SQL can't drift.
+async function whitelistUpsert(
+  env: Env,
+  uid: string | null,
+  handle: string,
+  displayName: string,
+  avatarUrl: string | null,
+  reasons: string,
+  now: number,
+): Promise<void> {
+  await env.DB.prepare(
     `INSERT INTO accounts
        (x_user_id,handle,display_name,avatar_url,verdict_label,confidence,reasons,
         status,source,signals_hash,first_seen,last_scored,published_at)
@@ -2693,8 +2792,22 @@ app.post("/v1/admin/whitelist", async (c) => {
        display_name=COALESCE(excluded.display_name, accounts.display_name),
        avatar_url=COALESCE(excluded.avatar_url, accounts.avatar_url)`,
   )
-    .bind(uid, body.handle, body.displayName, body.avatarUrl ?? null, reasons, now, now)
+    .bind(uid, handle, displayName, avatarUrl, reasons, now, now)
     .run();
+}
+
+app.post("/v1/admin/whitelist", async (c) => {
+  if (!(await admin(c))) return c.json({ error: "forbidden" }, 403);
+  let body: z.infer<typeof WhitelistAdd>;
+  try {
+    body = WhitelistAdd.parse(await c.req.json());
+  } catch (err) {
+    return c.json({ error: "bad_request", detail: (err as Error).message }, 400);
+  }
+  const uid = body.xUserId ?? null;
+  const now = Date.now();
+  const reasons = JSON.stringify(["whitelisted by admin", body.note].filter(Boolean));
+  await whitelistUpsert(c.env, uid, body.handle, body.displayName, body.avatarUrl ?? null, reasons, now);
   await c.env.DB.prepare(
     "INSERT INTO review_log (x_user_id,handle,action,actor,note,at) VALUES (?,?,?,?,?,?)",
   )
@@ -2782,6 +2895,115 @@ app.get("/v1/admin/whitelist", async (c) => {
     nextBefore: rawList.length === limit && last ? encodeSortCursor(last, last.last_scored) : null,
     appliedFilters: { q, sort },
   });
+});
+
+// ---- Whitelist request moderation ----
+// List self-service applications. Each row is JOINed with the applicant
+// handle/uid's CURRENT accounts row so the panel can flag "this account is
+// already on the public blacklist" before the maintainer approves.
+app.get("/v1/admin/whitelist-requests", async (c) => {
+  if (!(await admin(c))) return c.json({ error: "forbidden" }, 403);
+  const status = (c.req.query("status") || "pending").trim();
+  const limit = Math.min(500, Math.max(1, Number(c.req.query("limit")) || 200));
+  const rows = await c.env.DB.prepare(
+    `SELECT wr.id, wr.x_user_id, wr.handle, wr.gh_age_days, wr.note, wr.status,
+            wr.created_at, wr.decided_at,
+            a.status        AS account_status,
+            a.verdict_label AS account_verdict_label,
+            a.category      AS account_category
+       FROM whitelist_requests wr
+       LEFT JOIN accounts a ON a.rowid = (
+         SELECT rowid FROM accounts
+          WHERE (wr.x_user_id IS NOT NULL AND x_user_id = wr.x_user_id)
+             OR lower(handle) = lower(wr.handle)
+          ORDER BY CASE WHEN wr.x_user_id IS NOT NULL AND x_user_id = wr.x_user_id THEN 0 ELSE 1 END,
+                   last_scored DESC
+          LIMIT 1)
+      WHERE (? = 'all' OR wr.status = ?)
+      ORDER BY wr.id DESC
+      LIMIT ?`,
+  )
+    .bind(status, status, limit)
+    .all<{
+      id: number;
+      x_user_id: string | null;
+      handle: string;
+      gh_age_days: number | null;
+      note: string | null;
+      status: string;
+      created_at: number;
+      decided_at: number | null;
+      account_status: string | null;
+      account_verdict_label: string | null;
+      account_category: string | null;
+    }>();
+  return c.json({ list: rows.results ?? [] });
+});
+
+async function pendingWhitelistRequest(
+  env: Env,
+  id: number,
+): Promise<
+  | { row: { id: number; x_user_id: string | null; handle: string; note: string | null; status: string } }
+  | { error: Response }
+> {
+  const row = await env.DB.prepare(
+    "SELECT id, x_user_id, handle, note, status FROM whitelist_requests WHERE id=?",
+  )
+    .bind(id)
+    .first<{ id: number; x_user_id: string | null; handle: string; note: string | null; status: string }>();
+  if (!row) return { error: Response.json({ error: "not_found" }, { status: 404 }) };
+  if (row.status !== "pending") {
+    return { error: Response.json({ error: "not_pending", status: row.status }, { status: 409 }) };
+  }
+  return { row };
+}
+
+app.post("/v1/admin/whitelist-requests/:id/approve", async (c) => {
+  if (!(await admin(c))) return c.json({ error: "forbidden" }, 403);
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: "bad_request" }, 400);
+  const got = await pendingWhitelistRequest(c.env, id);
+  if ("error" in got) return got.error;
+  const { row } = got;
+  const now = Date.now();
+  const handle = normalizeHandle(row.handle);
+  const reasons = JSON.stringify(
+    ["whitelisted by admin", `self-service request #${row.id}`, row.note ?? ""].filter(Boolean),
+  );
+  await whitelistUpsert(c.env, row.x_user_id, handle, "", null, reasons, now);
+  await c.env.DB.prepare(
+    "UPDATE whitelist_requests SET status='approved', decided_at=? WHERE id=?",
+  )
+    .bind(now, id)
+    .run();
+  await c.env.DB.prepare(
+    "INSERT INTO review_log (x_user_id,handle,action,actor,note,at) VALUES (?,?,?,?,?,?)",
+  )
+    .bind(row.x_user_id, handle, "whitelist_request_approve", "admin", `request #${id}`, now)
+    .run();
+  return c.json({ ok: true, status: "approved" });
+});
+
+app.post("/v1/admin/whitelist-requests/:id/reject", async (c) => {
+  if (!(await admin(c))) return c.json({ error: "forbidden" }, 403);
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: "bad_request" }, 400);
+  const got = await pendingWhitelistRequest(c.env, id);
+  if ("error" in got) return got.error;
+  const { row } = got;
+  const now = Date.now();
+  await c.env.DB.prepare(
+    "UPDATE whitelist_requests SET status='rejected', decided_at=? WHERE id=?",
+  )
+    .bind(now, id)
+    .run();
+  await c.env.DB.prepare(
+    "INSERT INTO review_log (x_user_id,handle,action,actor,note,at) VALUES (?,?,?,?,?,?)",
+  )
+    .bind(row.x_user_id, normalizeHandle(row.handle), "whitelist_request_reject", "admin", `request #${id}`, now)
+    .run();
+  return c.json({ ok: true, status: "rejected" });
 });
 
 // Maintainer view of the public blacklist (status='human_confirmed'). Like
