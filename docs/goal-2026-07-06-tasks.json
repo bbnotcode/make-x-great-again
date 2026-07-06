@@ -31,8 +31,8 @@
       "id": "T3",
       "title": "发布产物 v2：R2 lite-<version>.json + GitHub v2-lite.json（全量无 cap）+ v1 兼容保留",
       "verify": "lite 产物体积 ≤6MB；/v1/list/meta 广告 lite URL；旧 shards 继续发布",
-      "passes": false,
-      "note": "代码已部署；等 10min publish tick 验证产物"
+      "passes": true,
+      "note": "verifier 实测：lite 4.76MB / 106,939 条 / schema 2；GitHub v2-lite.json 106,843 条全量；/v1/list 带 category"
     },
     {
       "id": "T4",
@@ -57,7 +57,7 @@
     }
   ],
   "manual_blockers": [
-    "扩展新版需要人工上传 CWS/AMO（等 GitHub 镜像 v2-lite.json 生成后重新 npm run build 再上传，可拿到全量 10.5 万条+分类的 bundled 名单；当前构建用 v1 fallback 只有 5 万条）",
+    "扩展新版需要人工上传 CWS/AMO（本地已用全量 v2-lite 重新构建：106,497 条 + 分类，.output/chrome-mv3 就绪）",
     "admin 面板的关键词规则编辑 UI 尚无 category 字段输入（API 已支持）；新增规则建议顺手在 D1 里补 category"
   ]
 }
