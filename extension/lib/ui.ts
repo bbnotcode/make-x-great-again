@@ -36,12 +36,44 @@ export const STYLE = `
   -webkit-backdrop-filter: blur(12px); border-radius: 14px;
 }
 .pill {
-  display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px;
-  border-radius: 999px; cursor: pointer; transition: opacity .14s ease;
+  display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px;
+  border-radius: 999px; cursor: pointer; transition: opacity .14s ease, transform .14s ease;
+  min-width: 0; min-height: 36px;
 }
-.pill:hover { opacity: .92; }
-.pill .n {
-  font-size: 12px; font-weight: 700; min-width: 16px; text-align: center;
+.pill:hover { opacity: .94; transform: translateY(-1px); }
+.scan-pill {
+  display: grid; grid-template-columns: 22px auto auto;
+  align-items: center; gap: 7px; width: auto;
+}
+.scan-radar {
+  --accent: var(--brand); --angle: 360deg;
+  width: 22px; height: 22px; position: relative; display: grid; place-items: center;
+  border-radius: 999px; flex: none;
+  background: conic-gradient(var(--accent) var(--angle), color-mix(in srgb, var(--accent) 12%, transparent) 0deg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.scan-radar.danger { --accent: var(--danger); }
+.scan-core {
+  position: absolute; inset: 4px; display: grid; place-items: center;
+  border-radius: inherit; background: var(--surface);
+}
+.scan-sweep {
+  position: absolute; inset: 2px; border-radius: inherit; opacity: 0;
+  background: conic-gradient(from -30deg, transparent 0 64%, color-mix(in srgb, var(--accent) 58%, transparent) 76%, transparent 92%);
+}
+.scan-radar.busy .scan-sweep {
+  opacity: .95; animation: xradar 1.15s linear infinite;
+}
+.scan-radar.busy {
+  animation: xbreath 1.6s ease-in-out infinite;
+}
+.scan-title {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 46px; font-size: 12.5px; font-weight: 750; color: var(--text);
+}
+.scan-meta {
+  flex: none; font-size: 11px; font-weight: 650; color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 .card { width: 312px; padding: 14px; display: none; }
 .card.open { display: block; animation: in .18s ease-out; }
@@ -49,9 +81,21 @@ export const STYLE = `
 .hd { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
 .hd .x { margin-left: auto; cursor: pointer; color: var(--muted); display: flex; }
 .hd .x:hover { color: var(--text); }
-.sub { display: flex; gap: 12px; margin: 10px 0 12px; font-size: 12px; color: var(--muted); }
-.dot { display: inline-flex; align-items: center; gap: 5px; }
-.dot i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.sub {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px; margin: 10px 0 12px;
+  font-size: 11px; color: var(--muted);
+}
+.metric {
+  min-width: 0; height: 30px; display: flex; align-items: center; justify-content: center;
+  gap: 4px; padding: 0 5px; border-radius: 8px;
+  background: color-mix(in srgb, var(--muted) 7%, transparent);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden;
+}
+.metric b { color: var(--text); font-size: 12px; font-weight: 760; line-height: 1; }
+.metric em { font-style: normal; overflow: hidden; text-overflow: ellipsis; }
+.metric i { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex: none; }
 .btn {
   width: 100%; border: 0; border-radius: 10px; padding: 9px 12px;
   font-size: 13px; font-weight: 600; cursor: pointer; color: #fff;
@@ -59,9 +103,119 @@ export const STYLE = `
 }
 .btn:hover { filter: brightness(1.08); }
 .btn:disabled { opacity: .55; cursor: default; }
+
+/* Per-row action button — same color language as bulk btn, smaller scale. */
+.xss-act {
+  flex: none; border: 0; border-radius: 8px; padding: 5px 10px;
+  font-size: 11.5px; font-weight: 600; cursor: pointer; color: #fff;
+  background: var(--danger); transition: filter .14s ease, background .14s;
+  white-space: nowrap;
+}
+.xss-act:hover { filter: brightness(1.08); }
+.xss-act:disabled { cursor: default; }
+.xss-act.done {
+  background: var(--safe); color: #fff; opacity: .9;
+}
+.xss-act.queue {
+  background: transparent; color: var(--brand);
+  border: 1px solid var(--brand);
+}
+.xss-act.queue.busy { animation: xpulse 1.2s ease-in-out infinite; }
+.xss-act.retry {
+  background: transparent; color: var(--warn);
+  border: 1px solid var(--warn);
+}
+
+/* Per-row select checkbox — themed, replaces native browser styling. */
+.xss-row-cb {
+  width: 15px; height: 15px; flex: none; cursor: pointer;
+  appearance: none; -webkit-appearance: none;
+  border: 1.5px solid var(--border); border-radius: 4px;
+  background: transparent; transition: border-color .12s, background .12s;
+  position: relative; margin-top: 6px;
+}
+.xss-row-cb:hover { border-color: var(--danger); }
+.xss-row-cb:checked {
+  background: var(--danger); border-color: var(--danger);
+}
+.xss-row-cb:checked::after {
+  content: ""; position: absolute; left: 3px; top: 0;
+  width: 5px; height: 9px; border: solid #fff;
+  border-width: 0 1.5px 1.5px 0; transform: rotate(45deg);
+}
+.xss-row-cb:disabled { opacity: .35; cursor: default; }
 .row { display: flex; gap: 14px; margin-top: 10px; font-size: 12px; }
 .lnk { color: var(--muted); cursor: pointer; }
 .lnk:hover { color: var(--text); }
+.block-progress {
+  margin: -2px 0 13px;
+}
+.progress-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px; font-size: 11px; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.progress-head b {
+  color: var(--text); font-size: 11px; font-weight: 750;
+}
+.progress-track {
+  height: 9px; display: flex; overflow: hidden; border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 8%, transparent);
+}
+.progress-seg {
+  height: 100%; min-width: 0; transition: width .22s ease;
+}
+.progress-seg + .progress-seg {
+  box-shadow: inset 1px 0 0 color-mix(in srgb, var(--surface) 70%, transparent);
+}
+.progress-seg.done { background: linear-gradient(90deg, color-mix(in srgb, var(--safe) 78%, #fff), var(--safe)); }
+.progress-seg.active {
+  background:
+    repeating-linear-gradient(115deg, rgba(255,255,255,.22) 0 6px, transparent 6px 12px),
+    linear-gradient(90deg, color-mix(in srgb, var(--danger) 72%, #fff), var(--danger));
+  animation: pbarshift .9s linear infinite;
+}
+.progress-seg.queued { background: linear-gradient(90deg, color-mix(in srgb, var(--brand) 76%, #fff), var(--brand)); }
+.progress-seg.failed { background: linear-gradient(90deg, color-mix(in srgb, var(--warn) 76%, #fff), var(--warn)); }
+.progress-seg.idle { background: color-mix(in srgb, var(--muted) 24%, transparent); }
+.queue-table {
+  max-height: 226px; overflow: auto; margin: 0 -4px 10px; padding: 0 4px;
+  scrollbar-width: thin;
+}
+.qrow {
+  display: flex; align-items: flex-start; gap: 8px; padding: 6px 4px;
+  border-radius: 10px; transform-origin: top center;
+  transition: background .14s ease, opacity .14s ease;
+}
+.qrow.new { animation: qrowin .24s cubic-bezier(.2,.7,.2,1); }
+.qrow.active { background: color-mix(in srgb, var(--danger) 8%, transparent); }
+.qrow.queued { background: color-mix(in srgb, var(--brand) 7%, transparent); }
+.qrow.failed { background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.qrow.done { background: color-mix(in srgb, var(--safe) 8%, transparent); }
+.qavatar {
+  width: 26px; height: 26px; border-radius: 50%; flex: none; object-fit: cover;
+  transition: filter .18s ease, opacity .18s ease;
+}
+.qavatar.blank { background: var(--border); }
+.qbody { min-width: 0; flex: 1; }
+.qname {
+  font-weight: 650; font-size: 12px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.qmeta { font-size: 11px; }
+.qsnip {
+  font-size: 11px; color: var(--muted); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.qnote { font-size: 11px; }
+.qrow.done .qavatar {
+  filter: grayscale(1); opacity: .38;
+}
+.qrow.done .qname,
+.qrow.done .qsnip {
+  text-decoration: line-through; opacity: .52;
+}
 svg { display: block; }
 .xss-badge {
   --badge-color: var(--muted);
@@ -120,14 +274,28 @@ svg { display: block; }
 @keyframes xspin { to { transform: rotate(360deg); } }
 @keyframes xshim { to { transform: translateX(100%); } }
 @keyframes xpulse { 0%,100% { opacity: .55; } 50% { opacity: .95; } }
+@keyframes xradar { to { transform: rotate(360deg); } }
+@keyframes xbreath { 0%,100% { filter: saturate(1); } 50% { filter: saturate(1.35); } }
+@keyframes qrowin {
+  from { opacity: 0; transform: translateY(-7px) scale(.985); }
+}
+@keyframes pbarshift {
+  to { background-position: 22px 0, 0 0; }
+}
 
-/* refined attention flash when a NEW spam account is found */
-.pill.flash { animation: xflash 1s ease-out 2; }
-@keyframes xflash {
-  0% { box-shadow: var(--shadow); transform: scale(1); }
-  18% { box-shadow: 0 0 0 4px rgba(239,68,68,.35), var(--shadow); transform: scale(1.06); }
-  60% { box-shadow: 0 0 0 0 rgba(239,68,68,0), var(--shadow); transform: scale(1); }
-  100% { box-shadow: var(--shadow); transform: scale(1); }
+/* New-hit motion: one compact radar lap, slow at first then faster. */
+.pill.hit-pulse .scan-radar {
+  animation: xhitspin .82s cubic-bezier(.62, 0, 1, .62) 1, xhitglow .9s ease-out 1;
+}
+@keyframes xhitspin {
+  0% { transform: rotate(0deg) scale(1); }
+  42% { transform: rotate(72deg) scale(1.08); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+@keyframes xhitglow {
+  0% { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent), 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
+  32% { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent), 0 0 0 5px color-mix(in srgb, var(--accent) 18%, transparent); }
+  100% { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent), 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -136,7 +304,12 @@ svg { display: block; }
   .xss-badge.fresh, .xss-badge.known { animation: fade .18s ease-out; }
   .xss-badge.analyzing::after, .xss-spin { animation: none; }
   .xss-badge.pending { animation: none; opacity: .7; }
-  .pill.flash { animation: none; }
+  .scan-radar.busy,
+  .scan-radar.busy .scan-sweep,
+  .qrow.new,
+  .xss-act.queue.busy,
+  .progress-seg.active { animation: none; }
+  .pill.hit-pulse .scan-radar { animation: none; }
 }
 `;
 
@@ -184,8 +357,15 @@ export interface Finding {
   verdict: Verdict;
 }
 
+/** Row lifecycle inside the bubble's batch panel. A key absent from the
+ *  state map is "pending" (untouched, selectable). */
+type RowState = "queued" | "processing" | "done" | "failed";
+
 export interface BubbleHandlers {
-  onHideAll: (keys: string[]) => void;
+  /** Process the given account keys ONE BY ONE (the caller owns pacing /
+   *  real X actions) and call onProgress(key, ok) as each one finishes.
+   *  The bubble advances chips + progress bar + row states on every call. */
+  onProcess: (keys: string[], onProgress: (key: string, ok: boolean) => void) => void;
   onReviewEach: () => void;
   onDismiss: () => void;
 }
@@ -213,26 +393,173 @@ export function createBubble(
   let open = false;
   let findings: Finding[] = [];
   let scanning = 0; // accounts currently being checked (visible progress)
+  // Row states are keyed by account key, NOT stored on the Finding — the
+  // caller replaces the findings array wholesale on update().
+  const rowState = new Map<string, RowState>();
+  // Unchecked keys. Default for a fresh finding = selected (checked).
+  const deselected = new Set<string>();
+  // Rows already rendered once — suppresses the slide-in replay on rerender.
+  const seenRows = new Set<string>();
+
+  // Must match content.ts keyOf(): userId first, `h:${handle}` fallback.
+  const rowKey = (f: Finding) => f.userId || `h:${f.handle}`;
+  const stateOf = (f: Finding): RowState | "pending" =>
+    rowState.get(rowKey(f)) ?? "pending";
+  const selectable = (f: Finding) => {
+    const st = stateOf(f);
+    return st === "pending" || st === "failed";
+  };
 
   const sev = (f: Finding[]) =>
     f.some((x) => x.verdict.label === "spam" || x.verdict.label === "porn_bot")
       ? "--danger"
       : "--warn";
 
+  function stats() {
+    let done = 0;
+    let processing = 0;
+    let queued = 0;
+    let failed = 0;
+    let pending = 0;
+    for (const f of findings) {
+      switch (stateOf(f)) {
+        case "done":
+          done++;
+          break;
+        case "processing":
+          processing++;
+          break;
+        case "queued":
+          queued++;
+          break;
+        case "failed":
+          failed++;
+          break;
+        default:
+          pending++;
+      }
+    }
+    return {
+      found: findings.length,
+      done,
+      processing,
+      queued,
+      failed,
+      pending,
+      running: processing + queued,
+    };
+  }
+
+  function progressWidth(count: number, total: number) {
+    if (count <= 0 || total <= 0) return "0%";
+    return `${Math.max(0, Math.min(100, (count / total) * 100)).toFixed(2)}%`;
+  }
+
+  function progressSegment(
+    kind: "done" | "active" | "queued" | "failed" | "idle",
+    count: number,
+    total: number,
+  ) {
+    if (count <= 0) return "";
+    return `<span class="progress-seg ${kind}" style="width:${progressWidth(count, total)}"></span>`;
+  }
+
+  function renderProgress(s: ReturnType<typeof stats>) {
+    const total = Math.max(1, s.found);
+    const donePct = Math.round((s.done / total) * 100);
+    const remaining = s.processing + s.queued + s.pending;
+    return `<div class="block-progress" aria-label="处理进度 ${donePct}%">
+      <div class="progress-head">
+        <span>${remaining > 0 ? `剩余 ${remaining}` : "处理完成"}</span>
+        <b>${donePct}%</b>
+      </div>
+      <div class="progress-track">
+        ${progressSegment("done", s.done, total)}
+        ${progressSegment("active", s.processing, total)}
+        ${progressSegment("queued", s.queued, total)}
+        ${progressSegment("failed", s.failed, total)}
+        ${progressSegment("idle", s.pending, total)}
+      </div>
+    </div>`;
+  }
+
+  function progressMarkup(opts: {
+    iconName: string;
+    iconColor: string;
+    title: string;
+    count?: string;
+    percent: number;
+    busy?: boolean;
+    danger?: boolean;
+  }) {
+    const percent = Math.max(0, Math.min(100, opts.percent));
+    const angle = Math.round(percent * 3.6);
+    return `<span class="scan-pill">
+      <span class="scan-radar ${opts.busy ? "busy" : ""} ${opts.danger ? "danger" : ""}" style="--angle:${angle}deg">
+        <span class="scan-sweep"></span>
+        <span class="scan-core">${icon(opts.iconName, opts.iconColor, 11)}</span>
+      </span>
+      <span class="scan-title">${opts.title}</span>
+      ${opts.count ? `<span class="scan-meta">${opts.count}</span>` : ""}
+    </span>`;
+  }
+
   function renderPill() {
-    if (!findings.length && scanning > 0) {
+    if (findings.length) {
+      const s = stats();
+      if (s.running > 0) {
+        pill.innerHTML = progressMarkup({
+          iconName: "shield-x",
+          iconColor: "var(--danger)",
+          title: `${verb}中`,
+          count: `${s.done}/${s.found}`,
+          percent: Math.max(8, Math.round((s.done / Math.max(1, s.found)) * 100)),
+          busy: true,
+          danger: true,
+        });
+        return;
+      }
+      if (s.done > 0 && s.done + s.failed >= s.found) {
+        pill.innerHTML = progressMarkup({
+          iconName: "shield-check",
+          iconColor: "var(--safe)",
+          title: `已${verb}`,
+          count: String(s.done),
+          percent: 100,
+        });
+        return;
+      }
+      pill.innerHTML = progressMarkup({
+        iconName: "shield-alert",
+        iconColor: `var(${sev(findings)})`,
+        title: "命中",
+        count: String(findings.length),
+        percent: 100,
+        busy: scanning > 0,
+        danger: true,
+      });
+      return;
+    }
+    if (scanning > 0) {
       // Visible processing feedback (esp. reply sections).
-      pill.innerHTML = `${icon("shield", "var(--brand)", 16)}<span class="n" style="font-weight:600;color:var(--muted)">检查中 ${scanning}…</span>`;
+      pill.innerHTML = progressMarkup({
+        iconName: "shield",
+        iconColor: "var(--brand)",
+        title: "检查中",
+        count: String(scanning),
+        percent: 0,
+        busy: true,
+      });
       return;
     }
-    if (!findings.length) {
-      // Calm "guarding" state — confirms the extension is working even
-      // when nothing suspicious is on the page (no alarm color).
-      pill.innerHTML = `${icon("shield-check", "var(--brand)", 16)}<span class="n" style="font-weight:600;color:var(--muted)">守护中</span>`;
-      return;
-    }
-    const c = `var(${sev(findings)})`;
-    pill.innerHTML = `${icon("shield-alert", c, 16)}<span class="n">${findings.length}</span>`;
+    // Calm "guarding" state — confirms the extension is working even
+    // when nothing suspicious is on the page (no alarm color).
+    pill.innerHTML = progressMarkup({
+      iconName: "shield-check",
+      iconColor: "var(--brand)",
+      title: "守护",
+      percent: 100,
+    });
   }
 
   function renderCard() {
@@ -250,49 +577,117 @@ export function createBubble(
       );
       return;
     }
-    const danger = findings.filter(
-      (x) => x.verdict.label === "spam" || x.verdict.label === "porn_bot",
+    const s = stats();
+    const waiting = s.queued + s.pending; // 还没轮到 / 还没动手的
+    const selectedPending = findings.filter(
+      (f) => selectable(f) && !deselected.has(rowKey(f)),
     ).length;
-    const warn = findings.length - danger;
+    const selectableCount = findings.filter(selectable).length;
+    const batchTouched = s.done + s.processing + s.queued + s.failed > 0;
+    // Row order: in-flight first, then untouched/failed, done rows sink.
+    const ordered = [
+      ...findings.filter((f) => {
+        const st = stateOf(f);
+        return st === "processing" || st === "queued";
+      }),
+      ...findings.filter(selectable),
+      ...findings.filter((f) => stateOf(f) === "done"),
+    ];
     card.innerHTML = `
       <div class="hd">${icon("shield-alert", "var(--brand)", 16)}
-        <span>本页发现 ${findings.length} 个可疑账号</span>
+        <span>${selectableCount || s.running ? `本页发现 ${findings.length} 个可疑账号` : `本页已处理 ${s.done} 个账号`}</span>
         <span class="x" data-x>${icon("x", "currentColor", 14)}</span></div>
       <div class="sub">
-        ${danger ? `<span class="dot"><i style="background:var(--danger)"></i>${danger} 色情/垃圾bot</span>` : ""}
-        ${warn ? `<span class="dot"><i style="background:var(--warn)"></i>${warn} 疑似</span>` : ""}
+        <span class="metric" title="本页命中的可疑账号">
+          <i style="background:var(--danger)"></i><b>${s.found}</b><em>命中</em>
+        </span>
+        <span class="metric" title="正在处理">
+          <i style="background:var(--warn)"></i><b>${s.processing}</b><em>正在</em>
+        </span>
+        <span class="metric" title="等待处理">
+          <i style="background:var(--muted)"></i><b>${waiting}</b><em>待处理</em>
+        </span>
+        <span class="metric" title="${s.failed ? `失败 ${s.failed}，` : ""}已处理完成">
+          <i style="background:${s.failed ? "var(--warn)" : "var(--safe)"}"></i><b>${s.done}</b><em>已处理</em>
+        </span>
       </div>
-      <div style="max-height:208px;overflow:auto;margin:0 -4px 10px">
-        ${findings
+      ${batchTouched ? renderProgress(s) : ""}
+      <div class="queue-table">
+        ${ordered
           .map((f) => {
             const m = LABEL[f.verdict.label];
             const col = `var(${m.varName})`;
             const avUrl = safeAvatarUrl(f.avatarUrl);
             const av = avUrl
-              ? `<img src="${esc(avUrl)}" width="26" height="26" style="border-radius:50%;flex:none" alt="">`
-              : `<span style="width:26px;height:26px;border-radius:50%;flex:none;background:var(--border)"></span>`;
+              ? `<img src="${esc(avUrl)}" class="qavatar" alt="">`
+              : `<span class="qavatar blank"></span>`;
             const name = esc(f.displayName?.trim() || `@${f.handle}`);
             const snip = f.snippet
               ? esc(f.snippet.replace(/\s+/g, " ").trim()).slice(0, 60)
               : "";
-            const src = f.source
-              ? `<div style="font-size:10px;color:var(--muted)">${esc(f.source)}</div>`
-              : "";
-            return `<div style="display:flex;align-items:flex-start;gap:8px;padding:6px 4px">
+            const id = rowKey(f);
+            const isNew = !seenRows.has(id);
+            seenRows.add(id);
+            const st = stateOf(f);
+            const rowCls = [
+              "qrow",
+              isNew ? "new" : "",
+              st === "processing" ? "active" : st === "pending" ? "" : st,
+            ]
+              .filter(Boolean)
+              .join(" ");
+            const canPick = selectable(f);
+            const checked = canPick && !deselected.has(id);
+            const actClass =
+              st === "done"
+                ? "xss-act done"
+                : st === "processing"
+                  ? "xss-act queue busy"
+                  : st === "queued"
+                    ? "xss-act queue"
+                    : st === "failed"
+                      ? "xss-act retry"
+                      : "xss-act";
+            const actText =
+              st === "done"
+                ? `已${verb}`
+                : st === "processing"
+                  ? `${verb}中`
+                  : st === "queued"
+                    ? "待处理"
+                    : st === "failed"
+                      ? "重试"
+                      : verb;
+            const actDisabled = st === "done" || st === "processing" || st === "queued";
+            return `<div class="${rowCls}">
+              <input type="checkbox" class="xss-row-cb" data-sel="${esc(id)}"
+                aria-label="选中 @${esc(f.handle)}"
+                ${checked ? "checked" : ""} ${canPick ? "" : "disabled"}>
               ${av}
-              <div style="min-width:0;flex:1">
-                <div style="font-weight:600;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</div>
-                <div style="font-size:11px;color:${col}">@${esc(f.handle)} · ${m.zh} ${(f.verdict.confidence * 100).toFixed(0)}%</div>
-                ${snip ? `<div style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${snip}</div>` : ""}
-                ${src}
+              <div class="qbody">
+                <div class="qname">${name}</div>
+                <div class="qmeta" style="color:${col}">@${esc(f.handle)} · ${m.zh} ${(f.verdict.confidence * 100).toFixed(0)}%</div>
+                ${snip ? `<div class="qsnip">${snip}</div>` : ""}
+                ${st === "processing" ? `<div class="qnote" style="color:var(--danger)">正在${verb}…</div>` : ""}
+                ${st === "queued" ? `<div class="qnote" style="color:var(--brand)">排队等待处理</div>` : ""}
+                ${st === "failed" ? `<div class="qnote" style="color:var(--warn)">处理失败 · <a href="https://x.com/${esc(f.handle)}" target="_blank" rel="noopener" style="color:var(--warn)">手动处理</a></div>` : ""}
+                ${st === "done" ? `<div class="qnote" style="color:var(--safe)">✓ 已${verb}</div>` : ""}
               </div>
-              <button class="xss-act" data-hide="${f.userId || "h:" + f.handle}">${verb}</button>
+              <button class="${actClass}" data-one="${esc(id)}"${actDisabled ? " disabled" : ""}>${actText}</button>
             </div>`;
           })
           .join("")}
       </div>
-      <button class="btn" data-hide-all>一键${verb}全部 (${findings.length})</button>
-      <div class="row"><span class="lnk" data-each>逐个查看</span>
+      ${
+        s.running > 0
+          ? `<button class="btn" disabled style="background:var(--brand)">${verb}中 · 正在 ${s.processing} · 待 ${s.queued}</button>`
+          : selectableCount === 0
+            ? `<button class="btn" disabled style="background:var(--safe)">✓ 已全部处理 (${s.done})</button>`
+            : selectedPending === 0
+              ? `<button class="btn" disabled style="opacity:.55">未选中任何账号 (剩余 ${selectableCount})</button>`
+              : `<button class="btn" data-run>一键${verb}选中 ${selectedPending}${s.done ? ` · 已完成 ${s.done}` : ""}${selectedPending < selectableCount ? ` · 跳过 ${selectableCount - selectedPending}` : ""}</button>`
+      }
+      <div class="row"><span class="lnk" data-each>逐个查看处理</span>
         <span class="lnk" data-ign>忽略本页</span></div>`;
     card.querySelector("[data-x]")?.addEventListener("click", collapse);
     card.querySelector("[data-ign]")?.addEventListener("click", () => {
@@ -300,21 +695,54 @@ export function createBubble(
       root.remove();
     });
     card.querySelector("[data-each]")?.addEventListener("click", h.onReviewEach);
-    card.querySelectorAll<HTMLElement>("[data-hide]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const id = btn.dataset.hide;
-        if (id) {
-          h.onHideAll([id]);
-          btn.textContent = `已${verb}`;
-          (btn as HTMLButtonElement).disabled = true;
-        }
+    // Per-row select toggle — uncheck excludes from the bulk action so the
+    // user can opt-out specific accounts before "一键处理".
+    card.querySelectorAll<HTMLInputElement>("[data-sel]").forEach((cb) => {
+      cb.addEventListener("change", () => {
+        const id = cb.dataset.sel;
+        if (!id) return;
+        if (cb.checked) deselected.delete(id);
+        else deselected.add(id);
+        renderCard(); // re-render so the bulk button count updates immediately
       });
     });
-    const b = card.querySelector<HTMLButtonElement>("[data-hide-all]");
+    card.querySelectorAll<HTMLElement>("[data-one]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.one;
+        const f = findings.find((x) => rowKey(x) === id);
+        if (f && selectable(f)) startBatch([rowKey(f)]);
+      });
+    });
+    const b = card.querySelector<HTMLButtonElement>("[data-run]");
     b?.addEventListener("click", () => {
       b.disabled = true;
       b.textContent = "处理中…";
-      h.onHideAll(findings.map((f) => f.userId || `h:${f.handle}`));
+      // Bulk only processes the SELECTED, untouched findings.
+      const keys = findings
+        .filter((f) => selectable(f) && !deselected.has(rowKey(f)))
+        .map(rowKey);
+      startBatch(keys);
+    });
+  }
+
+  /** Kick off a batch: mark rows, then hand the keys to the caller. The
+   *  caller processes them sequentially and reports back per key; each
+   *  report advances chips, progress bar and row states in place. */
+  function startBatch(keys: string[]) {
+    if (!keys.length) return;
+    keys.forEach((k, i) => {
+      rowState.set(k, i === 0 ? "processing" : "queued");
+      deselected.delete(k);
+    });
+    renderPill();
+    if (open) renderCard();
+    h.onProcess(keys, (key, ok) => {
+      rowState.set(key, ok ? "done" : "failed");
+      // Sequential batch: promote the next queued row to "processing".
+      const next = keys.find((k) => rowState.get(k) === "queued");
+      if (next) rowState.set(next, "processing");
+      renderPill();
+      if (open) renderCard();
     });
   }
 
@@ -352,15 +780,20 @@ export function createBubble(
     update(f: Finding[]) {
       const grew = f.length > findings.length;
       findings = f;
+      // Prune state for rows that left the page (SPA navigation resets).
+      const live = new Set(f.map(rowKey));
+      for (const k of [...rowState.keys()]) if (!live.has(k)) rowState.delete(k);
+      for (const k of [...deselected]) if (!live.has(k)) deselected.delete(k);
+      for (const k of [...seenRows]) if (!live.has(k)) seenRows.delete(k);
       root.style.display = "";
       renderPill();
       if (open) renderCard();
       if (grew) {
-        // refined double flash on a newly-found spam account
-        pill.classList.remove("flash");
+        // New finding: replay one compact radar lap without resizing the pill.
+        pill.classList.remove("hit-pulse");
         void pill.offsetWidth; // restart the animation
-        pill.classList.add("flash");
-        setTimeout(() => pill.classList.remove("flash"), 2100);
+        pill.classList.add("hit-pulse");
+        setTimeout(() => pill.classList.remove("hit-pulse"), 950);
       }
     },
     setScanning(n: number) {

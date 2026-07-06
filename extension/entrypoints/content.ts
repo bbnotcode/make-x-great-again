@@ -35,17 +35,20 @@ function actionVerb(mode: ActionMode): string {
 }
 
 /** Fire X's native mute/block (best-effort, paced) with one retry. The local
- *  hide/record is applied separately and always — the X call rides on top. */
-async function applyXAction(mode: ActionMode, sig: Signals): Promise<void> {
-  if (mode === "local") return;
+ *  hide/record is applied separately and always — the X call rides on top.
+ *  Returns false only when the native X action definitively failed (used by
+ *  the bubble's batch panel to surface a per-row 重试 state). */
+async function applyXAction(mode: ActionMode, sig: Signals): Promise<boolean> {
+  if (mode === "local") return true;
   const attempt = await performXAction(mode, sig.userId, sig.handle);
-  if (!attempt.ok) {
-    const delay = retryDelayForAttempt(attempt, 1);
-    if (delay > 0) {
-      await new Promise((r) => setTimeout(r, delay));
-      await performXAction(mode, sig.userId, sig.handle); // one best-effort retry
-    }
+  if (attempt.ok) return true;
+  const delay = retryDelayForAttempt(attempt, 1);
+  if (delay > 0) {
+    await new Promise((r) => setTimeout(r, delay));
+    const second = await performXAction(mode, sig.userId, sig.handle); // one best-effort retry
+    return second.ok;
   }
+  return false;
 }
 
 /** Cheap author handle from the User-Name link href — no fiber walk, no
@@ -127,7 +130,7 @@ export default defineContentScript({
       // Tag the row so executeHide can still find it if X recycles the node.
       articleOf(anchor)?.setAttribute("data-xss-key", key);
       const timer = setTimeout(() => {
-        executeHide(key, sig);
+        void executeHide(key, sig);
         pendingActions.delete(key);
       }, PENDING_MS);
       pendingActions.set(key, { key, sig, anchor, timer, ts: Date.now() });
@@ -146,11 +149,14 @@ export default defineContentScript({
       clearMounts(pending.anchor);
     }
 
-    /** Execute the action after the preview window expires. The local record
-     *  + visual hide always happen (so the row stays gone across navigation);
-     *  if the user opted into "mute"/"block", X's native action rides on top
-     *  via the user's own session (best-effort, paced). */
-    function executeHide(key: string, sig: Signals) {
+    /** Execute the action (after the preview window expires, or immediately
+     *  from the bubble's batch panel). The local record + visual hide always
+     *  happen (so the row stays gone across navigation); if the user opted
+     *  into "mute"/"block", X's native action rides on top via the user's
+     *  own session (best-effort, paced). Everything up to the X call runs
+     *  synchronously; the returned promise resolves once the native action
+     *  settled (true = local-only mode or X action succeeded). */
+    function executeHide(key: string, sig: Signals): Promise<boolean> {
       const mode = settings.actionMode;
       void addBlocked(key);
       if (sig.userId) void addBlocked(sig.userId);
@@ -164,11 +170,11 @@ export default defineContentScript({
       });
       void bumpStats({ blocks: 1 });
       void bumpStat("blocked");
-      void applyXAction(mode, sig);
       // X recycles article nodes: only hide via the captured anchor if it
       // still belongs to this account; otherwise use the tagged row, else
       // abort the DOM hide (the block itself is already recorded).
-      const anchor = pendingActions.get(key)?.anchor ?? null;
+      const anchor =
+        pendingActions.get(key)?.anchor ?? anchorByKey.get(key) ?? null;
       const art = articleOf(anchor);
       const sameAuthor =
         !!art && handleFromArticle(art)?.toLowerCase() === sig.handle.toLowerCase();
@@ -176,6 +182,7 @@ export default defineContentScript({
         ? anchor
         : document.querySelector(`[data-xss-key="${CSS.escape(key)}"]`);
       if (target) hideTweet(target);
+      return applyXAction(mode, sig);
     }
 
     function badgeForPending(anchor: HTMLElement, sig: Signals) {
@@ -393,30 +400,41 @@ export default defineContentScript({
         st.textContent = STYLE;
         container.appendChild(st);
         const bubble = createBubble({
-          onHideAll(keys: string[]) {
-            // Schedule all hides with 5s undo window
-            for (const key of keys) {
-              const anchor = anchorByKey.get(key);
-              if (anchor) {
-                // Find the signals from findings
+          onProcess(keys: string[], onProgress: (key: string, ok: boolean) => void) {
+            // Batch panel: the user explicitly confirmed, so act immediately
+            // (no 5s undo window). Sequential await keeps the native X
+            // mute/block calls on x-action's global pacing; the bubble's
+            // chips/progress/rows advance on every onProgress callback.
+            void (async () => {
+              for (const key of keys) {
                 const f = findings.find(
                   (x) => (x.userId || `h:${x.handle}`) === key,
                 );
-                if (f) {
-                  const sig: Signals = {
-                    isProfile: false,
-                    handle: f.handle,
-                    displayName: f.displayName ?? "",
-                    bio: "",
-                    hasDefaultAvatar: false,
-                    recentTweets: [],
-                    ...(f.userId ? { userId: f.userId } : {}),
-                    ...(f.avatarUrl ? { avatarUrl: f.avatarUrl } : {}),
-                  };
-                  scheduleHide(key, sig, anchor);
+                if (!f) {
+                  onProgress(key, false);
+                  continue;
                 }
+                const sig: Signals = {
+                  isProfile: false,
+                  handle: f.handle,
+                  displayName: f.displayName ?? "",
+                  bio: "",
+                  hasDefaultAvatar: false,
+                  recentTweets: [],
+                  ...(f.userId ? { userId: f.userId } : {}),
+                  ...(f.avatarUrl ? { avatarUrl: f.avatarUrl } : {}),
+                };
+                // Take over any pending 5s-undo for this account — the batch
+                // action supersedes the preview window.
+                const pending = pendingActions.get(key);
+                if (pending) {
+                  clearTimeout(pending.timer);
+                  pendingActions.delete(key);
+                }
+                const ok = await executeHide(key, sig).catch(() => false);
+                onProgress(key, ok);
               }
-            }
+            })();
           },
           onReviewEach() {
             const first = findings[0];
@@ -444,7 +462,7 @@ export default defineContentScript({
     ctx.addEventListener(window, "wxt:locationchange", () => {
       for (const [key, p] of pendingActions) {
         clearTimeout(p.timer);
-        executeHide(key, p.sig);
+        void executeHide(key, p.sig);
       }
       pendingActions.clear();
       anchorByKey.clear();
