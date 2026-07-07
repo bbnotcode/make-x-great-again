@@ -459,6 +459,9 @@ export interface BubbleOpts {
   autoProcess?: boolean;
   /** How many spam categories currently escalate beyond "badge". */
   autoCategoryCount?: number;
+  /** true = auto actions fire everywhere (settings.autoScope === "all");
+   *  false = replies-only (default scope). */
+  autoScopeAll?: boolean;
 }
 
 /** Collapsed pill ⇄ expanded card. Default resting state = pill.
@@ -497,6 +500,7 @@ export function createBubble(
   const autoRows = new Set<string>();
   let autoOn = opts.autoProcess ?? true;
   let autoCats = opts.autoCategoryCount ?? 0;
+  let autoScopeAll = opts.autoScopeAll ?? false;
   // Card list view: the live queue by default; "done" lists processed rows
   // behind the 已处理 chip so they don't pile up under the progress bar.
   let view: "queue" | "done" = "queue";
@@ -668,7 +672,7 @@ export function createBubble(
   function autoRowMarkup() {
     const hint = autoOn
       ? autoCats > 0
-        ? `分级策略 · ${autoCats} 类自动`
+        ? `分级策略 · ${autoCats} 类自动 · ${autoScopeAll ? "全局" : "仅评论区"}`
         : "分级策略 · 全部仅标记"
       : "已暂停 · 仅标记";
     return `<div class="auto-row">
@@ -969,10 +973,11 @@ export function createBubble(
       if (open) renderCard();
     },
     /** Sync the header switch when settings change elsewhere (options page
-     *  or another tab). Optionally refresh the category-count hint. */
-    setAutoProcess(v: boolean, categoryCount?: number) {
+     *  or another tab). Optionally refresh the category-count/scope hint. */
+    setAutoProcess(v: boolean, categoryCount?: number, scopeAll?: boolean) {
       autoOn = v;
       if (categoryCount !== undefined) autoCats = categoryCount;
+      if (scopeAll !== undefined) autoScopeAll = scopeAll;
       if (open) renderCard();
     },
   };

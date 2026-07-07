@@ -1162,6 +1162,49 @@ function Settings() {
               「自动隐藏 / 静音 / 拉黑」按类别即时生效。分类由服务端 AI
               结合账号整体信息判定并随名单下发；官方白名单账号永不处理；所有自动处理都可在「隐藏记录」里撤销。
             </p>
+            <div className="mb-4">
+              <div className="mb-1.5 text-[12px] font-semibold text-fg">自动处理范围</div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {(
+                  [
+                    {
+                      v: "replies",
+                      label: "仅推文评论区（推荐）",
+                      hint: "只自动处理在别人推文下回复的账号——垃圾潮的真实所在。信息流里账号自己发的内容、个人主页：只检测打标，不自动处理。",
+                    },
+                    {
+                      v: "all",
+                      label: "全局",
+                      hint: "信息流、个人主页、评论区全部自动处理。覆盖最广，误伤风险也更高。",
+                    },
+                  ] as const
+                ).map((o) => {
+                  const active = (st.autoScope ?? "replies") === o.v;
+                  return (
+                    <button
+                      key={o.v}
+                      type="button"
+                      onClick={() => save("autoScope", o.v)}
+                      className={`flex items-start gap-2.5 rounded-lg border p-3 text-left transition ${
+                        active ? "border-fg bg-card-hi" : "border-border-2 hover:border-fg-3"
+                      }`}
+                    >
+                      <span
+                        className={`mt-0.5 flex h-4 w-4 flex-none items-center justify-center rounded-full border ${
+                          active ? "border-fg" : "border-border-2"
+                        }`}
+                      >
+                        {active && <span className="h-2 w-2 rounded-full bg-fg" />}
+                      </span>
+                      <span>
+                        <span className="text-[13px] font-medium text-fg">{o.label}</span>
+                        <span className="block text-[12px] leading-5 text-fg-3">{o.hint}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             <div className="space-y-2">
               {SPAM_CATEGORIES.map((cat) => (
                 <CategoryPolicyRow

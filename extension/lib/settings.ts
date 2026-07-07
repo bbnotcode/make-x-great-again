@@ -21,6 +21,15 @@ export type CategoryAction = "badge" | "hide" | "mute" | "block";
 
 export type CategoryActions = Record<SpamCategory, CategoryAction>;
 
+/** WHERE the per-category auto actions are allowed to fire. Detection and
+ *  badges always run everywhere; this only scopes the automatic
+ *  hide/mute/block:
+ *  - "replies": ONLY accounts replying under a tweet (the status-page 评论区,
+ *    where the spam wave actually lives). Feed posts by the account itself
+ *    and profile pages are detect-and-badge only. (default — least 误伤)
+ *  - "all": feed, profile and replies all auto-process. */
+export type AutoScope = "replies" | "all";
+
 export interface Settings {
   enabled: boolean; // master: passive detection on/off
   bubble: boolean; // show the corner bubble
@@ -28,6 +37,7 @@ export interface Settings {
   actionMode: ActionMode; // what "隐藏" does to a flagged account
   categoryActions: CategoryActions; // per-category automatic action on list hits
   autoProcess: boolean; // master kill-switch for categoryActions auto hide/mute/block
+  autoScope: AutoScope; // where auto actions may fire (replies-only by default)
   edgeBase: string; // advanced: override the public-list site base URL (links only)
 }
 
@@ -49,6 +59,7 @@ export const DEFAULTS: Settings = {
   actionMode: "local",
   categoryActions: { ...DEFAULT_CATEGORY_ACTIONS },
   autoProcess: true,
+  autoScope: "replies",
   edgeBase: "",
 };
 

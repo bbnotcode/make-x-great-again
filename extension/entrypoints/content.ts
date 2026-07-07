@@ -76,6 +76,32 @@ function handleFromArticle(art: HTMLElement): string | undefined {
   return undefined;
 }
 
+/** Where a scanned account was seen. Auto actions are scoped by this:
+ *  - "reply"   — a NON-focal article on a status page: someone replying under
+ *                a tweet. This is where the spam wave lives → auto-actable.
+ *  - "feed"    — the account's own post in a timeline / search / the focal
+ *                tweet itself. Detect + badge only under the default scope.
+ *  - "profile" — the profile header on the account's own page. Badge only. */
+type ScanContext = "reply" | "feed" | "profile";
+
+/** Status id of the tweet the current page is focused on, or null when not
+ *  on a /user/status/<id> page. */
+function focalStatusId(): string | null {
+  const m = location.pathname.match(/^\/[^/]+\/status\/(\d+)/);
+  return m?.[1] ?? null;
+}
+
+/** Status id of an article, read from its timestamp permalink. Null when the
+ *  article carries no <time> link (fail-safe → treated as non-reply). */
+function articleStatusId(art: HTMLElement): string | null {
+  for (const a of art.querySelectorAll<HTMLAnchorElement>('a[href*="/status/"]')) {
+    if (!a.querySelector("time")) continue;
+    const m = (a.getAttribute("href") ?? "").match(/\/status\/(\d+)/);
+    if (m?.[1]) return m[1];
+  }
+  return null;
+}
+
 function hideTweet(node: Element | null) {
   const cell =
     node?.closest('[data-testid="cellInnerDiv"]') ?? node?.closest("article");
@@ -133,7 +159,7 @@ export default defineContentScript({
       settings = s;
       // Keep the bubble's 自动处理 switch + hint in sync (options page or
       // another tab may have flipped it).
-      bubbleApi?.setAutoProcess(s.autoProcess, autoCategoryCount(s));
+      bubbleApi?.setAutoProcess(s.autoProcess, autoCategoryCount(s), s.autoScope === "all");
     });
 
     // Warm local data structures
@@ -279,6 +305,7 @@ export default defineContentScript({
       sig: Signals,
       entry: IndexEntry,
       badgeSource: BadgeSource = "list",
+      ctx: ScanContext = "feed",
     ) {
       if (!hitPublicSeen.has(key)) {
         hitPublicSeen.add(key);
@@ -293,9 +320,15 @@ export default defineContentScript({
       // (Auto actions stay reversible from the 隐藏记录 tab, and mute/block
       // ride the user's own X session like the manual path.)
       const humanConfirmedListHit = badgeSource === "list" && entry.tier === "confirmed";
-      const action = humanConfirmedListHit
-        ? (settings.categoryActions[entry.category] ?? "badge")
-        : "badge";
+      // Scope gate: the spam wave lives in reply sections under tweets. An
+      // account's OWN feed post or its profile page is not that pattern —
+      // by default those only detect + badge, never auto-act (误伤保护).
+      // settings.autoScope === "all" opts into auto-acting everywhere.
+      const scopeAllows = settings.autoScope === "all" || ctx === "reply";
+      const action =
+        humanConfirmedListHit && scopeAllows
+          ? (settings.categoryActions[entry.category] ?? "badge")
+          : "badge";
       // 自动处理 master switch off → everything degrades to mark-only,
       // regardless of the per-category policy.
       if (action === "badge" || !settings.autoProcess) {
@@ -336,7 +369,7 @@ export default defineContentScript({
       })();
     }
 
-    async function process(sig: Signals, anchor: HTMLElement) {
+    async function process(sig: Signals, anchor: HTMLElement, ctx: ScanContext = "feed") {
       const key = keyOf(sig);
       if (inFlight.has(key)) return; // a concurrent scan is already on it
       inFlight.add(key);
@@ -367,7 +400,7 @@ export default defineContentScript({
         // 3. Local public index lookup (no remote requests, <50ms).
         const entry = lookupLocal(sig.userId, sig.handle);
         if (entry) {
-          renderLocalIndex(anchor, key, sig, entry);
+          renderLocalIndex(anchor, key, sig, entry, "list", ctx);
           return;
         }
 
@@ -394,6 +427,7 @@ export default defineContentScript({
               updatedAt: new Date().toISOString(),
             },
             "rule",
+            ctx,
           );
           return;
         }
@@ -415,7 +449,7 @@ export default defineContentScript({
           if (nodeHandle.get(el) !== p.handle || !hasMount) {
             if (nodeHandle.get(el) !== p.handle) clearMounts(el);
             nodeHandle.set(el, p.handle);
-            void process(p, el);
+            void process(p, el, "profile");
           }
         }
       }
@@ -426,6 +460,11 @@ export default defineContentScript({
       // first (link href only) — full extraction (fiber walk, innerText)
       // runs only for nodes that actually need (re-)processing.
       const topic = extractThreadTopic();
+      // Reply detection: on a /user/status/<id> page every article whose own
+      // permalink id differs from the focal id is a conversation reply — the
+      // context where auto actions are allowed by default. Everything else
+      // (home/list/search feeds, the focal tweet itself) is "feed".
+      const focal = focalStatusId();
       for (const art of document.querySelectorAll<HTMLElement>(
         'article[data-testid="tweet"]',
       )) {
@@ -439,7 +478,9 @@ export default defineContentScript({
         if (topic && !info.threadTopic) info.threadTopic = topic;
         if (nodeHandle.get(art) !== handle) clearMounts(nameBlock); // recycled node
         nodeHandle.set(art, handle);
-        void process(info, nameBlock);
+        const sid = focal ? articleStatusId(art) : null;
+        const ctx: ScanContext = focal && sid && sid !== focal ? "reply" : "feed";
+        void process(info, nameBlock, ctx);
       }
     }
 
@@ -507,6 +548,7 @@ export default defineContentScript({
         }, settings.bubblePos, actionVerb(settings.actionMode), {
           autoProcess: settings.autoProcess,
           autoCategoryCount: autoCategoryCount(settings),
+          autoScopeAll: settings.autoScope === "all",
         });
         container.appendChild(bubble.el);
         if (!settings.bubble) bubble.el.style.display = "none";
