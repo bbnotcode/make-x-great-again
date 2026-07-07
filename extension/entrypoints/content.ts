@@ -375,12 +375,12 @@ export default defineContentScript({
       // display-only rows driven through markAuto (checkbox disabled,
       // button is a status chip). Chips + radar pill counts follow.
       pushFinding(sig, entry.verdict, badgeSource === "rule" ? "local-rule" : "local-index");
-      bubbleApi?.markAuto(key, "processing");
+      const verb = action === "mute" ? "静音" : action === "block" ? "拉黑" : "隐藏";
+      bubbleApi?.markAuto(key, "processing", verb);
       // Record AFTER the X action settles so the 处理记录 row can state
       // honestly whether the native mute/block actually landed — a silent
       // fire-and-forget here is how "自动拉黑" degrades into hide-only
       // without anyone noticing.
-      const verb = action === "mute" ? "静音" : action === "block" ? "拉黑" : "隐藏";
       void (async () => {
         const xOk =
           action === "mute" || action === "block" ? await applyXAction(action, sig) : true;
@@ -395,7 +395,7 @@ export default defineContentScript({
           source: "auto",
           ts: Date.now(),
         });
-        bubbleApi?.markAuto(key, xOk ? "done" : "failed");
+        bubbleApi?.markAuto(key, xOk ? "done" : "failed", verb);
       })();
     }
 

@@ -251,6 +251,11 @@ export const STYLE = `
   font-size: 11px; color: var(--muted); overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
+/* 命中原因（哪条策略/规则）— one compact muted line, full text on hover. */
+.qreason {
+  font-size: 10.5px; color: var(--muted); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; opacity: .9;
+}
 .qnote { font-size: 11px; }
 .qrow.done .qavatar {
   filter: grayscale(1); opacity: .38;
@@ -498,6 +503,8 @@ export function createBubble(
   // Rows driven by the AUTO path (per-category policy): the extension acts
   // on its own, so the checkbox and per-row button are display-only.
   const autoRows = new Set<string>();
+  // Per-row auto verb (拉黑/静音/隐藏) so the row states the REAL action.
+  const autoVerbs = new Map<string, string>();
   let autoOn = opts.autoProcess ?? true;
   let autoCats = opts.autoCategoryCount ?? 0;
   let autoScopeAll = opts.autoScopeAll ?? false;
@@ -813,22 +820,21 @@ export function createBubble(
               ${av}
               <div class="qbody">
                 <div class="qname">${name}</div>
-                <div class="qmeta" style="color:${col}">@${esc(f.handle)} · ${m.zh} ${(f.verdict.confidence * 100).toFixed(0)}%${
-                  f.source === "local-rule"
-                    ? isAuto
-                      ? " · 规则命中"
-                      : " · 规则命中(未上榜,需手动)"
-                    : f.source === "cache"
-                      ? " · 缓存"
-                      : f.source === "local-index"
-                        ? " · 公榜"
-                        : ""
-                }</div>
+                <div class="qmeta" style="color:${col}">@${esc(f.handle)} · ${m.zh} ${(f.verdict.confidence * 100).toFixed(0)}%</div>
+                ${(() => {
+                  // 命中原因行：公榜收录（类别·人工/自动收录）or 命中的具体
+                  // 官方规则。reasons[0] 由 local-index / 规则路径生成，已带
+                  // 类别与来源；非自动的规则命中补一个「需手动」提示。
+                  const r = f.verdict.reasons?.[0];
+                  if (!r) return "";
+                  const manual = f.source === "local-rule" && !isAuto ? " · 需手动" : "";
+                  return `<div class="qreason" title="${esc(f.verdict.reasons.join("\n"))}">${esc(r)}${manual}</div>`;
+                })()}
                 ${snip ? `<div class="qsnip">${snip}</div>` : ""}
-                ${st === "processing" ? `<div class="qnote" style="color:var(--danger)">${isAuto ? "自动处理中…" : `正在${verb}…`}</div>` : ""}
+                ${st === "processing" ? `<div class="qnote" style="color:var(--danger)">${isAuto ? `自动${autoVerbs.get(id) ?? "处理"}中…` : `正在${verb}…`}</div>` : ""}
                 ${st === "queued" ? `<div class="qnote" style="color:var(--brand)">排队等待处理</div>` : ""}
-                ${st === "failed" ? `<div class="qnote" style="color:var(--warn)">${isAuto ? "自动处理失败" : "处理失败"} · <a href="https://x.com/${esc(f.handle)}" target="_blank" rel="noopener" style="color:var(--warn)">手动处理</a></div>` : ""}
-                ${st === "done" ? `<div class="qnote" style="color:var(--safe)">✓ 已${isAuto ? "自动处理" : verb}</div>` : ""}
+                ${st === "failed" ? `<div class="qnote" style="color:var(--warn)">${isAuto ? `自动${autoVerbs.get(id) ?? "处理"}失败` : "处理失败"} · <a href="https://x.com/${esc(f.handle)}" target="_blank" rel="noopener" style="color:var(--warn)">手动处理</a></div>` : ""}
+                ${st === "done" ? `<div class="qnote" style="color:var(--safe)">✓ 已${isAuto ? `自动${autoVerbs.get(id) ?? "处理"}` : verb}</div>` : ""}
               </div>
               <button class="${actClass}" data-one="${esc(id)}"${actDisabled ? " disabled" : ""}>${actText}</button>
             </div>`;
@@ -957,6 +963,7 @@ export function createBubble(
       for (const k of [...deselected]) if (!live.has(k)) deselected.delete(k);
       for (const k of [...seenRows]) if (!live.has(k)) seenRows.delete(k);
       for (const k of [...autoRows]) if (!live.has(k)) autoRows.delete(k);
+      for (const k of [...autoVerbs.keys()]) if (!live.has(k)) autoVerbs.delete(k);
       root.style.display = "";
       renderPill();
       if (open) renderCard();
@@ -976,8 +983,9 @@ export function createBubble(
      *  here as the X action progresses. Marks the row as auto-driven —
      *  checkbox disabled, per-row button becomes a status chip. Chips,
      *  progress bar and the radar pill all re-derive from rowState. */
-    markAuto(key: string, st: "processing" | "done" | "failed") {
+    markAuto(key: string, st: "processing" | "done" | "failed", verbLabel?: string) {
       autoRows.add(key);
+      if (verbLabel) autoVerbs.set(key, verbLabel);
       rowState.set(key, st);
       renderPill();
       if (open) renderCard();
