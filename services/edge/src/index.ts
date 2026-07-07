@@ -2974,22 +2974,15 @@ app.get("/v1/admin/whitelist-requests", async (c) => {
   if (!(await admin(c))) return c.json({ error: "forbidden" }, 403);
   const status = (c.req.query("status") || "pending").trim();
   const limit = Math.min(500, Math.max(1, Number(c.req.query("limit")) || 200));
+  // Plain fetch first, enrich second. The original single query correlated
+  // the outer `wr` alias inside a subquery ORDER BY — D1's SQLite rejects
+  // that ("no such column: wr.x_user_id"), which 500'd this endpoint on
+  // every load (the admin page's 加载失败). MockDB tests never caught it.
   const rows = await c.env.DB.prepare(
-    `SELECT wr.id, wr.x_user_id, wr.handle, wr.gh_age_days, wr.note, wr.status,
-            wr.created_at, wr.decided_at,
-            a.status        AS account_status,
-            a.verdict_label AS account_verdict_label,
-            a.category      AS account_category
-       FROM whitelist_requests wr
-       LEFT JOIN accounts a ON a.rowid = (
-         SELECT rowid FROM accounts
-          WHERE (wr.x_user_id IS NOT NULL AND x_user_id = wr.x_user_id)
-             OR lower(handle) = lower(wr.handle)
-          ORDER BY CASE WHEN wr.x_user_id IS NOT NULL AND x_user_id = wr.x_user_id THEN 0 ELSE 1 END,
-                   last_scored DESC
-          LIMIT 1)
-      WHERE (? = 'all' OR wr.status = ?)
-      ORDER BY wr.id DESC
+    `SELECT id, x_user_id, handle, gh_age_days, note, status, created_at, decided_at
+       FROM whitelist_requests
+      WHERE (? = 'all' OR status = ?)
+      ORDER BY id DESC
       LIMIT ?`,
   )
     .bind(status, status, limit)
@@ -3002,11 +2995,57 @@ app.get("/v1/admin/whitelist-requests", async (c) => {
       status: string;
       created_at: number;
       decided_at: number | null;
-      account_status: string | null;
-      account_verdict_label: string | null;
-      account_category: string | null;
     }>();
-  return c.json({ list: rows.results ?? [] });
+  const reqs = rows.results ?? [];
+  // One bounded lookup over the requested handles (idx_accounts_handle_norm);
+  // prefer the uid-matching account row, else the freshest same-handle row.
+  const accountByReq = new Map<
+    number,
+    { status: string; verdict_label: string; category: string | null }
+  >();
+  if (reqs.length) {
+    const ph = reqs.map(() => "?").join(",");
+    const accs = await c.env.DB.prepare(
+      `SELECT x_user_id, lower(handle) AS h, status, verdict_label, category, last_scored
+         FROM accounts WHERE lower(handle) IN (${ph})`,
+    )
+      .bind(...reqs.map((r) => r.handle.toLowerCase()))
+      .all<{
+        x_user_id: string | null;
+        h: string;
+        status: string;
+        verdict_label: string;
+        category: string | null;
+        last_scored: number;
+      }>();
+    const byHandle = new Map<string, typeof accs.results>();
+    for (const a of accs.results ?? []) {
+      const arr = byHandle.get(a.h) ?? [];
+      arr.push(a);
+      byHandle.set(a.h, arr);
+    }
+    for (const r of reqs) {
+      const cands = byHandle.get(r.handle.toLowerCase()) ?? [];
+      const best =
+        (r.x_user_id && cands.find((a) => a.x_user_id === r.x_user_id)) ||
+        [...cands].sort((x, y) => y.last_scored - x.last_scored)[0];
+      if (best) {
+        accountByReq.set(r.id, {
+          status: best.status,
+          verdict_label: best.verdict_label,
+          category: best.category,
+        });
+      }
+    }
+  }
+  return c.json({
+    list: reqs.map((r) => ({
+      ...r,
+      account_status: accountByReq.get(r.id)?.status ?? null,
+      account_verdict_label: accountByReq.get(r.id)?.verdict_label ?? null,
+      account_category: accountByReq.get(r.id)?.category ?? null,
+    })),
+  });
 });
 
 async function pendingWhitelistRequest(

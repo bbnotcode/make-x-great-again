@@ -813,7 +813,15 @@ export function createBubble(
               ${av}
               <div class="qbody">
                 <div class="qname">${name}</div>
-                <div class="qmeta" style="color:${col}">@${esc(f.handle)} · ${m.zh} ${(f.verdict.confidence * 100).toFixed(0)}%</div>
+                <div class="qmeta" style="color:${col}">@${esc(f.handle)} · ${m.zh} ${(f.verdict.confidence * 100).toFixed(0)}%${
+                  f.source === "local-rule"
+                    ? " · 规则命中(未上榜,需手动)"
+                    : f.source === "cache"
+                      ? " · 缓存"
+                      : f.source === "local-index"
+                        ? " · 公榜"
+                        : ""
+                }</div>
                 ${snip ? `<div class="qsnip">${snip}</div>` : ""}
                 ${st === "processing" ? `<div class="qnote" style="color:var(--danger)">${isAuto ? "自动处理中…" : `正在${verb}…`}</div>` : ""}
                 ${st === "queued" ? `<div class="qnote" style="color:var(--brand)">排队等待处理</div>` : ""}
