@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS accounts (
   first_seen    INTEGER NOT NULL,
   last_scored   INTEGER NOT NULL,
   published_at  INTEGER,
+  published_tier TEXT,                      -- who published a human_confirmed row:
+                                            -- human|ai|rule|mention. Clients may only
+                                            -- auto-act (mute/block) on 'human'.
   removed_at    INTEGER,                   -- set on upheld appeal / removal (SPEC-T1 §3.1)
   -- D1/SQLite allows multiple NULL values in composite keys, so the Worker
   -- write path also does normalized handle-level dedupe for handle-only rows.
