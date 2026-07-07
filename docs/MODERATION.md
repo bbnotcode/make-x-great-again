@@ -106,6 +106,21 @@ All on the existing Cloudflare stack.
    Everything else → admin review queue. AI alone never auto-publishes
    (governance red line intact; the 3 real GitHub reporters are the human
    signal). K=3 is a tunable policy knob.
+3. **Publish provenance (`accounts.published_tier`, 2026-07-07).** The
+   classify-path AI auto-publish lane, keyword-rule hits and @-mention
+   promotions all land rows in `status='human_confirmed'` for listing
+   purposes, but they are NOT human confirmations. Every publish now records
+   who put the row on the list — `human` (admin decide / agent-promote),
+   `ai`, `rule`, `mention` — and the tier travels with the data:
+   - lite artifacts carry a 3rd entry-code char (`h`/`a`); `v1.json` and the
+     shard artifacts carry a `tier` field;
+   - `/v1/check` returns **only `published_tier='human'` rows** — deployed
+     v0.4 clients auto-block on any hit from it, so unreviewed rows must
+     never appear there;
+   - clients (extension ≥0.6) auto hide/mute/block **only** tier-`human`
+     entries; AI/rule/mention entries and local rule matches are badge-only.
+   An admin approving a queued row (or agent-promote) upgrades it to
+   `human`; auto lanes can never overwrite a human decision.
 
 ---
 
