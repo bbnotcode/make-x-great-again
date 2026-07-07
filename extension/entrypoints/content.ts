@@ -316,22 +316,23 @@ export default defineContentScript({
         hitPublicSeen.add(key);
         void bumpStat("hitPublic");
       }
-      // Per-category action policy — but ONLY for list entries a human
-      // actually reviewed (entry.tier === "confirmed"). Everything else —
-      // local keyword-rule hits, AI/rule/mention auto-published list entries,
-      // old artifacts without tier info — is a SUSPICION, not a confirmation,
-      // and degrades to mark-only. This is the product red line: 只有人工确认
-      // 的线上黑名单条目才允许自动隐藏/静音/拉黑，疑似账号绝不自动处理。
+      // Auto-action decision chain (each gate independent, no cross-talk):
+      //   1. ELIGIBILITY — only entries on the PUBLISHED online blacklist
+      //      (badgeSource "list", any tier — the user's red line is "在线上
+      //      黑名单之中"). Local keyword-rule hits and cache verdicts are
+      //      suspicions that never auto-act. entry.tier (人工确认/自动收录)
+      //      stays visible in the popover but no longer gates the client;
+      //      /v1/check keeps the human-tier filter for legacy clients.
+      //   2. SCOPE — settings.autoScope: replies-only by default (the spam
+      //      wave lives under tweets); "all" opts into feed+profile too.
+      //   3. MASTER SWITCH — settings.autoProcess (bubble toggle), below.
+      //   4. POLICY — per-category action (badge/hide/mute/block).
       // (Auto actions stay reversible from the 隐藏记录 tab, and mute/block
       // ride the user's own X session like the manual path.)
-      const humanConfirmedListHit = badgeSource === "list" && entry.tier === "confirmed";
-      // Scope gate: the spam wave lives in reply sections under tweets. An
-      // account's OWN feed post or its profile page is not that pattern —
-      // by default those only detect + badge, never auto-act (误伤保护).
-      // settings.autoScope === "all" opts into auto-acting everywhere.
+      const isListHit = badgeSource === "list";
       const scopeAllows = settings.autoScope === "all" || ctx === "reply";
       const action =
-        humanConfirmedListHit && scopeAllows
+        isListHit && scopeAllows
           ? (settings.categoryActions[entry.category] ?? "badge")
           : "badge";
       // 自动处理 master switch off → everything degrades to mark-only,

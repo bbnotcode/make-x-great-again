@@ -26,8 +26,9 @@ export interface IndexEntry {
   /** Publish provenance from the lite artifact's 3rd code char:
    *  'confirmed' = a human (maintainer) reviewed this entry ('h');
    *  'auto'      = AI/rule/mention auto-publish, or an old artifact without
-   *                the tier char. Auto mute/block MUST only fire on
-   *                'confirmed' — auto entries are badge-only. */
+   *                the tier char. Display-only on the client (弹层里的
+   *                人工确认/自动收录)；being on the published list at all is
+   *                what makes an entry auto-actable. */
   tier: "confirmed" | "auto";
   source: "curated" | "community";
   updatedAt: string; // ISO date

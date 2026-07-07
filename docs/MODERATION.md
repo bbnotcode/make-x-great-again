@@ -117,8 +117,11 @@ All on the existing Cloudflare stack.
    - `/v1/check` returns **only `published_tier='human'` rows** — deployed
      v0.4 clients auto-block on any hit from it, so unreviewed rows must
      never appear there;
-   - clients (extension ≥0.6) auto hide/mute/block **only** tier-`human`
-     entries; AI/rule/mention entries and local rule matches are badge-only.
+   - the extension (≥0.6) may auto hide/mute/block any PUBLISHED list entry
+     per the user's category policy (scoped to reply sections by default);
+     the tier is surfaced in the badge popover (人工确认 / 自动收录). Local
+     keyword-rule matches and cache verdicts — accounts NOT on the published
+     list — are badge-only, always.
    An admin approving a queued row (or agent-promote) upgrades it to
    `human`; auto lanes can never overwrite a human decision.
 
