@@ -251,10 +251,18 @@ export const STYLE = `
   font-size: 11px; color: var(--muted); overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
-/* 命中原因（哪条策略/规则）— one compact muted line, full text on hover. */
-.qreason {
-  font-size: 10.5px; color: var(--muted); overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; opacity: .9;
+/* 命中原因 chips — tiny tags, visually separate from the content snippet. */
+.qtags { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 1px; }
+.qtag {
+  font-size: 9.5px; font-weight: 650; line-height: 1; padding: 2.5px 6px;
+  border-radius: 999px; white-space: nowrap; max-width: 160px;
+  overflow: hidden; text-overflow: ellipsis;
+  color: var(--muted); border: 1px solid color-mix(in srgb, var(--muted) 32%, transparent);
+  background: color-mix(in srgb, var(--muted) 8%, transparent);
+}
+.qtag.warn {
+  color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
 }
 .qnote { font-size: 11px; }
 .qrow.done .qavatar {
@@ -441,6 +449,10 @@ export interface Finding {
   displayName?: string;
   snippet?: string;
   source?: string;
+  /** 中文类别（色情招揽/币圈投放…）— rendered as a chip on the row. */
+  categoryZh?: string;
+  /** The official rule pattern that matched (rule hits only). */
+  rule?: string;
   verdict: Verdict;
 }
 
@@ -822,13 +834,20 @@ export function createBubble(
                 <div class="qname">${name}</div>
                 <div class="qmeta" style="color:${col}">@${esc(f.handle)} · ${m.zh} ${(f.verdict.confidence * 100).toFixed(0)}%</div>
                 ${(() => {
-                  // 命中原因行：公榜收录（类别·人工/自动收录）or 命中的具体
-                  // 官方规则。reasons[0] 由 local-index / 规则路径生成，已带
-                  // 类别与来源；非自动的规则命中补一个「需手动」提示。
-                  const r = f.verdict.reasons?.[0];
-                  if (!r) return "";
-                  const manual = f.source === "local-rule" && !isAuto ? " · 需手动" : "";
-                  return `<div class="qreason" title="${esc(f.verdict.reasons.join("\n"))}">${esc(r)}${manual}</div>`;
+                  // 命中原因 chips — small tags kept apart from the content
+                  // line: source (公榜 / 规则「…」/ 缓存) + category, plus a
+                  // 需手动 hint for rule hits outside the auto scope.
+                  const tags: string[] = [];
+                  if (f.source === "local-index") tags.push(`<span class="qtag">公榜</span>`);
+                  else if (f.source === "local-rule")
+                    tags.push(`<span class="qtag">规则${f.rule ? `「${esc(f.rule)}」` : ""}</span>`);
+                  else if (f.source === "cache") tags.push(`<span class="qtag">缓存</span>`);
+                  if (f.categoryZh) tags.push(`<span class="qtag">${esc(f.categoryZh)}</span>`);
+                  if (f.source === "local-rule" && !isAuto)
+                    tags.push(`<span class="qtag warn">需手动</span>`);
+                  return tags.length
+                    ? `<div class="qtags" title="${esc(f.verdict.reasons.join("\n"))}">${tags.join("")}</div>`
+                    : "";
                 })()}
                 ${snip ? `<div class="qsnip">${snip}</div>` : ""}
                 ${st === "processing" ? `<div class="qnote" style="color:var(--danger)">${isAuto ? `自动${autoVerbs.get(id) ?? "处理"}中…` : `正在${verb}…`}</div>` : ""}

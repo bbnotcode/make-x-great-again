@@ -263,7 +263,12 @@ export default defineContentScript({
       });
     }
 
-    function pushFinding(sig: Signals, v: Verdict, source: string) {
+    function pushFinding(
+      sig: Signals,
+      v: Verdict,
+      source: string,
+      meta?: { categoryZh?: string; rule?: string },
+    ) {
       if (!["spam", "porn_bot", "likely_spam"].includes(v.label)) return;
       const id = keyOf(sig);
       // Dedupe by key AND by handle: the same account can be scanned once
@@ -281,6 +286,8 @@ export default defineContentScript({
         handle: sig.handle,
         verdict: v,
         source,
+        ...(meta?.categoryZh ? { categoryZh: meta.categoryZh } : {}),
+        ...(meta?.rule ? { rule: meta.rule } : {}),
         ...(sig.userId ? { userId: sig.userId } : {}),
         ...(sig.avatarUrl ? { avatarUrl: sig.avatarUrl } : {}),
         ...(sig.displayName ? { displayName: sig.displayName } : {}),
@@ -363,7 +370,10 @@ export default defineContentScript({
       // regardless of the per-category policy.
       if (action === "badge" || !settings.autoProcess) {
         badgeFor(anchor, key, sig, entry.verdict, undefined, badgeSource);
-        pushFinding(sig, entry.verdict, badgeSource === "rule" ? "local-rule" : "local-index");
+        pushFinding(sig, entry.verdict, badgeSource === "rule" ? "local-rule" : "local-index", {
+        categoryZh: CATEGORY_ZH[entry.category],
+        ...(entry.rulePattern ? { rule: entry.rulePattern } : {}),
+      });
         return;
       }
       void addBlocked(key);
@@ -374,7 +384,10 @@ export default defineContentScript({
       // Auto-processed accounts still show up in the bubble panel — as
       // display-only rows driven through markAuto (checkbox disabled,
       // button is a status chip). Chips + radar pill counts follow.
-      pushFinding(sig, entry.verdict, badgeSource === "rule" ? "local-rule" : "local-index");
+      pushFinding(sig, entry.verdict, badgeSource === "rule" ? "local-rule" : "local-index", {
+        categoryZh: CATEGORY_ZH[entry.category],
+        ...(entry.rulePattern ? { rule: entry.rulePattern } : {}),
+      });
       const verb = action === "mute" ? "静音" : action === "block" ? "拉黑" : "隐藏";
       bubbleApi?.markAuto(key, "processing", verb);
       // Record AFTER the X action settles so the 处理记录 row can state
@@ -452,7 +465,8 @@ export default defineContentScript({
                 reasons: [`命中官方规则「${ruleHit.pattern}」 · ${CATEGORY_ZH[ruleHit.category]}`],
               },
               category: ruleHit.category,
-              tier: "auto", // a rule match is a suspicion — never auto-acted on
+              tier: "auto", // rule hits are auto tier — reply-scope gated
+              rulePattern: ruleHit.pattern,
               source: "community",
               updatedAt: new Date().toISOString(),
             },
