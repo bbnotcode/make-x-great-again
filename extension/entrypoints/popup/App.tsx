@@ -115,7 +115,7 @@ export function App() {
       {/* Per-stat breakdown */}
       <div className="mt-2 grid grid-cols-2 gap-1.5">
         <Stat label="命中名单" value={stats?.hitPublic ?? 0} hint="公共名单命中，本地比对" accent />
-        <Stat label="亲手隐藏" value={stats?.blocked ?? 0} hint="你按的隐藏按钮" />
+        <Stat label="亲手处理" value={stats?.blocked ?? 0} hint="你手动隐藏 / 静音 / 拉黑的账号" />
       </div>
 
       <div

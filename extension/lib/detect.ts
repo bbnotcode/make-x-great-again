@@ -149,7 +149,10 @@ export interface FiberUser {
   viewerIsSelf?: true;
 }
 
-function viewerHandle(): string | undefined {
+/** The logged-in viewer's own handle, read from X's nav DOM. Exported so the
+ *  whitelist self-service flow can lock applications to the user's OWN
+ *  account (no free-text handle = no applying for someone else). */
+export function viewerHandle(): string | undefined {
   const profileHref = document
     .querySelector<HTMLAnchorElement>('[data-testid="AppTabBar_Profile_Link"]')
     ?.getAttribute("href");

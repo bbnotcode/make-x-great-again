@@ -14,7 +14,7 @@ export type ActionMode = "local" | "mute" | "block";
 /** What happens automatically when an account on the public blacklist shows
  *  up in the timeline, per spam category:
  *  - "badge": only mark it (current shipped behavior) — user acts manually
- *  - "hide":  auto-hide locally (reversible from 隐藏记录)
+ *  - "hide":  auto-hide locally (reversible from 处理记录)
  *  - "mute":  auto-hide + X-native mute (needs x.com permission)
  *  - "block": auto-hide + X-native block (needs x.com permission) */
 export type CategoryAction = "badge" | "hide" | "mute" | "block";

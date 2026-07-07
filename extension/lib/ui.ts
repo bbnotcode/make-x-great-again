@@ -815,7 +815,9 @@ export function createBubble(
                 <div class="qname">${name}</div>
                 <div class="qmeta" style="color:${col}">@${esc(f.handle)} · ${m.zh} ${(f.verdict.confidence * 100).toFixed(0)}%${
                   f.source === "local-rule"
-                    ? " · 规则命中(未上榜,需手动)"
+                    ? isAuto
+                      ? " · 规则命中"
+                      : " · 规则命中(未上榜,需手动)"
                     : f.source === "cache"
                       ? " · 缓存"
                       : f.source === "local-index"

@@ -430,7 +430,7 @@ function Overview() {
       <div className="mb-8 grid grid-cols-4 gap-px overflow-hidden rounded-lg border border-border bg-border">
         <Card n={s.detections} l="AI 检测总数" />
         <Card n={s.cacheHits} l="缓存命中 · 省下的 LLM 调用" />
-        <Card n={bl} l={autoBl ? `已隐藏账号 · 其中自动 ${autoBl.toLocaleString("zh-CN")}` : "已隐藏账号"} />
+        <Card n={bl} l={autoBl ? `已处理账号 · 其中自动 ${autoBl.toLocaleString("zh-CN")}` : "已处理账号"} />
         <Card n={(d.spam ?? 0) + (d.porn_bot ?? 0)} l="判定为垃圾/色情bot" />
       </div>
 
@@ -547,8 +547,8 @@ function Blocklist() {
   };
   return (
     <Page
-      title="隐藏记录"
-      sub={`共 ${list.length} 条 · 取消隐藏用于纠正误判（账号会重新可见）`}
+      title="处理记录"
+      sub={`共 ${list.length} 条 · 记录所有被隐藏 / 静音 / 拉黑的账号 · 恢复显示用于纠正误判（本地恢复可见；X 端的静音 / 拉黑需去 X 手动解除）`}
     >
       <input
         value={q}
@@ -617,7 +617,7 @@ function Blocklist() {
                       load();
                     }}
                   >
-                    取消隐藏
+                    恢复显示
                   </Btn>
                 </td>
               </tr>
@@ -625,7 +625,7 @@ function Blocklist() {
           </tbody>
         </table>
       </div>
-      {!list.length && <div className="py-10 text-center text-fg-3">还没有隐藏记录</div>}
+      {!list.length && <div className="py-10 text-center text-fg-3">还没有处理记录</div>}
     </Page>
   );
 }
@@ -743,7 +743,7 @@ const ACTION_MODES: {
   {
     value: "local",
     label: "本地隐藏（推荐）",
-    hint: "只在本扩展里隐藏 ta 的推文，X 完全无感、零联网，可随时在「隐藏记录」里恢复。",
+    hint: "只在本扩展里隐藏 ta 的推文，X 完全无感、零联网，可随时在「处理记录」里恢复。",
     needsX: false,
   },
   {
@@ -755,7 +755,7 @@ const ACTION_MODES: {
   {
     value: "block",
     label: "X 拉黑",
-    hint: "用你的 X 登录态调用 X 原生屏蔽：互相看不到、解除关注，最强。需要授权访问 x.com。高频批量拉黑可能触发 X 风控，请分批少量处理。",
+    hint: "用你的 X 登录态调用 X 原生拉黑：互相看不到、解除关注，最强。需要授权访问 x.com。高频批量拉黑可能触发 X 风控，请分批少量处理。",
     needsX: true,
   },
 ];
@@ -877,7 +877,10 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
   const base = (edgeBase || EDGE_DEFAULT).replace(/\/+$/, "");
   const [token, setToken] = useState("");
   const [login, setLogin] = useState<string | null>(null);
-  const [handle, setHandle] = useState("");
+  // The applicant's OWN X handle, captured by the content script from the
+  // logged-in x.com session ("xss:viewer"). No free-text input — you can
+  // only apply for the account you are actually logged in as (防滥用).
+  const [ownHandle, setOwnHandle] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [status, setStatus] = useState<ApplyStatus | null>(null);
   const [statusHandle, setStatusHandle] = useState<string | null>(null);
@@ -908,6 +911,13 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
         setLogin(lg || null);
         void fetchStatus(tok);
       }
+      try {
+        const g = await chrome.storage.local.get("xss:viewer");
+        const v = g["xss:viewer"] as { handle?: string } | undefined;
+        if (v?.handle) setOwnHandle(v.handle);
+      } catch {
+        /* viewer capture is best-effort */
+      }
     })();
     // fetchStatus is stable for a given edgeBase; run once on mount.
   }, []);
@@ -936,10 +946,10 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
   };
 
   const apply = async () => {
-    const h = handle.trim().replace(/^@+/, "");
+    const h = (ownHandle ?? "").trim().replace(/^@+/, "");
     setMsg(null);
     if (!/^[A-Za-z0-9_]{1,15}$/.test(h)) {
-      setMsg({ text: "请输入合法的 X 用户名（1-15 位字母 / 数字 / 下划线）。", ok: false });
+      setMsg({ text: "还没有识别到你的 X 账号——打开或刷新一次 x.com 再回到本页。", ok: false });
       return;
     }
     const tok = token.trim();
@@ -987,8 +997,9 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
       <SectionH>白名单</SectionH>
       <p className="mb-3 text-[12px] leading-relaxed text-fg-3">
         把你自己的 X 账号加入官方白名单：白名单账号
-        <b className="text-fg-2">永不会被检测、标记或上榜</b>。为防滥用，需要一个
-        <b className="text-fg-2">注册满 90 天</b>的 GitHub 账号做身份证明——在 GitHub
+        <b className="text-fg-2">永不会被检测、标记或上榜</b>。为防滥用：只能为
+        <b className="text-fg-2">你当前登录的 X 账号</b>申请（由扩展自动识别，不可手填），
+        且需要一个<b className="text-fg-2">注册满 90 天</b>的 GitHub 账号做身份证明——在 GitHub
         生成一个 Token（无需勾选任何权限），它只保存在本机，仅发往 GitHub
         和我们的服务用于验证身份，不会用于其他用途。
       </p>
@@ -1012,12 +1023,19 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
           </p>
         )}
         <div className="flex items-center gap-2">
-          <input
-            value={handle}
-            onChange={(e) => setHandle(e.target.value)}
-            placeholder="你的 X 用户名，如 @your_handle"
-            className={input}
-          />
+          <div
+            className={`${input} flex items-center gap-2 ${ownHandle ? "" : "text-fg-3"}`}
+            title="由你当前登录的 x.com 会话自动识别，不可手填——只能为自己的账号申请"
+          >
+            {ownHandle ? (
+              <>
+                <span className="text-fg-3">申请账号（自动识别）</span>
+                <b className="text-fg">@{ownHandle}</b>
+              </>
+            ) : (
+              "未识别到你的 X 账号 · 打开或刷新一次 x.com 后回到本页"
+            )}
+          </div>
           <input
             value={note}
             onChange={(e) => setNote(e.target.value)}
@@ -1027,7 +1045,7 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
           />
         </div>
         <div className="flex items-center gap-3">
-          <Btn tier="primary" onClick={apply} disabled={busy || !token.trim()}>
+          <Btn tier="primary" onClick={apply} disabled={busy || !token.trim() || !ownHandle}>
             {busy ? "提交中…" : "申请把我的 X 账号加入白名单"}
           </Btn>
           {status && (
@@ -1156,13 +1174,14 @@ function Settings() {
           <section>
             <SectionH>自动分级策略</SectionH>
             <p className="mb-3 text-[12px] text-fg-3">
-              <b className="text-fg-2">仅对「公共黑名单」上的账号自动执行</b>，无需点击。
-              本地关键词规则命中、缓存判定等不在线上名单里的疑似账号一律只挂角标，绝不自动处理。
+              <b className="text-fg-2">两类命中会自动执行</b>：公共黑名单上的账号（按下面的范围设置生效）；
+              官方关键词规则命中的新号（未上榜的模板小号，<b className="text-fg-2">仅在推文评论区</b>自动执行，
+              信息流和主页只打标）。缓存判定等其他情况一律只挂角标。
               自动动作依次经过：气泡里的<b className="text-fg-2">自动处理总开关</b>
-              →下面的<b className="text-fg-2">自动处理范围</b>（默认仅评论区）
+              →<b className="text-fg-2">自动处理范围</b>（默认仅评论区）
               →<b className="text-fg-2">分级策略</b>（按类别选动作）。
               「仅标记」= 不自动处理，只挂角标等你手动点；分类由服务端 AI
-              结合账号整体信息判定并随名单下发；官方白名单账号永不处理；所有自动处理都可在「隐藏记录」里撤销。
+              结合账号整体信息判定并随名单下发；官方白名单账号永不处理；所有自动处理都可在「处理记录」里撤销。
             </p>
             <div className="mb-4">
               <div className="mb-1.5 text-[12px] font-semibold text-fg">自动处理范围</div>
@@ -1226,7 +1245,7 @@ function Settings() {
         <section>
           <SectionH>数据与隐私</SectionH>
           <p className="mb-3 text-[13px] text-fg-2">
-            检测缓存、隐藏记录、统计均仅存于本机；除公开 X 数字 ID 外不存 PII。
+            检测缓存、处理记录、统计均仅存于本机；除公开 X 数字 ID 外不存 PII。
           </p>
           <div className="flex items-center gap-3">
             <Btn tier="danger" onClick={() => setClearOpen(true)}>
@@ -1332,7 +1351,7 @@ const Mascot = () => (
 
 const TABS = [
   ["overview", "概览", Overview],
-  ["blocklist", "隐藏记录", Blocklist],
+  ["blocklist", "处理记录", Blocklist],
   ["cache", "检测缓存", Cache],
   ["settings", "设置", Settings],
   ["about", "关于", About],

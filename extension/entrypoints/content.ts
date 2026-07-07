@@ -1,7 +1,12 @@
 import { addBlocked, isBlockedSync, warm as warmBlocklist } from "../lib/blocklist";
 import { BRAND } from "../lib/brand";
 import { type Cached, cacheGet, signalsHash } from "../lib/cache";
-import { extractFromArticle, extractProfile, extractThreadTopic } from "../lib/detect";
+import {
+  extractFromArticle,
+  extractProfile,
+  extractThreadTopic,
+  viewerHandle,
+} from "../lib/detect";
 import { CATEGORY_ZH } from "../lib/category";
 import { LIST_KEY, WL_KEY } from "../lib/list-sync";
 import { type IndexEntry, isWhitelisted, lookupLocal, warmLocalIndex } from "../lib/local-index";
@@ -326,24 +331,34 @@ export default defineContentScript({
         void bumpStat("hitPublic");
       }
       // Auto-action decision chain (each gate independent, no cross-talk):
-      //   1. ELIGIBILITY — only entries on the PUBLISHED online blacklist
-      //      (badgeSource "list", any tier — the user's red line is "在线上
-      //      黑名单之中"). Local keyword-rule hits and cache verdicts are
-      //      suspicions that never auto-act. entry.tier (人工确认/自动收录)
-      //      stays visible in the popover but no longer gates the client;
+      //   1. ELIGIBILITY —
+      //      · published-list entries ("list", any tier): eligible within
+      //        the user's configured autoScope;
+      //      · official keyword-rule hits ("rule": maintainer-curated
+      //        patterns synced with the list — brand-new throwaways not yet
+      //        published): eligible ONLY in reply sections, regardless of
+      //        autoScope. The porn wave is first-seen throwaways, so a
+      //        list-only rule made 自动拉黑 dead in its main scenario;
+      //        replies-only keeps the misfire surface minimal.
+      //      · cache verdicts: never auto-act.
+      //      entry.tier (人工确认/自动收录) stays visible in the popover;
       //      /v1/check keeps the human-tier filter for legacy clients.
-      //   2. SCOPE — settings.autoScope: replies-only by default (the spam
-      //      wave lives under tweets); "all" opts into feed+profile too.
+      //   2. SCOPE — settings.autoScope: replies-only by default; "all"
+      //      opts feed+profile in (list hits only, see above).
       //   3. MASTER SWITCH — settings.autoProcess (bubble toggle), below.
       //   4. POLICY — per-category action (badge/hide/mute/block).
-      // (Auto actions stay reversible from the 隐藏记录 tab, and mute/block
+      // (Auto actions stay reversible from the 处理记录 tab, and mute/block
       // ride the user's own X session like the manual path.)
-      const isListHit = badgeSource === "list";
       const scopeAllows = settings.autoScope === "all" || ctx === "reply";
-      const action =
-        isListHit && scopeAllows
-          ? (settings.categoryActions[entry.category] ?? "badge")
-          : "badge";
+      const eligible =
+        badgeSource === "list"
+          ? scopeAllows
+          : badgeSource === "rule"
+            ? ctx === "reply"
+            : false;
+      const action = eligible
+        ? (settings.categoryActions[entry.category] ?? "badge")
+        : "badge";
       // 自动处理 master switch off → everything degrades to mark-only,
       // regardless of the per-category policy.
       if (action === "badge" || !settings.autoProcess) {
@@ -361,7 +376,7 @@ export default defineContentScript({
       // button is a status chip). Chips + radar pill counts follow.
       pushFinding(sig, entry.verdict, badgeSource === "rule" ? "local-rule" : "local-index");
       bubbleApi?.markAuto(key, "processing");
-      // Record AFTER the X action settles so the 隐藏记录 row can state
+      // Record AFTER the X action settles so the 处理记录 row can state
       // honestly whether the native mute/block actually landed — a silent
       // fire-and-forget here is how "自动拉黑" degrades into hide-only
       // without anyone noticing.
@@ -454,7 +469,23 @@ export default defineContentScript({
       }
     }
 
+    // Persist the logged-in viewer's own handle for the options page's
+    // whitelist self-service flow (apply for YOUR account only).
+    let lastViewer: string | undefined;
+    function captureViewer() {
+      const v = viewerHandle();
+      if (v && v !== lastViewer) {
+        lastViewer = v;
+        try {
+          void chrome.storage.local.set({ "xss:viewer": { handle: v, ts: Date.now() } });
+        } catch {
+          /* non-fatal */
+        }
+      }
+    }
+
     function scan() {
+      captureViewer();
       const p = extractProfile();
       if (p) {
         const el = document.querySelector<HTMLElement>('[data-testid="UserName"]');
