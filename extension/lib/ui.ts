@@ -263,14 +263,15 @@ svg { display: block; }
 .xss-badge {
   --badge-color: var(--muted);
   display: inline-flex; align-items: center; gap: 4px; margin-left: 6px;
-  padding: 2.5px 8px; border-radius: 999px; font-size: 11px; font-weight: 750;
+  padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 750;
   line-height: 1; white-space: nowrap;
-  vertical-align: middle; cursor: default; color: var(--badge-color);
-  /* v0.4-strength tint: stronger border + fill so hits pop out of the
-   * timeline instead of reading as washed-out pink. */
-  border: 1px solid color-mix(in srgb, var(--badge-color) 56%, transparent);
-  background: color-mix(in srgb, var(--badge-color) 16%, transparent);
-  box-shadow: 0 1px 4px rgba(15,23,42,.10);
+  vertical-align: middle; cursor: default;
+  /* Solid pill, white text — the "精致明显" badge users recognize. A subtle
+   * inner highlight ring + darker edge give it the polished look; tinted
+   * outline variants read as washed-out in the timeline. */
+  color: #fff; background: var(--badge-color);
+  border: 1px solid color-mix(in srgb, var(--badge-color) 78%, #000);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.16), 0 1px 4px rgba(15,23,42,.16);
 }
 .xss-badge svg { flex: none; }
 .xss-badge.ghost {
@@ -310,8 +311,11 @@ svg { display: block; }
   transform: translateX(-100%); animation: xshim 1.1s ease-in-out infinite;
 }
 .xss-spin { animation: xspin .8s linear infinite; transform-origin: 50% 50%; }
+/* Pending-undo badge (⏳ 5秒后处理 + 撤销) — warn-outlined, not a solid pill. */
 .xss-badge.pending {
-  color: var(--muted); cursor: default;
+  color: var(--warn); cursor: default;
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  border-color: var(--warn); box-shadow: none;
   animation: xpulse 1.6s ease-in-out infinite;
 }
 @keyframes xrise { from { opacity: 0; transform: translateY(4px); } }
@@ -1014,15 +1018,11 @@ export function createBadge(
   // No native title: the hover popover already carries the details, and the
   // OS tooltip floating next to it reads as visual noise.
   el.setAttribute("aria-label", `${meta.zh} ${(v.confidence * 100).toFixed(0)}% · ${tip}`);
-  // v0.4 badge shape: icon + ONE compact word — 公榜 (list hit), 规则
-  // (official keyword rule), else the short label word. No percentage, no
-  // nested tag; the hover popover carries category/confidence/provenance.
-  // Long "色情bot 100% · 公榜" pills read as washed-out noise in the
-  // timeline — the short bold pill is the one users recognize.
-  const badgeText =
-    source === "list" ? "公榜" : source === "rule" ? "规则" : BADGE_TEXT[v.label];
+  // Badge = icon + ONE short label word (色情/垃圾/疑似) on a solid pill —
+  // the compact shape users recognize. Source (公榜/规则/缓存) plus
+  // category/confidence/provenance all live in the hover popover.
   const tag = known ? "" : `<span class="ntag">首发</span>`;
-  el.innerHTML = `${icon(meta.ic, "currentColor", 12)}<span>${badgeText}</span>${tag}`;
+  el.innerHTML = `${icon(meta.ic, "currentColor", 12)}<span>${BADGE_TEXT[v.label]}</span>${tag}`;
 
   let pop: HTMLElement | null = null;
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
