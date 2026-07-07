@@ -272,13 +272,6 @@ svg { display: block; }
   background: color-mix(in srgb, var(--badge-color) 16%, transparent);
   box-shadow: 0 1px 4px rgba(15,23,42,.10);
 }
-/* Source tag inside a verdict badge (公榜 / 规则) — inherits the badge color. */
-.xss-badge .stag {
-  margin-left: 2px; padding: 0 5px; border-radius: 999px; font-size: 9px;
-  font-weight: 700; letter-spacing: .3px; color: currentColor;
-  border: 1px solid color-mix(in srgb, currentColor 65%, transparent);
-  background: color-mix(in srgb, currentColor 10%, transparent);
-}
 .xss-badge svg { flex: none; }
 .xss-badge.ghost {
   color: var(--muted); cursor: pointer;
@@ -390,6 +383,15 @@ export function icon(name: keyof typeof P | string, color = "currentColor", size
     stroke="${color}" stroke-width="1.75" stroke-linecap="round"
     stroke-linejoin="round" aria-hidden="true"><path d="${P[name] ?? P.shield}"/></svg>`;
 }
+
+// Compact one-word badge text (v0.4) — details live in the hover popover.
+export const BADGE_TEXT: Record<Label, string> = {
+  spam: "垃圾",
+  porn_bot: "色情",
+  likely_spam: "疑似",
+  uncertain: "存疑",
+  legit: "正常",
+};
 
 export const LABEL: Record<Label, { zh: string; varName: string; ic: string }> = {
   spam: { zh: "垃圾", varName: "--danger", ic: "shield-x" },
@@ -1012,18 +1014,15 @@ export function createBadge(
   // No native title: the hover popover already carries the details, and the
   // OS tooltip floating next to it reads as visual noise.
   el.setAttribute("aria-label", `${meta.zh} ${(v.confidence * 100).toFixed(0)}% · ${tip}`);
-  // Icon + label + a source tag (v0.4 language): 公榜 = published-list hit,
-  // 规则 = official keyword-rule match, 首发 = fresh first-discovery.
-  const tag =
-    source === "list"
-      ? `<span class="stag">公榜</span>`
-      : source === "rule"
-        ? `<span class="stag">规则</span>`
-        : known
-          ? ""
-          : `<span class="ntag">首发</span>`;
-  el.innerHTML =
-    `${icon(meta.ic, "currentColor", 12)}<span>${meta.zh} ${(v.confidence * 100).toFixed(0)}%</span>${tag}`;
+  // v0.4 badge shape: icon + ONE compact word — 公榜 (list hit), 规则
+  // (official keyword rule), else the short label word. No percentage, no
+  // nested tag; the hover popover carries category/confidence/provenance.
+  // Long "色情bot 100% · 公榜" pills read as washed-out noise in the
+  // timeline — the short bold pill is the one users recognize.
+  const badgeText =
+    source === "list" ? "公榜" : source === "rule" ? "规则" : BADGE_TEXT[v.label];
+  const tag = known ? "" : `<span class="ntag">首发</span>`;
+  el.innerHTML = `${icon(meta.ic, "currentColor", 12)}<span>${badgeText}</span>${tag}`;
 
   let pop: HTMLElement | null = null;
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
