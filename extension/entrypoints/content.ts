@@ -109,6 +109,9 @@ interface PendingAction {
   anchor: HTMLElement;
   timer: ReturnType<typeof setTimeout>;
   ts: number;
+  /** Per-action override of settings.actionMode — the popover's secondary
+   *  隐藏 button schedules a local-only hide even when the mode is block. */
+  mode?: ActionMode;
 }
 
 export default defineContentScript({
@@ -139,8 +142,9 @@ export default defineContentScript({
 
     const keyOf = (s: Signals) => s.userId || `h:${s.handle}`;
 
-    /** Schedule a hide action with a 5-second undo window. */
-    function scheduleHide(key: string, sig: Signals, anchor: HTMLElement) {
+    /** Schedule a hide action with a 5-second undo window. `mode` overrides
+     *  settings.actionMode for this one action (popover 隐藏 → "local"). */
+    function scheduleHide(key: string, sig: Signals, anchor: HTMLElement, mode?: ActionMode) {
       if (pendingActions.has(key)) return; // already pending
       // Tag the row so executeHide can still find it if X recycles the node.
       articleOf(anchor)?.setAttribute("data-xss-key", key);
@@ -148,9 +152,16 @@ export default defineContentScript({
         void executeHide(key, sig);
         pendingActions.delete(key);
       }, PENDING_MS);
-      pendingActions.set(key, { key, sig, anchor, timer, ts: Date.now() });
+      pendingActions.set(key, {
+        key,
+        sig,
+        anchor,
+        timer,
+        ts: Date.now(),
+        ...(mode ? { mode } : {}),
+      });
       // Update UI to show pending state
-      badgeForPending(anchor, sig);
+      badgeForPending(anchor, sig, mode);
     }
 
     /** Cancel a pending hide action (user clicked undo). */
@@ -172,7 +183,7 @@ export default defineContentScript({
      *  synchronously; the returned promise resolves once the native action
      *  settled (true = local-only mode or X action succeeded). */
     function executeHide(key: string, sig: Signals): Promise<boolean> {
-      const mode = settings.actionMode;
+      const mode = pendingActions.get(key)?.mode ?? settings.actionMode;
       void addBlocked(key);
       if (sig.userId) void addBlocked(sig.userId);
       void addBlockRecord({
@@ -200,9 +211,9 @@ export default defineContentScript({
       return applyXAction(mode, sig);
     }
 
-    function badgeForPending(anchor: HTMLElement, sig: Signals) {
+    function badgeForPending(anchor: HTMLElement, sig: Signals, mode?: ActionMode) {
       clearMounts(anchor);
-      const verb = actionVerb(settings.actionMode);
+      const verb = actionVerb(mode ?? settings.actionMode);
       mountBadge(anchor, () => {
         const el = document.createElement("span");
         el.className = "xss-badge pending";
@@ -247,6 +258,7 @@ export default defineContentScript({
           v,
           {
             onHide: () => scheduleHide(key, sig, anchor),
+            onHideLocal: () => scheduleHide(key, sig, anchor, "local"),
             onAppeal: openAppeal,
           },
           note,

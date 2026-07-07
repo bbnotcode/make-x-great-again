@@ -15,14 +15,14 @@ export const STYLE = `
   --surface: rgba(13,17,23,.92); --border: rgba(255,255,255,.10);
   --shadow: 0 8px 28px rgba(0,0,0,.45); --text: #E6EDF3; --muted: #8B949E;
   --brand: #0EA5E9; --danger: #EF4444; --warn: #F59E0B; --neutral: #8B949E;
-  --safe: #16A34A;
+  --safe: #16A34A; --hover: rgba(255,255,255,.06);
 }
 @media (prefers-color-scheme: light) {
   :host, :root, .xss {
     --surface: rgba(255,255,255,.96); --border: rgba(15,23,42,.12);
     --shadow: 0 8px 28px rgba(15,23,42,.18); --text: #0F172A; --muted: #475569;
     --brand: #0369A1; --danger: #DC2626; --warn: #B45309; --neutral: #475569;
-    --safe: #15803D;
+    --safe: #15803D; --hover: rgba(15,23,42,.06);
   }
 }
 .xss-bubble {
@@ -279,20 +279,44 @@ svg { display: block; }
   border-color: var(--border); background: transparent; box-shadow: none;
 }
 .xss-badge.ghost:hover { color: var(--text); }
+/* v0.4 popover: soft 12px radius, deep layered shadow, pop-in scale. */
 .pop {
-  position: fixed; z-index: 2147482001; width: 260px; padding: 12px;
+  position: fixed; z-index: 2147482001; width: 280px; padding: 12px;
   max-width: calc(100vw - 16px);
-  font-size: 12px; color: var(--text);
+  font-size: 12px; color: var(--text); border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(15,23,42,.22), 0 2px 8px rgba(15,23,42,.10);
+  transform-origin: 12px 12px; animation: xpop .14s ease-out;
+  pointer-events: auto;
 }
-.pop h4 { margin: 0 0 6px; font-size: 12px; font-weight: 700; }
+.pop h4 { margin: 0 0 6px; font-size: 12.5px; font-weight: 750; }
 .pop ul { margin: 6px 0; padding-left: 16px; color: var(--muted); }
 .pop li { margin: 3px 0; }
-.acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+/* v0.4 action buttons: pill shape with a per-action visual hierarchy —
+ * data-b solid danger (primary), data-h muted outline, data-r warm outline,
+ * data-a plain text link. */
+.acts { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 10px; }
 .acts button {
   border: 1px solid var(--border); background: transparent; color: var(--text);
-  border-radius: 8px; padding: 4px 9px; font-size: 11px; cursor: pointer;
+  border-radius: 999px; padding: 5px 10px; font-size: 11px; font-weight: 650;
+  cursor: pointer; transition: transform .12s ease, background .12s ease, border-color .12s ease, color .12s ease, filter .12s ease;
 }
-.acts button:hover { background: rgba(255,255,255,.06); }
+.acts button:hover { transform: translateY(-1px); background: var(--hover); }
+.acts button[data-b] {
+  color: #fff; border-color: transparent;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--danger) 92%, #fff), var(--danger));
+}
+.acts button[data-b]:hover { filter: brightness(1.05); }
+.acts button[data-h] {
+  color: var(--muted);
+  border-color: color-mix(in srgb, var(--muted) 32%, var(--border));
+}
+.acts button[data-r] {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 48%, var(--border));
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+}
+.acts button[data-a] { color: var(--muted); border-color: transparent; }
+.acts button:disabled { cursor: default; transform: none; filter: none; }
 
 /* ---- animated badge states (transform/opacity only) ---- */
 .xss-badge.fresh { animation: xrise .22s ease-out; }
@@ -955,7 +979,11 @@ export function createBubble(
 }
 
 export interface BadgeActions {
+  /** Primary action — executes the user's configured actionMode (拉黑/静音/隐藏). */
   onHide: () => void;
+  /** Secondary local-only hide (no X call) — v0.4's 隐藏 next to 拉黑.
+   *  Only rendered when the primary verb isn't already 隐藏. */
+  onHideLocal?: () => void;
   onAppeal: () => void;
 }
 
@@ -1061,10 +1089,12 @@ export function createBadge(
       <ul>${v.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
       ${note ? `<div style="color:var(--muted)">${esc(note)}</div>` : ""}
       <div class="acts">
-        ${spammy ? `<button data-h>${esc(verb)}</button>` : ""}
-        <button data-a title="打开 GitHub 提交误判申诉 issue">误判申诉 ↗</button>
+        ${spammy ? `<button data-b>${esc(verb)}</button>` : ""}
+        ${spammy && verb !== "隐藏" && a.onHideLocal ? `<button data-h>隐藏</button>` : ""}
+        <button data-a title="打开 GitHub 提交误判申诉 issue">误判?</button>
       </div>`;
-    pop.querySelector("[data-h]")?.addEventListener("click", a.onHide);
+    pop.querySelector("[data-b]")?.addEventListener("click", a.onHide);
+    pop.querySelector("[data-h]")?.addEventListener("click", () => a.onHideLocal?.());
     pop.querySelector("[data-a]")?.addEventListener("click", a.onAppeal);
     // Keep the popover open while the cursor is over it, so its buttons are
     // actually reachable.
