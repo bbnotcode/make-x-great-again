@@ -41,7 +41,12 @@ export type BgRequest =
   | { type: "health" }
   | { type: "stats" }
   | { type: "records" }
-  | { type: "list-sync"; force?: boolean };
+  | { type: "list-sync"; force?: boolean }
+  // GitHub Device Flow (whitelist self-service login). Runs in the
+  // background: github.com's device endpoints don't serve CORS, so the
+  // fetches need the optional github.com host permission granted first.
+  | { type: "gh_start" }
+  | { type: "gh_poll"; deviceCode: string };
 
 export interface BgResponse {
   ok: boolean;

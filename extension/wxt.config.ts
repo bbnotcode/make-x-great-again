@@ -33,9 +33,23 @@ export default defineConfig({
     // turns on X mute/block mode — keeps the default install storage-only.
     // Chrome uses optional_host_permissions; Firefox only added that key in
     // 127, so for our 109+ target the host patterns go in optional_permissions.
+    // github.com: requested only when the user clicks 用 GitHub 登录 in the
+    // whitelist section (Device Flow endpoints don't serve CORS).
     ...(browser === "firefox"
-      ? { optional_permissions: ["*://x.com/*", "*://twitter.com/*"] }
-      : { optional_host_permissions: ["*://x.com/*", "*://twitter.com/*"] }),
+      ? {
+          optional_permissions: [
+            "*://x.com/*",
+            "*://twitter.com/*",
+            "https://github.com/*",
+          ],
+        }
+      : {
+          optional_host_permissions: [
+            "*://x.com/*",
+            "*://twitter.com/*",
+            "https://github.com/*",
+          ],
+        }),
     action: { default_title: "Make X Great Again (MXGA)" },
     options_ui: { open_in_tab: true },
     // Firefox / AMO requirements (ignored by the Chrome build):

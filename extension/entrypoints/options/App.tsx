@@ -922,6 +922,89 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
     // fetchStatus is stable for a given edgeBase; run once on mount.
   }, []);
 
+  // ---- GitHub Device Flow (一键登录，v0.4 的引导交互) ----
+  const [ghFlow, setGhFlow] = useState<{ userCode: string; uri: string } | null>(null);
+  const [ghBusy, setGhBusy] = useState(false);
+
+  const bg = (m: unknown) =>
+    new Promise<{ ok: boolean; data?: Record<string, unknown>; error?: string }>((res) => {
+      try {
+        chrome.runtime.sendMessage(m, (r) => res(r ?? { ok: false, error: "no response" }));
+      } catch (e) {
+        res({ ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
+    });
+
+  /** Shared success message incl. the 90d gate check (surfaced immediately). */
+  const showIdentity = async (lg: string) => {
+    setLogin(lg);
+    const tok = await getGhToken();
+    if (tok) {
+      setToken(tok);
+      const u = await ghUser(tok);
+      if (u?.ageDays !== null && u !== null && u.ageDays < 90) {
+        setMsg({
+          text: `已登录，GitHub 身份：@${lg} —— 注意：该账号注册仅 ${u.ageDays} 天，未满 90 天无法申请白名单（请换一个注册更久的 GitHub 账号）。`,
+          ok: false,
+        });
+      } else {
+        setMsg({
+          text: `已登录，GitHub 身份：@${lg}${u?.ageDays != null ? `（注册 ${u.ageDays} 天）` : ""}`,
+          ok: true,
+        });
+      }
+      void fetchStatus(tok);
+    }
+  };
+
+  const ghLogin = async () => {
+    setMsg(null);
+    try {
+      const granted = await chrome.permissions.request({ origins: ["https://github.com/*"] });
+      if (!granted) {
+        setMsg({ text: "未授权访问 github.com——一键登录需要该权限（仅用于 GitHub 配对登录）。", ok: false });
+        return;
+      }
+    } catch {
+      setMsg({ text: "无法请求 github.com 权限。", ok: false });
+      return;
+    }
+    setGhBusy(true);
+    try {
+      const start = await bg({ type: "gh_start" });
+      const d = start.data as
+        | { device_code?: string; user_code?: string; verification_uri?: string; interval?: number }
+        | undefined;
+      if (!start.ok || !d?.device_code || !d.user_code || !d.verification_uri) {
+        setMsg({ text: `发起 GitHub 登录失败${start.error ? `：${start.error}` : ""}`, ok: false });
+        return;
+      }
+      setGhFlow({ userCode: d.user_code, uri: d.verification_uri });
+      window.open(d.verification_uri, "_blank", "noopener");
+      const stepMs = Math.max(5, d.interval ?? 5) * 1000;
+      const deadline = Date.now() + 5 * 60_000; // GitHub device codes live ~15min; 5min is plenty
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, stepMs));
+        const poll = await bg({ type: "gh_poll", deviceCode: d.device_code });
+        const p = poll.data as { login?: string; pending?: string } | undefined;
+        if (p?.login) {
+          setGhFlow(null);
+          await showIdentity(p.login);
+          return;
+        }
+        if (p?.pending && p.pending !== "authorization_pending" && p.pending !== "slow_down") {
+          setGhFlow(null);
+          setMsg({ text: `GitHub 登录未完成（${p.pending}），可重试。`, ok: false });
+          return;
+        }
+      }
+      setGhFlow(null);
+      setMsg({ text: "登录等待超时，请重试。", ok: false });
+    } finally {
+      setGhBusy(false);
+    }
+  };
+
   const saveToken = async () => {
     const tok = token.trim();
     setMsg(null);
@@ -1011,29 +1094,64 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
         把你自己的 X 账号加入官方白名单：白名单账号
         <b className="text-fg-2">永不会被检测、标记或上榜</b>。为防滥用：只能为
         <b className="text-fg-2">你当前登录的 X 账号</b>申请（由扩展自动识别，不可手填），
-        且需要一个<b className="text-fg-2">注册满 90 天</b>的 GitHub 账号做身份证明——在 GitHub
-        生成一个 Token（无需勾选任何权限），它只保存在本机，仅发往 GitHub
+        且需要一个<b className="text-fg-2">注册满 90 天</b>的 GitHub
+        账号做身份证明。登录凭证只保存在本机，仅发往 GitHub
         和我们的服务用于验证身份，不会用于其他用途。
       </p>
       <div className="space-y-2.5">
-        <div className="flex items-center gap-2">
-          <input
-            type="password"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            placeholder="GitHub Token（ghp_… / github_pat_…）"
-            autoComplete="off"
-            className={input}
-          />
-          <Btn onClick={saveToken} disabled={busy} className="flex-none">
-            验证并保存
-          </Btn>
-        </div>
+        {!login && !ghFlow && (
+          <div className="flex items-center gap-3">
+            <Btn tier="primary" onClick={ghLogin} disabled={ghBusy}>
+              {ghBusy ? "正在连接 GitHub…" : "用 GitHub 一键登录"}
+            </Btn>
+            <span className="text-[12px] text-fg-3">
+              跳转 GitHub 输入配对码即可，无需创建 Token
+            </span>
+          </div>
+        )}
+        {ghFlow && (
+          <div className="rounded-lg border border-border-2 bg-card p-4">
+            <div className="text-[12px] text-fg-3">在打开的 GitHub 页面输入这个配对码：</div>
+            <div className="my-2 font-mono text-[26px] font-bold tracking-[0.2em] text-fg">
+              {ghFlow.userCode}
+            </div>
+            <div className="text-[12px] text-fg-3">
+              等待你在 GitHub 上确认…（页面没弹出？
+              <a
+                href={ghFlow.uri}
+                target="_blank"
+                rel="noopener"
+                className="text-fg-2 underline hover:text-fg"
+              >
+                手动打开 ↗
+              </a>
+              ）
+            </div>
+          </div>
+        )}
         {login && (
           <p className="text-[12px] text-fg-3">
             GitHub 身份：<b className="text-fg-2">@{login}</b>
           </p>
         )}
+        <details className="text-[12px] text-fg-3">
+          <summary className="cursor-pointer select-none">
+            高级：手动粘贴 GitHub Token（无需勾选任何权限）
+          </summary>
+          <div className="mt-2 flex items-center gap-2">
+            <input
+              type="password"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder="GitHub Token（ghp_… / github_pat_…）"
+              autoComplete="off"
+              className={input}
+            />
+            <Btn onClick={saveToken} disabled={busy} className="flex-none">
+              验证并保存
+            </Btn>
+          </div>
+        </details>
         <div className="flex items-center gap-2">
           <div
             className={`${input} flex items-center gap-2 ${ownHandle ? "" : "text-fg-3"}`}

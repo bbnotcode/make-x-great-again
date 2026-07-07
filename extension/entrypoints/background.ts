@@ -4,6 +4,48 @@
 import { syncIfStale, syncList } from "../lib/list-sync";
 import type { BgRequest, BgResponse } from "../lib/types";
 
+// ---- GitHub Device Flow (v0.4's login interaction, restored for the
+// whitelist self-service). Public device-flow client id — NOT a secret
+// (device flow has no client secret by design). The fetches live in the
+// background because github.com's device endpoints don't serve CORS; the
+// options page requests the optional github.com host permission first.
+const GH_CLIENT_ID = "Ov23liP2AbdNePTyKUEA";
+
+async function ghStart() {
+  const r = await fetch("https://github.com/login/device/code", {
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/json" },
+    body: JSON.stringify({ client_id: GH_CLIENT_ID, scope: "read:user" }),
+  });
+  return (await r.json()) as {
+    device_code: string;
+    user_code: string;
+    verification_uri: string;
+    interval: number;
+  };
+}
+
+async function ghPoll(deviceCode: string) {
+  const r = await fetch("https://github.com/login/oauth/access_token", {
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/json" },
+    body: JSON.stringify({
+      client_id: GH_CLIENT_ID,
+      device_code: deviceCode,
+      grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+    }),
+  });
+  const j = (await r.json()) as { access_token?: string; error?: string };
+  if (!j.access_token) return { pending: j.error ?? "pending" };
+  const { setGh } = await import("../lib/auth");
+  const u = await fetch("https://api.github.com/user", {
+    headers: { authorization: `Bearer ${j.access_token}`, accept: "application/vnd.github+json" },
+  });
+  const user = (await u.json()) as { login?: string };
+  await setGh(j.access_token, user.login ?? "github");
+  return { login: user.login ?? "github" };
+}
+
 const SYNC_ALARM = "xss:list-sync";
 // 6h cadence matches the server's mirror cron; the artifact itself only
 // changes when the confirmed set changes, and version-match syncs are a
@@ -58,6 +100,10 @@ export default defineBackground(() => {
             sendResponse({ ok: true, data: await getStats() });
           } else if (msg.type === "records") {
             sendResponse({ ok: true, data: { records: [] } });
+          } else if (msg.type === "gh_start") {
+            sendResponse({ ok: true, data: await ghStart() });
+          } else if (msg.type === "gh_poll") {
+            sendResponse({ ok: true, data: await ghPoll(msg.deviceCode) });
           } else {
             sendResponse({ ok: false, error: "unknown message" });
           }
