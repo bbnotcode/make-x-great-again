@@ -925,6 +925,18 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
   // ---- GitHub Device Flow (一键登录，v0.4 的引导交互) ----
   const [ghFlow, setGhFlow] = useState<{ userCode: string; uri: string } | null>(null);
   const [ghBusy, setGhBusy] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
+
+  const copyCode = async () => {
+    if (!ghFlow) return;
+    try {
+      await navigator.clipboard.writeText(ghFlow.userCode);
+      setCodeCopied(true);
+      setTimeout(() => setCodeCopied(false), 1600);
+    } catch {
+      /* clipboard denied — the code is still selectable */
+    }
+  };
 
   const bg = (m: unknown) =>
     new Promise<{ ok: boolean; data?: Record<string, unknown>; error?: string }>((res) => {
@@ -1112,8 +1124,18 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
         {ghFlow && (
           <div className="rounded-lg border border-border-2 bg-card p-4">
             <div className="text-[12px] text-fg-3">在打开的 GitHub 页面输入这个配对码：</div>
-            <div className="my-2 font-mono text-[26px] font-bold tracking-[0.2em] text-fg">
-              {ghFlow.userCode}
+            <div className="my-2 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={copyCode}
+                title="点击复制配对码"
+                className="cursor-pointer rounded-md border border-transparent font-mono text-[26px] font-bold tracking-[0.2em] text-fg transition hover:border-border-2 hover:bg-card-hi"
+              >
+                {ghFlow.userCode}
+              </button>
+              <Btn size="sm" onClick={copyCode} className="flex-none">
+                {codeCopied ? "✓ 已复制" : "复制"}
+              </Btn>
             </div>
             <div className="text-[12px] text-fg-3">
               等待你在 GitHub 上确认…（页面没弹出？
