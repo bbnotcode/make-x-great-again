@@ -32,8 +32,15 @@ export const clearGh = async () => {
   await set(K.ghLogin, "");
 };
 
-/** Validate a token against GitHub → login name, or null when rejected. */
-export async function ghUserLogin(token: string): Promise<string | null> {
+export interface GhUser {
+  login: string;
+  /** Account age in whole days — the server's anti-abuse gate is 90d, so the
+   *  options page can warn BEFORE the user submits an application. */
+  ageDays: number | null;
+}
+
+/** Validate a token against GitHub → login + account age, null when rejected. */
+export async function ghUser(token: string): Promise<GhUser | null> {
   try {
     const r = await fetch("https://api.github.com/user", {
       headers: {
@@ -42,9 +49,19 @@ export async function ghUserLogin(token: string): Promise<string | null> {
       },
     });
     if (!r.ok) return null;
-    const u = (await r.json()) as { login?: string };
-    return u.login ?? null;
+    const u = (await r.json()) as { login?: string; created_at?: string };
+    if (!u.login) return null;
+    const created = u.created_at ? Date.parse(u.created_at) : Number.NaN;
+    const ageDays = Number.isFinite(created)
+      ? Math.floor((Date.now() - created) / 86_400_000)
+      : null;
+    return { login: u.login, ageDays };
   } catch {
     return null;
   }
+}
+
+/** Back-compat shim: login only. */
+export async function ghUserLogin(token: string): Promise<string | null> {
+  return (await ghUser(token))?.login ?? null;
 }

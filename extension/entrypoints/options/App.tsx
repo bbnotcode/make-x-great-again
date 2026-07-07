@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { clearGh, getGhLogin, getGhToken, ghUserLogin, setGh } from "../../lib/auth";
+import { clearGh, getGhLogin, getGhToken, ghUser, setGh } from "../../lib/auth";
 import { BRAND } from "../../lib/brand";
 import { CATEGORY_ZH, SPAM_CATEGORIES, type SpamCategory } from "../../lib/category";
 import { categorizeReason, categorizeReasons } from "../../lib/reason-category";
@@ -933,15 +933,27 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
       return;
     }
     setBusy(true);
-    const lg = await ghUserLogin(tok);
+    const u = await ghUser(tok);
     setBusy(false);
-    if (!lg) {
+    if (!u) {
       setMsg({ text: "Token 校验失败：GitHub 拒绝了这个 Token。", ok: false });
       return;
     }
-    await setGh(tok, lg);
-    setLogin(lg);
-    setMsg({ text: `已验证并保存，GitHub 身份：@${lg}`, ok: true });
+    await setGh(tok, u.login);
+    setLogin(u.login);
+    // Surface the 90d anti-abuse gate NOW, not at submit time — "明明超过了
+    // 90 天" usually means the token belongs to a different (newer) account.
+    if (u.ageDays !== null && u.ageDays < 90) {
+      setMsg({
+        text: `已验证并保存，GitHub 身份：@${u.login} —— 注意：该账号注册仅 ${u.ageDays} 天，未满 90 天无法申请白名单（请换一个注册更久的 GitHub 账号的 Token）。`,
+        ok: false,
+      });
+    } else {
+      setMsg({
+        text: `已验证并保存，GitHub 身份：@${u.login}${u.ageDays !== null ? `（注册 ${u.ageDays} 天）` : ""}`,
+        ok: true,
+      });
+    }
     void fetchStatus(tok);
   };
 
