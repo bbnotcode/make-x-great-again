@@ -1448,8 +1448,13 @@ app.post("/v1/classify", async (c) => {
   // immutable id, far harder to weaponize against a chosen victim) AND an aged
   // GitHub identity. When the gate fails the verdict still lands in the
   // maintainer review queue (writeStatus below) instead of auto-publishing.
+  // porn_bot ONLY: that's the template-flood class where the AI is reliably
+  // precise. Generic "spam" verdicts (marketing/procurement/crypto chatter)
+  // produced real false positives on normal accounts (e.g. @Jackywine, a
+  // normal AI-content account auto-published off one GPU-procurement post),
+  // so they always queue for human review now.
   const aiAutoPublish =
-    (verdict.label === "spam" || verdict.label === "porn_bot") &&
+    verdict.label === "porn_bot" &&
     verdict.confidence >= AUTO_AI_PUBLISH_CONF &&
     uid !== null &&
     who.ageDays >= REPORTER_MIN_AGE_DAYS;

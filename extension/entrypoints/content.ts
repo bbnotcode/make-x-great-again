@@ -261,7 +261,16 @@ export default defineContentScript({
     function pushFinding(sig: Signals, v: Verdict, source: string) {
       if (!["spam", "porn_bot", "likely_spam"].includes(v.label)) return;
       const id = keyOf(sig);
-      if (findings.some((f) => (f.userId || `h:${f.handle}`) === id)) return;
+      // Dedupe by key AND by handle: the same account can be scanned once
+      // WITH a uid (article fiber walk) and once without (profile header),
+      // producing two different keys — the bubble then listed it twice.
+      const h = sig.handle.toLowerCase();
+      if (
+        findings.some(
+          (f) => (f.userId || `h:${f.handle}`) === id || f.handle.toLowerCase() === h,
+        )
+      )
+        return;
       const snippet = sig.triggeringComment || sig.recentTweets[0] || sig.bio;
       findings.push({
         handle: sig.handle,
