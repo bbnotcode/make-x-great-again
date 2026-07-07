@@ -152,6 +152,16 @@ export function App() {
         打开管理面板
       </button>
 
+      <button
+        type="button"
+        onClick={() =>
+          chrome.tabs.create({ url: chrome.runtime.getURL("options.html?tab=whitelist") })
+        }
+        className="mt-1.5 w-full cursor-pointer rounded-md border border-ok/40 bg-ok-soft px-3 py-2 text-[12.5px] font-medium text-ok transition hover:opacity-90 active:translate-y-px"
+      >
+        保护我的账号 · 加入白名单
+      </button>
+
       <div className="mt-2 grid grid-cols-2 gap-1.5">
         <a
           href={`${edgeBase}/list`}

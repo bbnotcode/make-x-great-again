@@ -743,19 +743,19 @@ const ACTION_MODES: {
   {
     value: "local",
     label: "本地隐藏（推荐）",
-    hint: "只在本扩展里隐藏 ta 的推文，X 完全无感、零联网，可随时在「处理记录」里恢复。",
+    hint: "只在本扩展里隐藏，零联网，可随时在「处理记录」恢复。",
     needsX: false,
   },
   {
     value: "mute",
     label: "X 静音",
-    hint: "用你的 X 登录态调用 X 原生静音：你不再看到 ta，对方不知情、关注关系不变。需要授权访问 x.com。",
+    hint: "X 原生静音：你看不到 ta，对方无感知。需授权 x.com。",
     needsX: true,
   },
   {
     value: "block",
     label: "X 拉黑",
-    hint: "用你的 X 登录态调用 X 原生拉黑：互相看不到、解除关注，最强。需要授权访问 x.com。高频批量拉黑可能触发 X 风控，请分批少量处理。",
+    hint: "X 原生拉黑：互相不可见、解除关注。需授权 x.com；大批量拉黑可能触发风控。",
     needsX: true,
   },
 ];
@@ -1101,14 +1101,10 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
 
   return (
     <section>
-      <SectionH>白名单</SectionH>
-      <p className="mb-3 text-[12px] leading-relaxed text-fg-3">
-        把你自己的 X 账号加入官方白名单：白名单账号
-        <b className="text-fg-2">永不会被检测、标记或上榜</b>。为防滥用：只能为
-        <b className="text-fg-2">你当前登录的 X 账号</b>申请（由扩展自动识别，不可手填），
-        且需要一个<b className="text-fg-2">注册满 90 天</b>的 GitHub
-        账号做身份证明。登录凭证只保存在本机，仅发往 GitHub
-        和我们的服务用于验证身份，不会用于其他用途。
+      <p className="mb-3 text-[13px] leading-relaxed text-fg-2">
+        三步：<b className="text-fg">GitHub 登录</b>（账号需注册满 90 天，防滥用）→
+        扩展自动识别<b className="text-fg">你登录的 X 账号</b> → 提交申请，维护者审核。
+        <span className="text-fg-3">凭证只存本机，仅用于身份验证。</span>
       </p>
       <div className="space-y-2.5">
         {!login && !ghFlow && (
@@ -1281,9 +1277,7 @@ function Settings() {
           <section>
             <SectionH>手动处理方式</SectionH>
             <p className="mb-3 text-[12px] text-fg-3">
-              <b className="text-fg-2">你手动点「隐藏」按钮时</b>执行的动作（角标 /
-              气泡里的按钮）。默认仅本地隐藏（零联网）；选择 X 静音 / 拉黑会用你当前的 X
-              登录态调用 X 自家接口，不经过我们的服务器。下面「自动分级策略」里的自动动作与此互相独立。
+              你手动点按钮时执行的动作。X 静音 / 拉黑走你自己的登录态，不经过我们的服务器；与自动分级互相独立。
             </p>
             <div className="space-y-2">
               {ACTION_MODES.map((m) => {
@@ -1325,15 +1319,9 @@ function Settings() {
         {st && (
           <section>
             <SectionH>自动分级策略</SectionH>
-            <p className="mb-3 text-[12px] text-fg-3">
-              <b className="text-fg-2">两类命中会自动执行</b>：公共黑名单上的账号（按下面的范围设置生效）；
-              官方关键词规则命中的新号（未上榜的模板小号，<b className="text-fg-2">仅在推文评论区</b>自动执行，
-              信息流和主页只打标）。缓存判定等其他情况一律只挂角标。
-              自动动作依次经过：气泡里的<b className="text-fg-2">自动处理总开关</b>
-              →<b className="text-fg-2">自动处理范围</b>（默认仅评论区）
-              →<b className="text-fg-2">分级策略</b>（按类别选动作）。
-              「仅标记」= 不自动处理，只挂角标等你手动点；分类由服务端 AI
-              结合账号整体信息判定并随名单下发；官方白名单账号永不处理；所有自动处理都可在「处理记录」里撤销。
+            <p className="mb-3 text-[12px] leading-relaxed text-fg-3">
+              命中<b className="text-fg-2">公共黑名单或官方规则</b>的账号按类别自动处理，其余只挂角标。
+              总开关在气泡里；规则命中只在评论区自动执行；白名单账号永不处理；一切可在「处理记录」撤销。
             </p>
             <div className="mb-4">
               <div className="mb-1.5 text-[12px] font-semibold text-fg">自动处理范围</div>
@@ -1343,12 +1331,12 @@ function Settings() {
                     {
                       v: "replies",
                       label: "仅推文评论区（推荐）",
-                      hint: "只自动处理在别人推文下回复的账号——垃圾潮的真实所在。信息流里账号自己发的内容、个人主页：只检测打标，不自动处理。",
+                      hint: "只自动处理别人推文下的回复——垃圾潮所在；信息流和主页只标记。",
                     },
                     {
                       v: "all",
                       label: "全局",
-                      hint: "信息流、个人主页、评论区全部自动处理。覆盖最广，误伤风险也更高。",
+                      hint: "信息流、主页、评论区都自动处理，误伤风险更高。",
                     },
                   ] as const
                 ).map((o) => {
@@ -1392,7 +1380,6 @@ function Settings() {
           </section>
         )}
 
-        {st && <WhitelistApplySection edgeBase={st.edgeBase} />}
 
         <section>
           <SectionH>数据与隐私</SectionH>
@@ -1501,11 +1488,25 @@ const Mascot = () => (
   />
 );
 
+/** 白名单自助申请 — its own nav page so the entry isn't buried in 设置. */
+function WhitelistPage() {
+  const [st, setSt] = useState<Settings | null>(null);
+  useEffect(() => {
+    getSettings().then(setSt);
+  }, []);
+  return (
+    <Page title="保护我的账号" sub="加入官方白名单 · 永不被检测、标记或上榜">
+      <div className="max-w-[680px]">{st && <WhitelistApplySection edgeBase={st.edgeBase} />}</div>
+    </Page>
+  );
+}
+
 const TABS = [
   ["overview", "概览", Overview],
   ["blocklist", "处理记录", Blocklist],
   ["cache", "检测缓存", Cache],
   ["settings", "设置", Settings],
+  ["whitelist", "保护我的账号", WhitelistPage],
   ["about", "关于", About],
 ] as const;
 type TabId = (typeof TABS)[number][0];
