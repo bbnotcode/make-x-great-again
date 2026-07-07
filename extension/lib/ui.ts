@@ -517,6 +517,12 @@ export function createBubble(
   const autoRows = new Set<string>();
   // Per-row auto verb (拉黑/静音/隐藏) so the row states the REAL action.
   const autoVerbs = new Map<string, string>();
+  // Session archive: rows processed on EARLIER pages of this browsing
+  // session. SPA navigation calls pageReset() — the card collapses, live
+  // findings are dropped, and done/failed rows move here so the 已处理 tab
+  // keeps the whole session until a hard page reload.
+  const archive: Finding[] = [];
+  const archivedKeys = new Set<string>();
   let autoOn = opts.autoProcess ?? true;
   let autoCats = opts.autoCategoryCount ?? 0;
   let autoScopeAll = opts.autoScopeAll ?? false;
@@ -530,6 +536,7 @@ export function createBubble(
     rowState.get(rowKey(f)) ?? "pending";
   const selectable = (f: Finding) => {
     if (autoRows.has(rowKey(f))) return false; // auto rows are not user-actionable
+    if (archivedKeys.has(rowKey(f))) return false; // page context is gone
     const st = stateOf(f);
     return st === "pending" || st === "failed";
   };
@@ -710,7 +717,7 @@ export function createBubble(
   }
 
   function renderCard() {
-    if (!findings.length) {
+    if (!findings.length && !archive.length) {
       card.innerHTML = `
         <div class="hd">${icon("shield-check", "var(--brand)", 16)}
           <span>${BRAND.acronym} 已启用</span>
@@ -733,7 +740,11 @@ export function createBubble(
     ).length;
     const selectableCount = findings.filter(selectable).length;
     const batchTouched = s.done + s.processing + s.queued + s.failed > 0;
-    const doneRows = findings.filter((f) => stateOf(f) === "done");
+    // 已处理 tab = this page's done rows + the session archive from earlier
+    // pages (an account can reappear live — the live row wins).
+    const liveKeys = new Set(findings.map(rowKey));
+    const archivedRows = archive.filter((a) => !liveKeys.has(rowKey(a)));
+    const doneRows = [...findings.filter((f) => stateOf(f) === "done"), ...archivedRows];
     if (view === "done" && !doneRows.length) view = "queue";
     // Queue view: in-flight first, then untouched/failed. Done rows live in
     // the 已处理 tab only.
@@ -749,7 +760,13 @@ export function createBubble(
           ];
     card.innerHTML = `
       <div class="hd">${icon("shield-alert", "var(--brand)", 16)}
-        <span>${selectableCount || s.running ? `本页发现 ${findings.length} 个可疑账号` : `本页已处理 ${s.done} 个账号`}</span>
+        <span>${
+          findings.length
+            ? selectableCount || s.running
+              ? `本页发现 ${findings.length} 个可疑账号`
+              : `本页已处理 ${s.done} 个账号`
+            : `本次浏览已处理 ${doneRows.length} 个账号`
+        }</span>
         <span class="x" data-x>${icon("x", "currentColor", 14)}</span></div>
       ${autoRowMarkup()}
       <div class="sub">
@@ -764,13 +781,13 @@ export function createBubble(
         </span>
         <span class="metric${doneRows.length ? " tab" : ""}${view === "done" ? " on" : ""}"
           ${doneRows.length ? `data-tab-done role="button" tabindex="0" aria-pressed="${view === "done"}"` : ""}
-          title="${s.failed ? `失败 ${s.failed}，` : ""}已处理完成${doneRows.length ? " · 点击查看明细" : ""}">
-          <i style="background:${s.failed ? "var(--warn)" : "var(--safe)"}"></i><b>${s.done}</b><em>已处理</em>
+          title="${s.failed ? `失败 ${s.failed}，` : ""}本次浏览已处理（含之前页面）${doneRows.length ? " · 点击查看明细" : ""}">
+          <i style="background:${s.failed ? "var(--warn)" : "var(--safe)"}"></i><b>${s.done + archivedRows.length}</b><em>已处理</em>
         </span>
       </div>
       ${batchTouched ? renderProgress(s) : ""}
       <div class="queue-table">
-        ${ordered.length ? "" : `<div class="queue-empty">${icon("shield-check", "var(--safe)", 13)}<span>本页命中已全部处理 · 点「已处理」查看明细</span></div>`}
+        ${ordered.length ? "" : `<div class="queue-empty">${icon("shield-check", "var(--safe)", 13)}<span>${findings.length ? "本页命中已全部处理" : "本页暂无新命中"} · 点「已处理」查看记录</span></div>`}
         ${ordered
           .map((f) => {
             const m = LABEL[f.verdict.label];
@@ -861,13 +878,15 @@ export function createBubble(
           .join("")}
       </div>
       ${
-        s.running > 0
-          ? `<button class="btn" disabled style="background:var(--brand)">${verb}中 · 正在 ${s.processing} · 待 ${s.queued}</button>`
-          : selectableCount === 0
-            ? `<button class="btn" disabled style="background:var(--safe)">✓ 已全部处理 (${s.done})</button>`
-            : selectedPending === 0
-              ? `<button class="btn" disabled style="opacity:.55">未选中任何账号 (剩余 ${selectableCount})</button>`
-              : `<button class="btn" data-run>一键${verb}选中 ${selectedPending}${s.done ? ` · 已完成 ${s.done}` : ""}${selectedPending < selectableCount ? ` · 跳过 ${selectableCount - selectedPending}` : ""}</button>`
+        !findings.length
+          ? ""
+          : s.running > 0
+            ? `<button class="btn" disabled style="background:var(--brand)">${verb}中 · 正在 ${s.processing} · 待 ${s.queued}</button>`
+            : selectableCount === 0
+              ? `<button class="btn" disabled style="background:var(--safe)">✓ 已全部处理 (${s.done})</button>`
+              : selectedPending === 0
+                ? `<button class="btn" disabled style="opacity:.55">未选中任何账号 (剩余 ${selectableCount})</button>`
+                : `<button class="btn" data-run>一键${verb}选中 ${selectedPending}${s.done ? ` · 已完成 ${s.done}` : ""}${selectedPending < selectableCount ? ` · 跳过 ${selectableCount - selectedPending}` : ""}</button>`
       }
       <div class="row"><span class="lnk" data-each>逐个查看处理</span>
         <span class="lnk" data-ign>忽略本页</span></div>`;
@@ -976,8 +995,9 @@ export function createBubble(
       const grew = f.length > findings.length;
       if (grew) view = "queue"; // new hits pull focus back to the live queue
       findings = f;
-      // Prune state for rows that left the page (SPA navigation resets).
-      const live = new Set(f.map(rowKey));
+      // Prune state for rows that left the page — but keep everything the
+      // session archive still renders (its rows read rowState/autoRows too).
+      const live = new Set([...f.map(rowKey), ...archivedKeys]);
       for (const k of [...rowState.keys()]) if (!live.has(k)) rowState.delete(k);
       for (const k of [...deselected]) if (!live.has(k)) deselected.delete(k);
       for (const k of [...seenRows]) if (!live.has(k)) seenRows.delete(k);
@@ -997,6 +1017,28 @@ export function createBubble(
     setScanning(n: number) {
       scanning = Math.max(0, n);
       if (!open) renderPill();
+    },
+    /** SPA navigation: collapse the card, move this page's processed rows
+     *  into the session archive (viewable via the 已处理 tab until a hard
+     *  reload), drop everything else with the page. */
+    pageReset() {
+      for (const f of findings) {
+        const k = rowKey(f);
+        const st = rowState.get(k);
+        if ((st === "done" || st === "failed") && !archivedKeys.has(k)) {
+          archivedKeys.add(k);
+          archive.push(f);
+        }
+      }
+      findings = [];
+      for (const k of [...rowState.keys()]) if (!archivedKeys.has(k)) rowState.delete(k);
+      for (const k of [...autoRows]) if (!archivedKeys.has(k)) autoRows.delete(k);
+      for (const k of [...autoVerbs.keys()]) if (!archivedKeys.has(k)) autoVerbs.delete(k);
+      for (const k of [...seenRows]) if (!archivedKeys.has(k)) seenRows.delete(k);
+      deselected.clear();
+      view = "queue";
+      collapse();
+      renderPill();
     },
     /** AUTO path: content.ts pushed the finding, then drives its row state
      *  here as the X action progresses. Marks the row as auto-driven —

@@ -629,7 +629,11 @@ export default defineContentScript({
       pendingActions.clear();
       anchorByKey.clear();
       findings = [];
-      bubbleApi?.update(findings);
+      // Collapse the card and archive this page's processed rows — the
+      // bubble follows the user across SPA navigations, so a stale open
+      // panel over a new page reads as broken; the session's records stay
+      // viewable in the 已处理 tab until a hard reload.
+      bubbleApi?.pageReset();
     });
 
     let debounce: ReturnType<typeof setTimeout> | undefined;
