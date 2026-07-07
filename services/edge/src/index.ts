@@ -2835,6 +2835,29 @@ async function whitelistUpsert(
   )
     .bind(uid, handle, displayName, avatarUrl, reasons, now, now)
     .run();
+  // Whitelisting is a handle-level decision: demote EVERY other row for the
+  // same handle out of the publishable/queue states. Without this, a
+  // handle-only whitelist add left a uid-bearing human_confirmed sibling on
+  // the public list (real case: @bailyLU stayed blacklisted in the artifact
+  // and /v1/check after the admin whitelisted the handle). rejected/removed
+  // rows are left as-is — they're unpublished audit history.
+  await env.DB.prepare(
+    `UPDATE accounts
+        SET status='whitelisted',
+            source='admin_whitelist',
+            verdict_label='legit',
+            confidence=1.0,
+            reasons=?,
+            signals_hash=NULL,
+            published_at=NULL,
+            published_tier=NULL,
+            last_scored=?
+      WHERE lower(handle)=lower(?)
+        AND status IN ('human_confirmed','auto_pending_review','auto_legit',
+                       'agent_blacklist','agent_whitelist','agent_pending')`,
+  )
+    .bind(reasons, now, handle)
+    .run();
 }
 
 app.post("/v1/admin/whitelist", async (c) => {
@@ -2868,9 +2891,9 @@ app.delete("/v1/admin/whitelist", async (c) => {
   // public list if it gets re-reported.
   const r = await c.env.DB.prepare(
     `UPDATE accounts SET status='rejected', source='admin_whitelist', last_scored=?
-      WHERE lower(handle)=? AND (x_user_id IS ? OR x_user_id=?) AND status='whitelisted'`,
+      WHERE lower(handle)=lower(?) AND status='whitelisted'`,
   )
-    .bind(now, handle, xUserId, xUserId)
+    .bind(now, handle)
     .run();
   await c.env.DB.prepare(
     "INSERT INTO review_log (x_user_id,handle,action,actor,note,at) VALUES (?,?,?,?,?,?)",

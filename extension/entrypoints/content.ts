@@ -112,7 +112,12 @@ function hideTweet(node: Element | null) {
 function mountBadge(anchor: HTMLElement, build: () => HTMLElement) {
   const host = document.createElement("span");
   host.className = "xss-mount";
-  host.style.display = "inline-flex";
+  // The profile header's UserName block is a flex container with the default
+  // align-items:stretch — an unpinned host (and the badge inside it, via the
+  // host's own default stretch) inflates to the full two-line row height and
+  // renders as a giant capsule. Pin both axes to content size.
+  host.style.cssText =
+    "display:inline-flex;align-items:center;align-self:center;vertical-align:middle;flex:none;";
   const sr = host.attachShadow({ mode: "open" });
   const st = document.createElement("style");
   st.textContent = STYLE;
