@@ -453,6 +453,8 @@ export interface Finding {
   categoryZh?: string;
   /** The official rule pattern that matched (rule hits only). */
   rule?: string;
+  /** Status id of the triggering tweet — flows into the 处理记录 audit trail. */
+  tweetId?: string;
   verdict: Verdict;
 }
 

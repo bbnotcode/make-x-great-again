@@ -18,8 +18,22 @@ export interface BlockRecord {
   avatarUrl?: string;
   verdict?: Verdict;
   reason?: string;
+  /** The tweet/reply that triggered the action — audit trail so the user
+   *  can revisit the scene (https://x.com/<handle>/status/<tweetId>).
+   *  Absent when the action happened without a tweet context (profile
+   *  header, cross-page batch after DOM recycling). */
+  tweetId?: string;
+  /** Snapshot of the triggering text — survives tweet deletion. */
+  tweetText?: string;
   source: BlockSource;
   ts: number;
+}
+
+/** Permalink of the triggering tweet, when recorded. */
+export function tweetUrl(r: Pick<BlockRecord, "handle" | "tweetId">): string | null {
+  return r.tweetId
+    ? `https://x.com/${encodeURIComponent(r.handle)}/status/${r.tweetId}`
+    : null;
 }
 
 export interface Stats {

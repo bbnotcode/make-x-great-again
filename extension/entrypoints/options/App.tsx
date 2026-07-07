@@ -20,6 +20,7 @@ import {
   getCacheRows,
   getStats,
   removeBlock,
+  tweetUrl,
 } from "../../lib/store";
 import type { Label } from "../../lib/types";
 
@@ -605,7 +606,28 @@ function Blocklist() {
                   {r.verdict ? <Tag label={r.verdict.label} conf={r.verdict.confidence} /> : "—"}
                 </td>
                 <td className={td}>
-                  <ReasonChip raw={r.reason} />
+                  <div className="flex items-center gap-2">
+                    <ReasonChip raw={r.reason} />
+                    {tweetUrl(r) && (
+                      <a
+                        href={tweetUrl(r) as string}
+                        target="_blank"
+                        rel="noopener"
+                        title={r.tweetText ? `触发内容：${r.tweetText}` : "查看触发这次处理的推文"}
+                        className="whitespace-nowrap text-[11px] text-fg-3 underline decoration-dotted underline-offset-2 transition hover:text-accent"
+                      >
+                        现场 ↗
+                      </a>
+                    )}
+                  </div>
+                  {r.tweetText && (
+                    <div
+                      className="mt-1 max-w-[260px] truncate text-[11px] text-fg-3"
+                      title={r.tweetText}
+                    >
+                      “{r.tweetText}”
+                    </div>
+                  )}
                 </td>
                 <td className={`${td} text-fg-3`}>{src[r.source]}</td>
                 <td className={`${td} font-mono text-[12px] text-fg-3`}>{when(r.ts)}</td>

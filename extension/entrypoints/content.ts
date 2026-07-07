@@ -148,6 +148,10 @@ interface PendingAction {
   /** Per-action override of settings.actionMode — the popover's secondary
    *  隐藏 button schedules a local-only hide even when the mode is block. */
   mode?: ActionMode;
+  /** Triggering tweet, captured while the DOM anchor is still alive —
+   *  lands in the 处理记录 audit trail. */
+  tweetId?: string;
+  tweetText?: string;
 }
 
 export default defineContentScript({
@@ -183,7 +187,10 @@ export default defineContentScript({
     function scheduleHide(key: string, sig: Signals, anchor: HTMLElement, mode?: ActionMode) {
       if (pendingActions.has(key)) return; // already pending
       // Tag the row so executeHide can still find it if X recycles the node.
-      articleOf(anchor)?.setAttribute("data-xss-key", key);
+      const art = articleOf(anchor);
+      art?.setAttribute("data-xss-key", key);
+      const tweetId = art ? articleStatusId(art) : null;
+      const tweetText = sig.triggeringComment || sig.recentTweets[0];
       const timer = setTimeout(() => {
         void executeHide(key, sig);
         pendingActions.delete(key);
@@ -195,6 +202,8 @@ export default defineContentScript({
         timer,
         ts: Date.now(),
         ...(mode ? { mode } : {}),
+        ...(tweetId ? { tweetId } : {}),
+        ...(tweetText ? { tweetText } : {}),
       });
       // Update UI to show pending state
       badgeForPending(anchor, sig, mode);
@@ -219,7 +228,13 @@ export default defineContentScript({
      *  synchronously; the returned promise resolves once the native action
      *  settled (true = local-only mode or X action succeeded). */
     function executeHide(key: string, sig: Signals): Promise<boolean> {
-      const mode = pendingActions.get(key)?.mode ?? settings.actionMode;
+      const pend = pendingActions.get(key);
+      const mode = pend?.mode ?? settings.actionMode;
+      // Triggering-tweet audit trail: prefer what scheduleHide captured live,
+      // else the finding (bubble batch path — pending already cleared).
+      const fin = findings.find((x) => (x.userId || `h:${x.handle}`) === key);
+      const tweetId = pend?.tweetId ?? fin?.tweetId;
+      const tweetText = pend?.tweetText ?? fin?.snippet;
       void addBlocked(key);
       if (sig.userId) void addBlocked(sig.userId);
       void addBlockRecord({
@@ -227,6 +242,8 @@ export default defineContentScript({
         handle: sig.handle,
         ...(sig.displayName ? { displayName: sig.displayName } : {}),
         ...(sig.avatarUrl ? { avatarUrl: sig.avatarUrl } : {}),
+        ...(tweetId ? { tweetId } : {}),
+        ...(tweetText ? { tweetText } : {}),
         source: "manual",
         ts: Date.now(),
       });
@@ -267,7 +284,7 @@ export default defineContentScript({
       sig: Signals,
       v: Verdict,
       source: string,
-      meta?: { categoryZh?: string; rule?: string },
+      meta?: { categoryZh?: string; rule?: string; tweetId?: string },
     ) {
       if (!["spam", "porn_bot", "likely_spam"].includes(v.label)) return;
       const id = keyOf(sig);
@@ -288,6 +305,7 @@ export default defineContentScript({
         source,
         ...(meta?.categoryZh ? { categoryZh: meta.categoryZh } : {}),
         ...(meta?.rule ? { rule: meta.rule } : {}),
+        ...(meta?.tweetId ? { tweetId: meta.tweetId } : {}),
         ...(sig.userId ? { userId: sig.userId } : {}),
         ...(sig.avatarUrl ? { avatarUrl: sig.avatarUrl } : {}),
         ...(sig.displayName ? { displayName: sig.displayName } : {}),
@@ -337,6 +355,9 @@ export default defineContentScript({
         hitPublicSeen.add(key);
         void bumpStat("hitPublic");
       }
+      // Triggering tweet for the audit trail (null on profile headers).
+      const hitArt = articleOf(anchor);
+      const hitTweetId = hitArt ? articleStatusId(hitArt) : null;
       // Auto-action decision chain (each gate independent, no cross-talk):
       //   1. ELIGIBILITY —
       //      · published-list entries ("list", any tier): eligible within
@@ -373,6 +394,7 @@ export default defineContentScript({
         pushFinding(sig, entry.verdict, badgeSource === "rule" ? "local-rule" : "local-index", {
         categoryZh: CATEGORY_ZH[entry.category],
         ...(entry.rulePattern ? { rule: entry.rulePattern } : {}),
+        ...(hitTweetId ? { tweetId: hitTweetId } : {}),
       });
         return;
       }
@@ -387,6 +409,7 @@ export default defineContentScript({
       pushFinding(sig, entry.verdict, badgeSource === "rule" ? "local-rule" : "local-index", {
         categoryZh: CATEGORY_ZH[entry.category],
         ...(entry.rulePattern ? { rule: entry.rulePattern } : {}),
+        ...(hitTweetId ? { tweetId: hitTweetId } : {}),
       });
       const verb = action === "mute" ? "静音" : action === "block" ? "拉黑" : "隐藏";
       bubbleApi?.markAuto(key, "processing", verb);
@@ -398,11 +421,14 @@ export default defineContentScript({
         const xOk =
           action === "mute" || action === "block" ? await applyXAction(action, sig) : true;
         if (!xOk) console.warn(`[MXGA] 自动${verb}：X 原生动作失败`, sig.handle, sig.userId);
+        const autoTweetText = sig.triggeringComment || sig.recentTweets[0];
         void addBlockRecord({
           id: key,
           handle: sig.handle,
           ...(sig.displayName ? { displayName: sig.displayName } : {}),
           ...(sig.avatarUrl ? { avatarUrl: sig.avatarUrl } : {}),
+          ...(hitTweetId ? { tweetId: hitTweetId } : {}),
+          ...(autoTweetText ? { tweetText: autoTweetText } : {}),
           verdict: entry.verdict,
           reason: `${CATEGORY_ZH[entry.category]} · 自动${verb}${xOk ? "" : "（X 动作失败，仅本地隐藏）"}`,
           source: "auto",
