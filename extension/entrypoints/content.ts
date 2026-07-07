@@ -272,12 +272,18 @@ export default defineContentScript({
         hitPublicSeen.add(key);
         void bumpStat("hitPublic");
       }
-      // Per-category action policy: "badge" keeps the classic mark-only
-      // behavior; hide/mute/block fire immediately (the account is on the
-      // human-confirmed public list or hit a maintainer-curated rule — every
-      // auto action is reversible from the 隐藏记录 tab, and mute/block
-      // additionally ride the user's own X session like the manual path).
-      const action = settings.categoryActions[entry.category] ?? "badge";
+      // Per-category action policy — but ONLY for list entries a human
+      // actually reviewed (entry.tier === "confirmed"). Everything else —
+      // local keyword-rule hits, AI/rule/mention auto-published list entries,
+      // old artifacts without tier info — is a SUSPICION, not a confirmation,
+      // and degrades to mark-only. This is the product red line: 只有人工确认
+      // 的线上黑名单条目才允许自动隐藏/静音/拉黑，疑似账号绝不自动处理。
+      // (Auto actions stay reversible from the 隐藏记录 tab, and mute/block
+      // ride the user's own X session like the manual path.)
+      const humanConfirmedListHit = badgeSource === "list" && entry.tier === "confirmed";
+      const action = humanConfirmedListHit
+        ? (settings.categoryActions[entry.category] ?? "badge")
+        : "badge";
       // 自动处理 master switch off → everything degrades to mark-only,
       // regardless of the per-category policy.
       if (action === "badge" || !settings.autoProcess) {
@@ -371,6 +377,7 @@ export default defineContentScript({
                 reasons: [`命中官方规则「${ruleHit.pattern}」 · ${CATEGORY_ZH[ruleHit.category]}`],
               },
               category: ruleHit.category,
+              tier: "auto", // a rule match is a suspicion — never auto-acted on
               source: "community",
               updatedAt: new Date().toISOString(),
             },

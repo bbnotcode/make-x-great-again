@@ -23,6 +23,12 @@ export interface IndexEntry {
   /** Server-assigned spam category (LLM / maintainer-curated). Drives the
    *  per-category action policy in settings.categoryActions. */
   category: SpamCategory;
+  /** Publish provenance from the lite artifact's 3rd code char:
+   *  'confirmed' = a human (maintainer) reviewed this entry ('h');
+   *  'auto'      = AI/rule/mention auto-publish, or an old artifact without
+   *                the tier char. Auto mute/block MUST only fire on
+   *                'confirmed' — auto entries are badge-only. */
+  tier: "confirmed" | "auto";
   source: "curated" | "community";
   updatedAt: string; // ISO date
 }
@@ -57,15 +63,19 @@ function buildMaps(list: StoredList): void {
     const label = CODE_TO_LABEL[String(code)[0] ?? ""];
     if (!label) continue;
     const category = categoryFromCode(String(code)[1]);
+    const tier = String(code)[2] === "h" ? "confirmed" : "auto";
     const entry: IndexEntry = {
       userId,
       handle,
       verdict: {
         label,
         confidence: 1,
-        reasons: [`公共黑名单收录 · ${CATEGORY_ZH[category]}`],
+        reasons: [
+          `公共黑名单收录 · ${CATEGORY_ZH[category]}${tier === "confirmed" ? " · 人工确认" : " · 自动收录"}`,
+        ],
       },
       category,
+      tier,
       source: "curated",
       updatedAt,
     };

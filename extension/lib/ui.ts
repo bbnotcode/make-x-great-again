@@ -266,9 +266,18 @@ svg { display: block; }
   padding: 2.5px 8px; border-radius: 999px; font-size: 11px; font-weight: 750;
   line-height: 1; white-space: nowrap;
   vertical-align: middle; cursor: default; color: var(--badge-color);
-  border: 1px solid color-mix(in srgb, var(--badge-color) 42%, transparent);
-  background: color-mix(in srgb, var(--badge-color) 12%, transparent);
-  box-shadow: 0 1px 4px rgba(15,23,42,.08);
+  /* v0.4-strength tint: stronger border + fill so hits pop out of the
+   * timeline instead of reading as washed-out pink. */
+  border: 1px solid color-mix(in srgb, var(--badge-color) 56%, transparent);
+  background: color-mix(in srgb, var(--badge-color) 16%, transparent);
+  box-shadow: 0 1px 4px rgba(15,23,42,.10);
+}
+/* Source tag inside a verdict badge (公榜 / 规则) — inherits the badge color. */
+.xss-badge .stag {
+  margin-left: 2px; padding: 0 5px; border-radius: 999px; font-size: 9px;
+  font-weight: 700; letter-spacing: .3px; color: currentColor;
+  border: 1px solid color-mix(in srgb, currentColor 65%, transparent);
+  background: color-mix(in srgb, currentColor 10%, transparent);
 }
 .xss-badge svg { flex: none; }
 .xss-badge.ghost {
@@ -984,7 +993,10 @@ export function createBadge(
     return el;
   }
   const meta = LABEL[v.label];
-  const color = `var(${meta.varName})`;
+  // v0.4 visual language: every spammy tier renders in full danger red — the
+  // amber likely_spam pill read as washed-out next to v0.4's badges.
+  const spammy = v.label === "spam" || v.label === "porn_bot" || v.label === "likely_spam";
+  const color = spammy ? "var(--danger)" : `var(${meta.varName})`;
   const known = source === "list" || source === "cache" || source === "rule";
   el.className = `xss-badge ${known ? "known" : "fresh"}`;
   // Tinted pill: bg/border derive from --badge-color via color-mix in STYLE.
@@ -1000,8 +1012,16 @@ export function createBadge(
   // No native title: the hover popover already carries the details, and the
   // OS tooltip floating next to it reads as visual noise.
   el.setAttribute("aria-label", `${meta.zh} ${(v.confidence * 100).toFixed(0)}% · ${tip}`);
-  // Clean pill: icon + label only. 首发 tag marks fresh first-discoveries.
-  const tag = known ? "" : `<span class="ntag">首发</span>`;
+  // Icon + label + a source tag (v0.4 language): 公榜 = published-list hit,
+  // 规则 = official keyword-rule match, 首发 = fresh first-discovery.
+  const tag =
+    source === "list"
+      ? `<span class="stag">公榜</span>`
+      : source === "rule"
+        ? `<span class="stag">规则</span>`
+        : known
+          ? ""
+          : `<span class="ntag">首发</span>`;
   el.innerHTML =
     `${icon(meta.ic, "currentColor", 12)}<span>${meta.zh} ${(v.confidence * 100).toFixed(0)}%</span>${tag}`;
 

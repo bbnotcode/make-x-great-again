@@ -103,6 +103,9 @@ interface PublishedShardEntry {
   label: string;
   confidence: number;
   published_at: number;
+  /** 'human' = maintainer-reviewed; 'auto' = AI/rule/mention auto-publish.
+   *  Clients must only auto-act (mute/block) on 'human' entries. */
+  tier: "human" | "auto";
 }
 
 interface Reporter {
@@ -690,6 +693,11 @@ interface AccountWrite {
   evidenceText?: string | null;
   now: number;
   publishedAt?: number | null;
+  /** Provenance of a human_confirmed publish: 'human' | 'ai' | 'rule' |
+   *  'mention'. Only meaningful when status='human_confirmed'; the artifact
+   *  and /v1/check read it to keep unreviewed auto-publishes out of clients'
+   *  auto-block paths. */
+  publishedTier?: string | null;
   accountCreatedAt?: string | null;
   accountAgeDays?: number | null;
   followersCount?: number | null;
@@ -748,7 +756,12 @@ async function writeAccount(
                         WHEN status IN ('human_confirmed','rejected','removed','whitelisted')
                           THEN published_at
                         ELSE ?
-                      END
+                      END,
+         published_tier=CASE
+                          WHEN status IN ('human_confirmed','rejected','removed','whitelisted')
+                            THEN published_tier
+                          ELSE ?
+                        END
        WHERE rowid=?`,
     )
       .bind(
@@ -771,6 +784,7 @@ async function writeAccount(
         w.now,
         w.status,
         w.publishedAt ?? null,
+        w.publishedTier ?? null,
         prev.rowid,
       )
       .run();
@@ -790,8 +804,8 @@ async function writeAccount(
       `INSERT INTO accounts
          (x_user_id,handle,display_name,avatar_url,account_created_at,account_age_days,
           followers_count,following_count,verdict_label,confidence,reasons,category,model,
-          status,source,signals_hash,evidence_text,first_seen,last_scored,published_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          status,source,signals_hash,evidence_text,first_seen,last_scored,published_at,published_tier)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
       .bind(
         w.uid,
@@ -814,6 +828,7 @@ async function writeAccount(
         w.now,
         w.now,
         w.publishedAt ?? null,
+        w.publishedTier ?? null,
       )
       .run();
   } catch (err) {
@@ -910,7 +925,12 @@ async function cleanupHandleOnlyAccountDuplicates(
   await env.DB.prepare(
     `UPDATE accounts
         SET status='human_confirmed',
-            published_at=?
+            published_at=?,
+            published_tier=(SELECT s.published_tier FROM accounts s
+                             WHERE s.x_user_id IS NULL
+                               AND s.status='human_confirmed'
+                               AND lower(s.handle)=?
+                             LIMIT 1)
       WHERE rowid=?
         AND status IN ('auto_pending_review','auto_legit')
         AND EXISTS (SELECT 1 FROM accounts s
@@ -918,7 +938,7 @@ async function cleanupHandleOnlyAccountDuplicates(
                        AND s.status='human_confirmed'
                        AND lower(s.handle)=?)`,
   )
-    .bind(Date.now(), keepRowid, handle)
+    .bind(Date.now(), handle, keepRowid, handle)
     .run();
 
   // 2. Collapse: mark all null-uid siblings as removed, preserve payload.
@@ -1165,6 +1185,7 @@ async function autoBlacklistMentions(
       evidenceText: evidenceText(s),
       now,
       publishedAt: now,
+      publishedTier: "mention",
     });
     await env.DB.prepare(
       "INSERT INTO review_log (x_user_id, handle, action, actor, note, at) VALUES (?,?,?,?,?,?)",
@@ -1246,9 +1267,14 @@ app.get("/v1/check", async (c) => {
   // (~97K) on every call — this batch lookup is the extension's hottest
   // endpoint, so that was the dominant source of D1 rows-read. Measured:
   // 96,763 rows/call → 4 rows/call. Status is still filtered, just not via index.
+  // published_tier='human' — /v1/check has always meant "human-confirmed
+  // public list", and deployed v0.4 clients auto-BLOCK on any hit returned
+  // here. AI/rule/mention auto-publishes stay out of this endpoint (they
+  // still ship in the lite artifact, tier-tagged, for badge display).
   const rows = await c.env.DB.prepare(
     `SELECT x_user_id, verdict_label, confidence FROM accounts
-     WHERE x_user_id IN (${ph}) AND +status='human_confirmed'`,
+     WHERE x_user_id IN (${ph}) AND +status='human_confirmed'
+       AND published_tier='human'`,
   )
     .bind(...ids)
     .all<{ x_user_id: string; verdict_label: string; confidence: number }>();
@@ -1358,6 +1384,7 @@ app.post("/v1/classify", async (c) => {
       evidenceText: evidenceText(s),
       now,
       publishedAt: status === "human_confirmed" ? now : null,
+      publishedTier: status === "human_confirmed" ? "rule" : null,
       ...signalSnapshot(s),
     });
     await c.env.DB.batch([
@@ -1460,6 +1487,9 @@ app.post("/v1/classify", async (c) => {
     evidenceText: evidenceText(s),
     now,
     publishedAt: aiAutoPublish ? now : null,
+    // Honest provenance: an AI auto-publish is NOT a human confirmation.
+    // Clients gate auto mute/block on tier 'human'; 'ai' rows badge only.
+    publishedTier: aiAutoPublish ? "ai" : null,
     ...signalSnapshot(s),
   });
   // Audit every AI auto-publish (mirrors the keyword-rule actor='rule:<id>'
@@ -2277,8 +2307,14 @@ function buildDecideStatements(
     } else {
       stmts.push(
         env.DB.prepare(
-          "UPDATE accounts SET status=?, published_at=? WHERE lower(handle)=? AND x_user_id=?",
-        ).bind(status, action === "approve" ? now : null, handle, xUserId),
+          "UPDATE accounts SET status=?, published_at=?, published_tier=? WHERE lower(handle)=? AND x_user_id=?",
+        ).bind(
+          status,
+          action === "approve" ? now : null,
+          action === "approve" ? "human" : null,
+          handle,
+          xUserId,
+        ),
       );
     }
     // Sibling cleanup: when a uid-bearing row was just promoted/demoted, also
@@ -2308,8 +2344,13 @@ function buildDecideStatements(
     } else {
       stmts.push(
         env.DB.prepare(
-          "UPDATE accounts SET status=?, published_at=? WHERE lower(handle)=? AND x_user_id IS NULL",
-        ).bind(status, action === "approve" ? now : null, handle),
+          "UPDATE accounts SET status=?, published_at=?, published_tier=? WHERE lower(handle)=? AND x_user_id IS NULL",
+        ).bind(
+          status,
+          action === "approve" ? now : null,
+          action === "approve" ? "human" : null,
+          handle,
+        ),
       );
     }
   }
@@ -3558,7 +3599,7 @@ async function mirrorToGitHub(
   const BL_EXPORT_LIMIT = 50000;
   const bl = await env.DB.prepare(
     `SELECT a.x_user_id, a.handle, a.verdict_label, a.confidence, a.category,
-            a.reasons, a.evidence_text, a.published_at,
+            a.reasons, a.evidence_text, a.published_at, a.published_tier,
             (SELECT count(DISTINCT r.reporter_fp)
                FROM reports r
               WHERE r.handle = a.handle
@@ -3576,6 +3617,7 @@ async function mirrorToGitHub(
     reasons: string | null;
     evidence_text: string | null;
     published_at: number;
+    published_tier: string | null;
     reporters: number;
   }>();
 
@@ -3586,7 +3628,7 @@ async function mirrorToGitHub(
   // per-category action policy needs. v1.json keeps the audit role
   // (reasons/evidence/reporters) unchanged.
   const liteRows = await env.DB.prepare(
-    `SELECT x_user_id, handle, verdict_label, category
+    `SELECT x_user_id, handle, verdict_label, category, published_tier
        FROM accounts
       WHERE status='human_confirmed' AND published_at IS NOT NULL
       ORDER BY published_at DESC`,
@@ -3595,6 +3637,7 @@ async function mirrorToGitHub(
     handle: string;
     verdict_label: string;
     category: string | null;
+    published_tier: string | null;
   }>();
 
   const now = Date.now();
@@ -3641,6 +3684,7 @@ async function mirrorToGitHub(
         evidence_text: r.evidence_text,
         reporters: r.reporters,
         published_at: r.published_at,
+        published_tier: r.published_tier === "human" ? "human" : "auto",
       })),
     },
     `data(blacklist): sync · ${blCount} total · ${today}`,
@@ -3669,6 +3713,7 @@ async function mirrorToGitHub(
       generatedAt: now,
       count: liteList.length,
       labels: { p: "porn_bot", s: "spam" },
+      tiers: { h: "human", a: "auto" },
       categories: Object.fromEntries(
         (Object.entries(CATEGORY_CODE) as [SpamCategory, string][]).map(([k, v]) => [v, k]),
       ),
@@ -3677,7 +3722,8 @@ async function mirrorToGitHub(
         r.x_user_id ?? "",
         r.handle,
         (r.verdict_label === "porn_bot" ? "p" : "s") +
-          (CATEGORY_CODE[(r.category ?? "other") as SpamCategory] ?? "o"),
+          (CATEGORY_CODE[(r.category ?? "other") as SpamCategory] ?? "o") +
+          (r.published_tier === "human" ? "h" : "a"),
       ]),
     },
     `data(blacklist): lite sync · ${liteList.length} total · ${today}`,
@@ -4137,7 +4183,7 @@ app.post("/v1/admin/sync-mirror", async (c) => {
 
 async function publishArtifacts(env: Env): Promise<void> {
   const rows = await env.DB.prepare(
-    "SELECT x_user_id, handle, verdict_label, confidence, category, published_at FROM accounts WHERE status='human_confirmed' ORDER BY published_at DESC",
+    "SELECT x_user_id, handle, verdict_label, confidence, category, published_at, published_tier FROM accounts WHERE status='human_confirmed' ORDER BY published_at DESC",
   ).all<{
     x_user_id: string | null;
     handle: string;
@@ -4145,9 +4191,13 @@ async function publishArtifacts(env: Env): Promise<void> {
     confidence: number;
     category: string | null;
     published_at: number;
+    published_tier: string | null;
   }>();
 
   const accounts = rows.results ?? [];
+  // NULL tier = written between the migration and this deploy; treat as
+  // 'auto' (fail-safe: never auto-block an entry of unknown provenance).
+  const tierCode = (t: string | null) => (t === "human" ? "h" : "a");
   if (!accounts.length) return;
 
   // Snapshot the pending-review count here (one bounded scan per 10-min run) so
@@ -4175,6 +4225,7 @@ async function publishArtifacts(env: Env): Promise<void> {
         label: a.verdict_label,
         confidence: a.confidence,
         published_at: a.published_at,
+        tier: a.published_tier === "human" ? "human" : "auto",
       };
       const primaryKey = a.x_user_id ?? `handle:${a.handle.toLowerCase()}`;
       entries[primaryKey] = entry;
@@ -4198,9 +4249,11 @@ async function publishArtifacts(env: Env): Promise<void> {
   const liteKey = `lite-${version}.json`;
 
   // Lite artifact (schema v2): one compact row per account —
-  //   [x_user_id ("" when handle-only), handle, "<label><category>"]
-  // where label is p=porn_bot / s=spam and category is the 1-char code from
-  // CATEGORY_CODE ("o" while the LLM backfill hasn't categorized the row yet).
+  //   [x_user_id ("" when handle-only), handle, "<label><category><tier>"]
+  // where label is p=porn_bot / s=spam, category is the 1-char code from
+  // CATEGORY_CODE ("o" while the LLM backfill hasn't categorized the row yet),
+  // and tier is h=human-confirmed / a=auto-published (AI/rule/mention). Old
+  // 2-char codes parse fine on clients (missing tier reads as 'auto').
   // ~50 bytes/entry vs ~300 in the legacy shards JSON (which double-keys every
   // entry by id AND handle with verbose field names). Consumers derive both
   // lookup maps from the single row. The legacy shards artifact keeps being
@@ -4209,7 +4262,8 @@ async function publishArtifacts(env: Env): Promise<void> {
     a.x_user_id ?? "",
     a.handle,
     (a.verdict_label === "porn_bot" ? "p" : "s") +
-      (CATEGORY_CODE[(a.category ?? "other") as SpamCategory] ?? "o"),
+      (CATEGORY_CODE[(a.category ?? "other") as SpamCategory] ?? "o") +
+      tierCode(a.published_tier),
   ]);
   // Ship the enabled blacklist keyword rules with the artifact so clients can
   // flag first-seen template accounts (brand-new throwaways not yet on the
@@ -4238,6 +4292,7 @@ async function publishArtifacts(env: Env): Promise<void> {
     generatedAt: now,
     count: accounts.length,
     labels: { p: "porn_bot", s: "spam" },
+    tiers: { h: "human", a: "auto" },
     categories: Object.fromEntries(
       (Object.entries(CATEGORY_CODE) as [SpamCategory, string][]).map(([k, v]) => [v, k]),
     ),
