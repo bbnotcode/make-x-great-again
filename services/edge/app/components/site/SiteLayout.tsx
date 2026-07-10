@@ -9,23 +9,25 @@ function NavLink({
   to,
   external,
   active,
+  label,
   children,
 }: {
   to: string;
   external?: boolean;
   active?: boolean;
+  label: string;
   children: React.ReactNode;
 }) {
   const cls = cn(
-    "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors",
+    "inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[13px] font-medium transition-colors sm:px-2.5",
     active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
   );
   return external ? (
-    <a href={to} target="_blank" rel="noopener" className={cls}>
+    <a href={to} target="_blank" rel="noopener" className={cls} aria-label={label}>
       {children}
     </a>
   ) : (
-    <Link to={to} className={cls}>
+    <Link to={to} className={cls} aria-label={label}>
       {children}
     </Link>
   );
@@ -39,24 +41,30 @@ export function SiteLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="mx-auto max-w-[1080px] px-6 sm:px-7">
-      <header className="sticky top-0 z-30 -mx-6 flex items-center justify-between border-b border-border/60 px-6 py-4 backdrop-blur-md transition-colors supports-[backdrop-filter]:bg-background/70 sm:-mx-7 sm:px-7">
+    <div className="mx-auto w-full min-w-0 max-w-[1080px] overflow-x-clip px-6 sm:px-7">
+      <header className="sticky top-0 z-30 -mx-6 flex min-w-0 items-center justify-between border-b border-border/60 px-6 py-4 backdrop-blur-md transition-colors supports-[backdrop-filter]:bg-background/70 sm:-mx-7 sm:px-7">
         <Link to="/" className="flex items-center gap-2 font-semibold tracking-tight" aria-label={BRAND.name + " 首页"}>
           <img src="/mxga-mark.png" alt="" width={32} height={32} className="size-8" />
           <span>{BRAND.acronym}</span>
         </Link>
-        <div className="flex items-center gap-1">
+        <div className="hidden items-center gap-1 sm:flex">
           <nav className="flex items-center" aria-label="主导航">
-            <NavLink to="/list" active={current === "list"}>
-              <List className="size-3.5" /> 名单
+            <NavLink to="/list" active={current === "list"} label="公共名单">
+              <List className="size-3.5" /> <span className="hidden sm:inline">名单</span>
             </NavLink>
-            <NavLink to={BRAND.repo + "/tree/main/data"} external>
-              <Database className="size-3.5" /> 公开数据
+            <NavLink to={BRAND.repo + "/tree/main/data"} external label="公开数据">
+              <Database className="size-3.5" /> <span className="hidden sm:inline">公开数据</span>
             </NavLink>
-            <NavLink to={BRAND.repo} external>
-              <GhIcon className="size-3.5" /> GitHub
+            <NavLink to={BRAND.repo} external label="GitHub 源码">
+              <GhIcon className="size-3.5" /> <span className="hidden sm:inline">GitHub</span>
             </NavLink>
           </nav>
+          <ThemeToggle />
+        </div>
+        <div className="flex items-center gap-1 sm:hidden" style={{ position: "absolute", right: 16 }}>
+          <NavLink to="/list" active={current === "list"} label="公共名单">
+            <List className="size-3.5" />
+          </NavLink>
           <ThemeToggle />
         </div>
       </header>

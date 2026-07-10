@@ -552,6 +552,7 @@ function Blocklist() {
       sub={`共 ${list.length} 条 · 记录所有被隐藏 / 静音 / 拉黑的账号 · 恢复显示用于纠正误判（本地恢复可见；X 端的静音 / 拉黑需去 X 手动解除）`}
     >
       <input
+        aria-label="搜索处理记录"
         value={q}
         onChange={(e) => setQ(e.target.value)}
         placeholder="搜索 @handle / 显示名 / 理由"
@@ -1189,6 +1190,7 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
           </summary>
           <div className="mt-2 flex items-center gap-2">
             <input
+              aria-label="GitHub Token"
               type="password"
               value={token}
               onChange={(e) => setToken(e.target.value)}
@@ -1216,6 +1218,7 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
             )}
           </div>
           <input
+            aria-label="白名单申请附言"
             value={note}
             onChange={(e) => setNote(e.target.value)}
             maxLength={200}

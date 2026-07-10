@@ -92,7 +92,15 @@
       "id": "ux-accessibility",
       "task": "Correct verified extension and website accessibility/usability gaps",
       "verify": "Search, token, and note inputs have programmatic labels; keyboard focus, reduced motion, desktop, mobile, and dark mode are verified with screenshots",
-      "passes": false
+      "passes": true,
+      "evidence": [
+        "Extension record search, GitHub token, whitelist note, and admin token inputs have accessible names",
+        "Mobile navigation collapses to the two high-frequency controls (public list and theme) without clipping",
+        "Desktop light screenshot: .screens/v0.5-review/edge-desktop-light.png",
+        "Mobile light screenshot (500px mobile breakpoint): .screens/v0.5-review/edge-mobile-light.png",
+        "Admin dark screenshot with visible focus ring: .screens/v0.5-review/admin-desktop-dark.png",
+        "Extension and Edge app type checks plus production builds passed"
+      ]
     },
     {
       "id": "worker-hardening",
@@ -145,10 +153,10 @@
       "impact": "Resolved with route-level chunks; list visitors no longer download landing charts or admin code"
     },
     {
-      "severity": "medium",
+      "severity": "resolved-medium",
       "area": "ux",
       "evidence": "extension/entrypoints/options/App.tsx:554,1182,1209 use placeholder-only inputs without programmatic labels",
-      "impact": "Screen-reader users cannot reliably identify search, token, and application-note fields"
+      "impact": "Resolved with explicit accessible names; responsive screenshot review also found and fixed mobile nav clipping"
     },
     {
       "severity": "resolved-medium",

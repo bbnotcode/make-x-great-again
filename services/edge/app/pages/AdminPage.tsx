@@ -39,7 +39,16 @@ function Gate({ onUnlock }: { onUnlock: () => void }) {
             onUnlock();
           }}
         >
-          <Input type="password" autoComplete="off" placeholder="xss_…" value={val} onChange={(e) => setVal(e.target.value)} autoFocus className="font-mono" />
+          <Input
+            aria-label="管理员令牌"
+            type="password"
+            autoComplete="off"
+            placeholder="xss_…"
+            value={val}
+            onChange={(e) => setVal(e.target.value)}
+            autoFocus
+            className="font-mono"
+          />
           <Button type="submit">解锁</Button>
         </form>
         <div className="mt-5 flex justify-center">
