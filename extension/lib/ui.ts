@@ -96,8 +96,8 @@ export const STYLE = `
 .metric b { color: var(--text); font-size: 12px; font-weight: 760; line-height: 1; }
 .metric em { font-style: normal; overflow: hidden; text-overflow: ellipsis; }
 .metric i { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex: none; }
-/* The 已处理 chip doubles as a tab: done rows leave the live queue and are
- * only listed when this chip is toggled on. */
+/* The 已处理 chip doubles as a tab: it lists the whole-session record
+ * (done rows from THIS page stay in the live queue too — v0.4 checklist). */
 .metric.tab { cursor: pointer; user-select: none; transition: background .14s ease, box-shadow .14s ease; }
 .metric.tab:hover { background: color-mix(in srgb, var(--muted) 16%, transparent); }
 .metric.tab.on {
@@ -272,6 +272,12 @@ export const STYLE = `
 .qrow.done .qsnip {
   text-decoration: line-through; opacity: .52;
 }
+/* One-shot green flash the moment a row flips to done — the checklist
+ * "tick" that makes batch progress feel tangible. */
+.qrow.done.flip { animation: qdoneflash .45s ease-out; }
+@keyframes qdoneflash {
+  0% { background: color-mix(in srgb, var(--safe) 28%, transparent); transform: scale(1.015); }
+}
 svg { display: block; }
 .xss-badge {
   --badge-color: var(--muted);
@@ -393,6 +399,7 @@ svg { display: block; }
   .scan-radar.busy,
   .scan-radar.busy .scan-sweep,
   .qrow.new,
+  .qrow.done.flip,
   .xss-act.queue.busy,
   .progress-seg.active { animation: none; }
   .pill.hit-pulse .scan-radar { animation: none; }
@@ -514,6 +521,9 @@ export function createBubble(
   const deselected = new Set<string>();
   // Rows already rendered once — suppresses the slide-in replay on rerender.
   const seenRows = new Set<string>();
+  // Rows already rendered in the done state — the green "tick" flash plays
+  // only on the render where a row first flips to done.
+  const doneSeen = new Set<string>();
   // Rows driven by the AUTO path (per-category policy): the extension acts
   // on its own, so the checkbox and per-row button are display-only.
   const autoRows = new Set<string>();
@@ -748,18 +758,11 @@ export function createBubble(
     const archivedRows = archive.filter((a) => !liveKeys.has(rowKey(a)));
     const doneRows = [...findings.filter((f) => stateOf(f) === "done"), ...archivedRows];
     if (view === "done" && !doneRows.length) view = "queue";
-    // Queue view: in-flight first, then untouched/failed. Done rows live in
-    // the 已处理 tab only.
-    const ordered =
-      view === "done"
-        ? doneRows
-        : [
-            ...findings.filter((f) => {
-              const st = stateOf(f);
-              return st === "processing" || st === "queued";
-            }),
-            ...findings.filter(selectable),
-          ];
+    // Queue view = v0.4-style checklist: EVERY live row in stable discovery
+    // order. Done rows stay in place (grayed + struck through) next to the
+    // in-flight ones, so the user watches the pile get ticked off instead of
+    // rows vanishing into the 已处理 tab (which keeps the session archive).
+    const ordered = view === "done" ? doneRows : findings;
     card.innerHTML = `
       <div class="hd">${icon("shield-alert", "var(--brand)", 16)}
         <span>${
@@ -789,7 +792,7 @@ export function createBubble(
       </div>
       ${batchTouched ? renderProgress(s) : ""}
       <div class="queue-table">
-        ${ordered.length ? "" : `<div class="queue-empty">${icon("shield-check", "var(--safe)", 13)}<span>${findings.length ? "本页命中已全部处理" : "本页暂无新命中"} · 点「已处理」查看记录</span></div>`}
+        ${ordered.length ? "" : `<div class="queue-empty">${icon("shield-check", "var(--safe)", 13)}<span>本页暂无新命中 · 点「已处理」查看记录</span></div>`}
         ${ordered
           .map((f) => {
             const m = LABEL[f.verdict.label];
@@ -806,10 +809,13 @@ export function createBubble(
             const isNew = !seenRows.has(id);
             seenRows.add(id);
             const st = stateOf(f);
+            const justDone = st === "done" && !doneSeen.has(id);
+            if (st === "done") doneSeen.add(id);
             const rowCls = [
               "qrow",
               isNew ? "new" : "",
               st === "processing" ? "active" : st === "pending" ? "" : st,
+              justDone ? "flip" : "",
             ]
               .filter(Boolean)
               .join(" ");
@@ -929,6 +935,10 @@ export function createBubble(
         if (f && selectable(f)) startBatch([rowKey(f)]);
       });
     });
+    // Keep the row currently being processed visible as the batch marches
+    // down the (now full-length) checklist inside the scrollable table.
+    if (view === "queue")
+      card.querySelector(".qrow.active")?.scrollIntoView({ block: "nearest" });
     const b = card.querySelector<HTMLButtonElement>("[data-run]");
     b?.addEventListener("click", () => {
       b.disabled = true;
@@ -1003,6 +1013,7 @@ export function createBubble(
       for (const k of [...rowState.keys()]) if (!live.has(k)) rowState.delete(k);
       for (const k of [...deselected]) if (!live.has(k)) deselected.delete(k);
       for (const k of [...seenRows]) if (!live.has(k)) seenRows.delete(k);
+      for (const k of [...doneSeen]) if (!live.has(k)) doneSeen.delete(k);
       for (const k of [...autoRows]) if (!live.has(k)) autoRows.delete(k);
       for (const k of [...autoVerbs.keys()]) if (!live.has(k)) autoVerbs.delete(k);
       root.style.display = "";
@@ -1037,6 +1048,7 @@ export function createBubble(
       for (const k of [...autoRows]) if (!archivedKeys.has(k)) autoRows.delete(k);
       for (const k of [...autoVerbs.keys()]) if (!archivedKeys.has(k)) autoVerbs.delete(k);
       for (const k of [...seenRows]) if (!archivedKeys.has(k)) seenRows.delete(k);
+      for (const k of [...doneSeen]) if (!archivedKeys.has(k)) doneSeen.delete(k);
       deselected.clear();
       view = "queue";
       collapse();
