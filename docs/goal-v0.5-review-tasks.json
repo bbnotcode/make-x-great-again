@@ -79,7 +79,14 @@
       "id": "edge-bundle",
       "task": "Split public and admin routes so public visitors do not download the full admin/chart bundle",
       "verify": "Production build has route-level chunks and the initial public chunk is below the current 864.14 kB baseline",
-      "passes": false
+      "passes": true,
+      "evidence": [
+        "Initial app chunk: 233.34 kB raw / 74.95 kB gzip (baseline 864.14 / 263.57 kB)",
+        "List route adds only 10.61 kB raw across ListPage + publicApi chunks",
+        "AdminPage is isolated to 184.12 kB raw / 54.01 kB gzip",
+        "LandingPage charts are isolated to 367.38 kB raw / 110.61 kB gzip",
+        "Vite production build no longer emits the 500 kB chunk warning"
+      ]
     },
     {
       "id": "ux-accessibility",
@@ -132,10 +139,10 @@
       "impact": "Resolved with all-or-nothing schema validation and bounded response parsing"
     },
     {
-      "severity": "medium",
+      "severity": "resolved-medium",
       "area": "performance",
       "evidence": "edge app production build emits one 864.14 kB JavaScript chunk (263.57 kB gzip) and Vite warns above 500 kB",
-      "impact": "Public landing/list visitors pay for admin and chart code they do not need"
+      "impact": "Resolved with route-level chunks; list visitors no longer download landing charts or admin code"
     },
     {
       "severity": "medium",
