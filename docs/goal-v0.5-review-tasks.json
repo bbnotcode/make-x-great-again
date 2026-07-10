@@ -43,7 +43,13 @@
       "id": "hono-security",
       "task": "Upgrade the vulnerable Hono production dependency and assess advisory applicability",
       "verify": "Production npm audit reports no high/critical findings and all edge checks pass",
-      "passes": false
+      "passes": true,
+      "evidence": [
+        "Hono upgraded from 4.12.19 to 4.12.29 (advisories fixed at 4.12.25)",
+        "Production npm audit: 0 vulnerabilities",
+        "Edge tests: 42 passed, 0 failed",
+        "Worker and React app type checks plus production app build: passed"
+      ]
     },
     {
       "id": "artifact-validation",
@@ -84,7 +90,7 @@
   ],
   "findings": [
     {
-      "severity": "medium",
+      "severity": "resolved-medium",
       "area": "test-infrastructure",
       "evidence": "The whitelist-request MockDB recognized the retired single-JOIN SQL shape but not the production two-query enrichment path",
       "impact": "The stale test double produced a false regression signal and stopped the complete Edge suite"
@@ -92,8 +98,8 @@
     {
       "severity": "resolved-high",
       "area": "security",
-      "evidence": "services/edge/package-lock.json resolves hono 4.6.x; npm audit reports GHSA-88fw-hqm2-52qc and related advisories, fixed in 4.12.25",
-      "impact": "The production Worker has a directly vulnerable framework dependency; exact route applicability still needs code-level confirmation"
+      "evidence": "services/edge resolves Hono 4.12.29; npm audit --omit=dev reports zero vulnerabilities",
+      "impact": "Resolved by upgrading beyond the 4.12.25 advisory fix boundary"
     },
     {
       "severity": "high",
@@ -102,13 +108,13 @@
       "impact": "Any same-origin script injection or compromised asset can exfiltrate a long-lived administrator credential"
     },
     {
-      "severity": "high",
+      "severity": "resolved-high",
       "area": "product",
       "evidence": "docs/ARCHITECTURE.md says v0.5 makes zero network requests and never calls X APIs, while extension/lib/list-sync.ts performs runtime downloads and extension/lib/x-action.ts supports opt-in X requests",
       "impact": "Resolved by documenting runtime list downloads, optional X actions, GitHub Device Flow, and whitelist submissions"
     },
     {
-      "severity": "resolved-medium",
+      "severity": "medium",
       "area": "security",
       "evidence": "extension/lib/list-sync.ts casts untrusted JSON entries and rules after only checking that they are arrays",
       "impact": "A malformed or compromised artifact can poison local state or feed invalid rules into detection"
@@ -126,7 +132,7 @@
       "impact": "Screen-reader users cannot reliably identify search, token, and application-note fields"
     },
     {
-      "severity": "medium",
+      "severity": "resolved-medium",
       "area": "release",
       "evidence": "The extension manifest source and lockfile now both report 0.5.0; root CLI and Edge service keep independent package versions",
       "impact": "Resolved for the browser-extension release artifact"
