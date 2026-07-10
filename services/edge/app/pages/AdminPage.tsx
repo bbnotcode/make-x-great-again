@@ -28,7 +28,7 @@ function Gate({ onUnlock }: { onUnlock: () => void }) {
         <h2 className="text-[17px] font-semibold">需要维护者令牌</h2>
         <p className="mb-5 mt-2 text-[13px] leading-relaxed text-muted-foreground">
           把 <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">ADMIN_TOKEN</code>{" "}
-          粘进来，仅在本浏览器 localStorage 保存。
+          粘进来，仅在当前标签页会话中保存；关闭标签页后自动清除。
         </p>
         <form
           className="flex gap-2"

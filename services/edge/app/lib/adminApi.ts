@@ -1,24 +1,33 @@
 // Admin API client. Mirrors the endpoints the legacy console used; the
-// ADMIN_TOKEN lives in localStorage under the same key (xss_admin) so an
-// already-unlocked maintainer carries over.
+// ADMIN_TOKEN is tab-scoped: a closed tab must not leave a reusable admin
+// credential on disk. Every access also removes the legacy localStorage copy.
 
 const TOKEN_KEY = "xss_admin";
 
-export function getToken(): string {
+function removeLegacyPersistentToken() {
   try {
-    return localStorage.getItem(TOKEN_KEY) || "";
+    localStorage.removeItem(TOKEN_KEY);
+  } catch {}
+}
+
+export function getToken(): string {
+  removeLegacyPersistentToken();
+  try {
+    return sessionStorage.getItem(TOKEN_KEY) || "";
   } catch {
     return "";
   }
 }
 export function setToken(t: string) {
+  removeLegacyPersistentToken();
   try {
-    localStorage.setItem(TOKEN_KEY, t);
+    sessionStorage.setItem(TOKEN_KEY, t);
   } catch {}
 }
 export function clearToken() {
+  removeLegacyPersistentToken();
   try {
-    localStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(TOKEN_KEY);
   } catch {}
 }
 

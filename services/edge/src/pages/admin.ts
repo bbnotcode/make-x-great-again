@@ -2,8 +2,8 @@ import { CSS } from "../_generated-css";
 // Maintainer-only admin console. Self-contained — shares only design
 // tokens with the public pages. base-ui inspired: monochrome canvas,
 // neutral borders, accent reserved for state, sharp corners.
-// Lives under /admin and authenticates with ADMIN_TOKEN (localStorage,
-// never ships in the consumer extension build).
+// Lives under /admin.legacy and authenticates with a tab-scoped ADMIN_TOKEN
+// (sessionStorage, never ships in the consumer extension build).
 // Theme: dark + light, picks system pref by default, overridable via the
 // theme toggle in the bar (state persisted in localStorage as `mxga_theme`).
 import { BRAND } from "../brand";
@@ -21,7 +21,8 @@ const THEME_TOGGLE_JS = `window.__mxgaTheme=function(){var d=document.documentEl
 
 const SCRIPT = String.raw`
 (function(){
-  var TOK=localStorage.getItem('xss_admin')||'';
+  try{localStorage.removeItem('xss_admin')}catch(e){}
+  var TOK=sessionStorage.getItem('xss_admin')||'';
   var VIEW='queue';
   var queue=[];
   var queueCursor=null;
@@ -318,7 +319,7 @@ const SCRIPT = String.raw`
     $('app').innerHTML='<div class="locked"><div class="card">'
       +'<div class="lock">'+ ${JSON.stringify(LOCK_SVG)} +'</div>'
       +'<h2>需要维护者令牌</h2>'
-      +'<p>把 <code style="background:var(--card-hi);padding:1px 6px;border-radius:var(--r-sm);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--fg)">ADMIN_TOKEN</code> 粘进来，仅在本浏览器 localStorage 保存。</p>'
+      +'<p>把 <code style="background:var(--card-hi);padding:1px 6px;border-radius:var(--r-sm);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--fg)">ADMIN_TOKEN</code> 粘进来，仅在当前标签页会话保存，关闭后自动清除。</p>'
       +'<form class="form" onsubmit="event.preventDefault();window.__xss.save()">'
       +'<input id="t" type="password" autocomplete="off" placeholder="xss_…" />'
       +'<button class="btn primary" type="submit">解锁</button>'
@@ -332,7 +333,7 @@ const SCRIPT = String.raw`
   // after every mutating action so the chips stay honest as the queue drains.
   function refreshStats(){
     api('/v1/admin/stats').then(function(r){
-      if(r.status===403){TOK='';localStorage.removeItem('xss_admin');renderLocked();return null}
+      if(r.status===403){TOK='';sessionStorage.removeItem('xss_admin');renderLocked();return null}
       return r.json();
     }).then(function(j){
       if(!j)return;
@@ -352,7 +353,7 @@ const SCRIPT = String.raw`
     setStatus('加载中…');
     api('/v1/admin/queue'+queueQs()).then(function(r){
       if(req!==queueReq)return null;   // superseded by a newer load
-      if(r.status===403){TOK='';localStorage.removeItem('xss_admin');renderLocked();return null}
+      if(r.status===403){TOK='';sessionStorage.removeItem('xss_admin');renderLocked();return null}
       return r.json();
     }).then(function(j){
       // Drop late responses from a sort/filter the user already moved past, so
@@ -797,7 +798,7 @@ const SCRIPT = String.raw`
   function loadRules(){
     setStatus('加载中…');
     api('/v1/admin/keyword-rules').then(function(r){
-      if(r.status===403){TOK='';localStorage.removeItem('xss_admin');renderLocked();return null}
+      if(r.status===403){TOK='';sessionStorage.removeItem('xss_admin');renderLocked();return null}
       return r.json();
     }).then(function(j){
       if(!j)return;
@@ -1059,7 +1060,7 @@ const SCRIPT = String.raw`
     agentSel.clear();lastSelIdxA=-1;
     setStatus('加载中…');
     api('/v1/admin/agent-list?bucket='+encodeURIComponent(bucket)+'&limit=100').then(function(r){
-      if(r.status===403){TOK='';localStorage.removeItem('xss_admin');renderLocked();return null}
+      if(r.status===403){TOK='';sessionStorage.removeItem('xss_admin');renderLocked();return null}
       return r.json();
     }).then(function(j){
       if(!j)return;
@@ -1320,7 +1321,7 @@ const SCRIPT = String.raw`
       logCursor=null;$('lm').addEventListener('click',function(){loadLog(true)})}
     setStatus('加载中…');
     api('/v1/admin/log?limit=50'+(logCursor?'&before='+logCursor:'')).then(function(r){
-      if(r.status===403){TOK='';localStorage.removeItem('xss_admin');renderLocked();return null}
+      if(r.status===403){TOK='';sessionStorage.removeItem('xss_admin');renderLocked();return null}
       return r.json();
     }).then(function(j){
       if(!j)return;
@@ -1347,7 +1348,7 @@ const SCRIPT = String.raw`
     if(!more){whitelist=[];wlCursor=null;wlSel.clear();lastSelIdxW=-1}
     setStatus('加载中…');
     api('/v1/admin/whitelist'+listQs(wlCursor,wlSearch,wlSort)).then(function(r){
-      if(r.status===403){TOK='';localStorage.removeItem('xss_admin');renderLocked();return null}
+      if(r.status===403){TOK='';sessionStorage.removeItem('xss_admin');renderLocked();return null}
       return r.json();
     }).then(function(j){
       if(!j)return;
@@ -1522,7 +1523,7 @@ const SCRIPT = String.raw`
     if(!more){blacklist=[];blCursor=null;blSel.clear()}
     setStatus('加载中…');
     api('/v1/admin/blacklist'+listQs(blCursor,blSearch,blSort)).then(function(r){
-      if(r.status===403){TOK='';localStorage.removeItem('xss_admin');renderLocked();return null}
+      if(r.status===403){TOK='';sessionStorage.removeItem('xss_admin');renderLocked();return null}
       return r.json();
     }).then(function(j){
       if(!j)return;
@@ -1812,7 +1813,7 @@ const SCRIPT = String.raw`
   function save(){
     var t=$('t');if(!t)return;
     var v=t.value.trim();if(!v)return;
-    TOK=v;localStorage.setItem('xss_admin',v);renderShell();
+    TOK=v;try{localStorage.removeItem('xss_admin')}catch(e){}sessionStorage.setItem('xss_admin',v);renderShell();
   }
   function logout(){
     mxModal.confirm({
@@ -1822,7 +1823,7 @@ const SCRIPT = String.raw`
       okVariant:'muted'
     }).then(function(ok){
       if(!ok)return;
-      TOK='';localStorage.removeItem('xss_admin');renderLocked();
+      TOK='';sessionStorage.removeItem('xss_admin');renderLocked();
     });
   }
 

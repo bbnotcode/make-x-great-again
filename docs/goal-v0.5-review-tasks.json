@@ -67,7 +67,13 @@
       "id": "admin-auth-storage",
       "task": "Reduce exposure of the long-lived admin credential currently stored in localStorage",
       "verify": "Credential lifecycle and storage behavior have targeted tests and no token is exposed to persistent page JavaScript storage",
-      "passes": false
+      "passes": true,
+      "evidence": [
+        "ADMIN_TOKEN now uses tab-scoped sessionStorage in both React and legacy admin consoles",
+        "Every read/write clears the legacy localStorage key",
+        "Targeted token lifecycle test passed",
+        "Complete Edge suite, both type checks, and production app build passed"
+      ]
     },
     {
       "id": "edge-bundle",
@@ -108,10 +114,10 @@
       "impact": "Resolved by upgrading beyond the 4.12.25 advisory fix boundary"
     },
     {
-      "severity": "high",
+      "severity": "resolved-high",
       "area": "security",
       "evidence": "services/edge/app/lib/adminApi.ts:5-21 persists ADMIN_TOKEN in localStorage",
-      "impact": "Any same-origin script injection or compromised asset can exfiltrate a long-lived administrator credential"
+      "impact": "Resolved by tab-scoped session storage and automatic removal of legacy persistent copies"
     },
     {
       "severity": "resolved-high",
