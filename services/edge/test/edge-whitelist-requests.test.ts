@@ -44,6 +44,7 @@ interface Account {
   reasons?: string | null;
   signals_hash?: string | null;
   last_scored?: number;
+  category?: string | null;
 }
 
 interface WhitelistRequest {
@@ -132,24 +133,27 @@ class MockStmt implements D1PreparedStatement {
   }
 
   async all<T>(): Promise<{ results?: T[]; meta?: { changes?: number } }> {
-    if (this.sql.includes("FROM whitelist_requests wr")) {
+    if (this.sql.includes("FROM whitelist_requests")) {
       const [status, status2, limit] = this.args as [string, string, number];
       void status2;
       const rows = this.db.whitelistRequests
         .filter((r) => status === "all" || r.status === status)
         .sort((a, b) => b.id - a.id)
-        .slice(0, limit)
-        .map((r) => {
-          const acc =
-            this.db.accounts.find((a) => r.x_user_id !== null && a.x_user_id === r.x_user_id) ??
-            this.db.accounts.find((a) => a.handle.toLowerCase() === r.handle.toLowerCase());
-          return {
-            ...r,
-            account_status: acc?.status ?? null,
-            account_verdict_label: acc?.verdict_label ?? null,
-            account_category: null,
-          };
-        });
+        .slice(0, limit);
+      return { results: rows as T[] };
+    }
+    if (this.sql.includes("FROM accounts WHERE lower(handle) IN")) {
+      const handles = new Set(this.args.map((v) => String(v).toLowerCase()));
+      const rows = this.db.accounts
+        .filter((a) => handles.has(a.handle.toLowerCase()))
+        .map((a) => ({
+          x_user_id: a.x_user_id,
+          h: a.handle.toLowerCase(),
+          status: a.status,
+          verdict_label: a.verdict_label,
+          category: a.category ?? null,
+          last_scored: a.last_scored ?? 0,
+        }));
       return { results: rows as T[] };
     }
     return { results: [] };
