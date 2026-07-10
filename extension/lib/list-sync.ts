@@ -51,6 +51,147 @@ interface LiteArtifact {
   rules?: unknown;
 }
 
+const MAX_LITE_BYTES = 25 * 1024 * 1024;
+const MAX_WHITELIST_BYTES = 2 * 1024 * 1024;
+const MAX_META_BYTES = 64 * 1024;
+const MAX_LIST_ENTRIES = 250_000;
+const MAX_RULES = 10_000;
+const HANDLE_RE = /^[A-Za-z0-9_]{1,15}$/;
+const USER_ID_RE = /^\d{1,32}$/;
+const ENTRY_CODE_RE = /^[ps][pcgrmo](?:[ha])?$/;
+const RULE_FIELD_RE = /^[hdbta]$/;
+const RULE_CODE_RE = /^[ps][pcgrmo]$/;
+const ARTIFACT_PATH_RE = /^\/v1\/artifacts\/[A-Za-z0-9._-]+$/;
+
+type ValidationResult<T> = { ok: true; value: T } | { ok: false; error: string };
+
+function validIdentity(uid: unknown, handle: unknown): boolean {
+  return (
+    typeof uid === "string" &&
+    (uid === "" || USER_ID_RE.test(uid)) &&
+    typeof handle === "string" &&
+    HANDLE_RE.test(handle) &&
+    (uid !== "" || handle !== "")
+  );
+}
+
+/** Parse the untrusted lite artifact as an all-or-nothing contract. */
+export function validateLiteArtifact(raw: unknown): ValidationResult<{
+  version?: string;
+  entries: LiteRow[];
+  rules?: [string, string, string][];
+}> {
+  if (!raw || typeof raw !== "object") return { ok: false, error: "artifact is not an object" };
+  const lite = raw as LiteArtifact;
+  if (lite.schema !== 2 || !Array.isArray(lite.entries)) {
+    return { ok: false, error: "unexpected lite schema" };
+  }
+  if (lite.entries.length > MAX_LIST_ENTRIES) return { ok: false, error: "too many entries" };
+  if (
+    lite.version !== undefined &&
+    (typeof lite.version !== "string" ||
+      lite.version.length < 1 ||
+      lite.version.length > 128 ||
+      !/^[A-Za-z0-9._-]+$/.test(lite.version))
+  ) {
+    return { ok: false, error: "invalid version" };
+  }
+  if (
+    lite.count !== undefined &&
+    (!Number.isSafeInteger(lite.count) || lite.count !== lite.entries.length)
+  ) {
+    return { ok: false, error: "entry count mismatch" };
+  }
+  const entries: LiteRow[] = [];
+  for (const row of lite.entries) {
+    if (
+      !Array.isArray(row) ||
+      row.length !== 3 ||
+      !validIdentity(row[0], row[1]) ||
+      typeof row[2] !== "string" ||
+      !ENTRY_CODE_RE.test(row[2])
+    ) {
+      return { ok: false, error: "invalid entry row" };
+    }
+    entries.push([row[0] as string, row[1] as string, row[2] as string]);
+  }
+  let rules: [string, string, string][] | undefined;
+  if (lite.rules !== undefined) {
+    if (!Array.isArray(lite.rules) || lite.rules.length > MAX_RULES) {
+      return { ok: false, error: "invalid rules collection" };
+    }
+    rules = [];
+    for (const row of lite.rules) {
+      if (
+        !Array.isArray(row) ||
+        row.length !== 3 ||
+        typeof row[0] !== "string" ||
+        row[0].trim().length < 1 ||
+        row[0].length > 200 ||
+        typeof row[1] !== "string" ||
+        !RULE_FIELD_RE.test(row[1]) ||
+        typeof row[2] !== "string" ||
+        !RULE_CODE_RE.test(row[2])
+      ) {
+        return { ok: false, error: "invalid rule row" };
+      }
+      rules.push([row[0], row[1], row[2]]);
+    }
+  }
+  return { ok: true, value: { version: lite.version, entries, rules } };
+}
+
+export function validateWhitelist(raw: unknown): ValidationResult<[string, string][]> {
+  if (!raw || typeof raw !== "object") return { ok: false, error: "whitelist is not an object" };
+  const list = (raw as { list?: unknown }).list;
+  if (!Array.isArray(list) || list.length > MAX_LIST_ENTRIES) {
+    return { ok: false, error: "invalid whitelist collection" };
+  }
+  const entries: [string, string][] = [];
+  for (const row of list) {
+    if (!row || typeof row !== "object") return { ok: false, error: "invalid whitelist row" };
+    const { x_user_id: rawUid = "", handle } = row as {
+      x_user_id?: unknown;
+      handle?: unknown;
+    };
+    const uid = rawUid == null ? "" : rawUid;
+    if (!validIdentity(uid, handle)) return { ok: false, error: "invalid whitelist identity" };
+    entries.push([uid as string, handle as string]);
+  }
+  return { ok: true, value: entries };
+}
+
+/** Buffer only bounded JSON responses; decompressed bytes count toward the cap. */
+export async function readJsonBounded(response: Response, maxBytes: number): Promise<unknown> {
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) throw new Error("response too large");
+  if (!response.body) {
+    const text = await response.text();
+    if (new TextEncoder().encode(text).byteLength > maxBytes) throw new Error("response too large");
+    return JSON.parse(text);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let size = 0;
+  let text = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) {
+        await reader.cancel();
+        throw new Error("response too large");
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+    return JSON.parse(text);
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export async function getStoredList(): Promise<StoredList | null> {
   try {
     const got = await chrome.storage.local.get(LIST_KEY);
@@ -102,11 +243,9 @@ async function syncWhitelist(base: string): Promise<number | undefined> {
   try {
     const res = await fetch(`${base}/v1/whitelist`, { cache: "no-cache" });
     if (!res.ok) return undefined;
-    const j = (await res.json()) as { list?: { x_user_id?: string | null; handle?: string }[] };
-    if (!Array.isArray(j.list)) return undefined;
-    const entries: [string, string][] = j.list
-      .filter((r) => r && typeof r.handle === "string")
-      .map((r) => [r.x_user_id ?? "", r.handle as string]);
+    const validated = validateWhitelist(await readJsonBounded(res, MAX_WHITELIST_BYTES));
+    if (!validated.ok) return undefined;
+    const entries = validated.value;
     const next: StoredWhitelist = { fetchedAt: Date.now(), count: entries.length, entries };
     await chrome.storage.local.set({ [WL_KEY]: next });
     return entries.length;
@@ -125,9 +264,11 @@ async function doSync(force: boolean): Promise<SyncResult> {
 
     const metaRes = await fetch(`${base}/v1/list/meta`, { cache: "no-cache" });
     if (!metaRes.ok) return { updated: false, white, error: `meta ${metaRes.status}` };
-    const meta = (await metaRes.json()) as ListMeta;
+    const meta = (await readJsonBounded(metaRes, MAX_META_BYTES)) as ListMeta;
     const litePath = meta.artifacts?.lite;
-    if (!litePath) return { updated: false, white, error: "no lite artifact advertised" };
+    if (!litePath || !ARTIFACT_PATH_RE.test(litePath)) {
+      return { updated: false, white, error: "invalid lite artifact path" };
+    }
 
     const stored = await getStoredList();
     if (!force && stored && meta.version && stored.version === meta.version) {
@@ -136,21 +277,19 @@ async function doSync(force: boolean): Promise<SyncResult> {
 
     const liteRes = await fetch(`${base}${litePath}`);
     if (!liteRes.ok) return { updated: false, white, error: `lite ${liteRes.status}` };
-    const lite = (await liteRes.json()) as LiteArtifact;
-    if (lite.schema !== 2 || !Array.isArray(lite.entries)) {
-      return { updated: false, white, error: "unexpected lite schema" };
-    }
-    const entries = lite.entries as LiteRow[];
+    const validated = validateLiteArtifact(await readJsonBounded(liteRes, MAX_LITE_BYTES));
+    if (!validated.ok) return { updated: false, white, error: validated.error };
+    const { entries, rules, version } = validated.value;
     if (entries.length < MIN_SANE_ENTRIES) {
       return { updated: false, white, error: `implausibly small list (${entries.length})` };
     }
 
     const next: StoredList = {
-      version: lite.version ?? meta.version ?? `n${entries.length}`,
+      version: version ?? meta.version ?? `n${entries.length}`,
       fetchedAt: Date.now(),
       count: entries.length,
       entries,
-      ...(Array.isArray(lite.rules) ? { rules: lite.rules as [string, string, string][] } : {}),
+      ...(rules ? { rules } : {}),
     };
     await chrome.storage.local.set({ [LIST_KEY]: next });
     return { updated: true, version: next.version, black: next.count, white };

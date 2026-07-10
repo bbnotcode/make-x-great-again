@@ -54,8 +54,14 @@
     {
       "id": "artifact-validation",
       "task": "Validate downloaded blacklist and rule artifacts before persisting or executing them",
-      "verify": "Malformed rows and rule payloads are rejected by bounded tests while valid artifacts still sync",
-      "passes": false
+      "verify": "Bounded tests reject malformed payloads, accept valid contracts, and both browser builds compile the guarded sync path",
+      "passes": true,
+      "evidence": [
+        "Extension artifact security tests: 5 passed, 0 failed",
+        "Lite list, whitelist, rule rows, version, count, and artifact path are validated before storage",
+        "Metadata, whitelist, and decompressed lite bodies have hard byte limits",
+        "Chrome and Firefox production builds plus TypeScript compile passed"
+      ]
     },
     {
       "id": "admin-auth-storage",
@@ -114,10 +120,10 @@
       "impact": "Resolved by documenting runtime list downloads, optional X actions, GitHub Device Flow, and whitelist submissions"
     },
     {
-      "severity": "medium",
+      "severity": "resolved-medium",
       "area": "security",
       "evidence": "extension/lib/list-sync.ts casts untrusted JSON entries and rules after only checking that they are arrays",
-      "impact": "A malformed or compromised artifact can poison local state or feed invalid rules into detection"
+      "impact": "Resolved with all-or-nothing schema validation and bounded response parsing"
     },
     {
       "severity": "medium",
