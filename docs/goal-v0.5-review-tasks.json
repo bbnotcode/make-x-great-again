@@ -1,0 +1,131 @@
+{
+  "goal": "Upgrade MXGA to 0.5 through a verified product, performance, security, and UX review",
+  "updatedAt": "2026-07-11T00:50:00+08:00",
+  "tasks": [
+    {
+      "id": "baseline-review",
+      "task": "Establish the current baseline and prioritized review backlog",
+      "verify": "Run all existing tests, type checks, production builds, dependency audits, and targeted static review",
+      "passes": true,
+      "evidence": [
+        "root tests: 32 passed, 0 failed",
+        "root, extension, edge, and edge app type checks: passed",
+        "extension production build: passed, 414.14 kB total",
+        "edge tests: 41 passed, 1 failed",
+        "edge app build: passed with an 864.14 kB main chunk warning",
+        "extension production dependency audit: 0 vulnerabilities",
+        "edge production dependency audit: 1 high-severity direct dependency finding"
+      ]
+    },
+    {
+      "id": "product-contract",
+      "task": "Align the shipped 0.5 behavior, privacy promise, documentation, and package versions",
+      "verify": "Version values and user-facing network/action claims agree with the built manifest and runtime code",
+      "passes": false
+    },
+    {
+      "id": "whitelist-regression",
+      "task": "Fix whitelist-request moderation enrichment without changing unrelated query behavior",
+      "verify": "All 42 edge tests pass, including the blacklist-applicant flag test",
+      "passes": false
+    },
+    {
+      "id": "hono-security",
+      "task": "Upgrade the vulnerable Hono production dependency and assess advisory applicability",
+      "verify": "Production npm audit reports no high/critical findings and all edge checks pass",
+      "passes": false
+    },
+    {
+      "id": "artifact-validation",
+      "task": "Validate downloaded blacklist and rule artifacts before persisting or executing them",
+      "verify": "Malformed rows and rule payloads are rejected by bounded tests while valid artifacts still sync",
+      "passes": false
+    },
+    {
+      "id": "admin-auth-storage",
+      "task": "Reduce exposure of the long-lived admin credential currently stored in localStorage",
+      "verify": "Credential lifecycle and storage behavior have targeted tests and no token is exposed to persistent page JavaScript storage",
+      "passes": false
+    },
+    {
+      "id": "edge-bundle",
+      "task": "Split public and admin routes so public visitors do not download the full admin/chart bundle",
+      "verify": "Production build has route-level chunks and the initial public chunk is below the current 864.14 kB baseline",
+      "passes": false
+    },
+    {
+      "id": "ux-accessibility",
+      "task": "Correct verified extension and website accessibility/usability gaps",
+      "verify": "Search, token, and note inputs have programmatic labels; keyboard focus, reduced motion, desktop, mobile, and dark mode are verified with screenshots",
+      "passes": false
+    },
+    {
+      "id": "worker-hardening",
+      "task": "Apply verified Worker production hardening for configuration, logging, and generated binding types",
+      "verify": "Worker config/types validate and targeted tests confirm no behavior regression",
+      "passes": false
+    },
+    {
+      "id": "release-proof",
+      "task": "Run an adversarial final review and produce the 0.5 release proof",
+      "verify": "All tests/builds/audits pass, secrets scan is clean, versions match, and desktop/mobile/dark screenshots exist",
+      "passes": false
+    }
+  ],
+  "findings": [
+    {
+      "severity": "critical",
+      "area": "correctness",
+      "evidence": "services/edge/test/edge-whitelist-requests.test.ts:535 fails: expected one enriched request, received zero",
+      "impact": "Maintainers cannot reliably see whether a whitelist applicant is already publicly blacklisted"
+    },
+    {
+      "severity": "high",
+      "area": "security",
+      "evidence": "services/edge/package-lock.json resolves hono 4.6.x; npm audit reports GHSA-88fw-hqm2-52qc and related advisories, fixed in 4.12.25",
+      "impact": "The production Worker has a directly vulnerable framework dependency; exact route applicability still needs code-level confirmation"
+    },
+    {
+      "severity": "high",
+      "area": "security",
+      "evidence": "services/edge/app/lib/adminApi.ts:5-21 persists ADMIN_TOKEN in localStorage",
+      "impact": "Any same-origin script injection or compromised asset can exfiltrate a long-lived administrator credential"
+    },
+    {
+      "severity": "high",
+      "area": "product",
+      "evidence": "docs/ARCHITECTURE.md says v0.5 makes zero network requests and never calls X APIs, while extension/lib/list-sync.ts performs runtime downloads and extension/lib/x-action.ts supports opt-in X requests",
+      "impact": "Store/privacy messaging can materially misdescribe shipped behavior"
+    },
+    {
+      "severity": "medium",
+      "area": "security",
+      "evidence": "extension/lib/list-sync.ts casts untrusted JSON entries and rules after only checking that they are arrays",
+      "impact": "A malformed or compromised artifact can poison local state or feed invalid rules into detection"
+    },
+    {
+      "severity": "medium",
+      "area": "performance",
+      "evidence": "edge app production build emits one 864.14 kB JavaScript chunk (263.57 kB gzip) and Vite warns above 500 kB",
+      "impact": "Public landing/list visitors pay for admin and chart code they do not need"
+    },
+    {
+      "severity": "medium",
+      "area": "ux",
+      "evidence": "extension/entrypoints/options/App.tsx:554,1182,1209 use placeholder-only inputs without programmatic labels",
+      "impact": "Screen-reader users cannot reliably identify search, token, and application-note fields"
+    },
+    {
+      "severity": "medium",
+      "area": "release",
+      "evidence": "package versions are root 0.0.1, extension 0.5.0, edge 0.1.0",
+      "impact": "Release artifacts and diagnostics do not share a single 0.5 identity"
+    },
+    {
+      "severity": "low",
+      "area": "worker-operations",
+      "evidence": "services/edge/wrangler.toml has no observability block and services/edge/src/index.ts contains unstructured console output",
+      "impact": "Production incidents are harder to query and correlate"
+    }
+  ]
+}
