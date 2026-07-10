@@ -541,6 +541,19 @@ export function createBubble(
   // Card list view: the live queue by default; "done" lists processed rows
   // behind the 已处理 chip so they don't pile up under the progress bar.
   let view: "queue" | "done" = "queue";
+  // Feed ordering: the list reads newest-activity-first (最新处理的在最上).
+  // Every meaningful event on a row — discovered, started processing,
+  // finished/failed — bumps its sequence; the queue sorts descending, so the
+  // action is always at the top of the list without any scroll chasing.
+  const activitySeq = new Map<string, number>();
+  let seqCounter = 0;
+  const bump = (k: string) => activitySeq.set(k, ++seqCounter);
+  const byActivity = (a: Finding, b: Finding) =>
+    (activitySeq.get(rowKey(b)) ?? 0) - (activitySeq.get(rowKey(a)) ?? 0);
+  // Every render rebuilds .queue-table via innerHTML (scrollTop silently
+  // resets to 0 = the newest rows). If the user scrolled down into history,
+  // restore their position instead of yanking them back to the top.
+  let queueScrollTop = 0;
 
   // Must match content.ts keyOf(): userId first, `h:${handle}` fallback.
   const rowKey = (f: Finding) => f.userId || `h:${f.handle}`;
@@ -758,11 +771,11 @@ export function createBubble(
     const archivedRows = archive.filter((a) => !liveKeys.has(rowKey(a)));
     const doneRows = [...findings.filter((f) => stateOf(f) === "done"), ...archivedRows];
     if (view === "done" && !doneRows.length) view = "queue";
-    // Queue view = v0.4-style checklist: EVERY live row in stable discovery
-    // order. Done rows stay in place (grayed + struck through) next to the
-    // in-flight ones, so the user watches the pile get ticked off instead of
-    // rows vanishing into the 已处理 tab (which keeps the session archive).
-    const ordered = view === "done" ? doneRows : findings;
+    // Queue view = live feed: EVERY live row, newest activity first. Done
+    // rows stay in the list (grayed + struck through) next to the in-flight
+    // ones, so the user watches the processed pile grow instead of rows
+    // vanishing into the 已处理 tab (which keeps the session archive).
+    const ordered = (view === "done" ? doneRows : [...findings]).sort(byActivity);
     card.innerHTML = `
       <div class="hd">${icon("shield-alert", "var(--brand)", 16)}
         <span>${
@@ -935,10 +948,21 @@ export function createBubble(
         if (f && selectable(f)) startBatch([rowKey(f)]);
       });
     });
-    // Keep the row currently being processed visible as the batch marches
-    // down the (now full-length) checklist inside the scrollable table.
-    if (view === "queue")
-      card.querySelector(".qrow.active")?.scrollIntoView({ block: "nearest" });
+    // Newest rows render at the top, which is exactly where a rebuilt table
+    // rests (scrollTop 0) — so following the action needs no scrolling at
+    // all. Only restore the position when the user had scrolled down into
+    // history, so re-renders don't yank them back up.
+    const table = card.querySelector<HTMLElement>(".queue-table");
+    if (table && view === "queue") {
+      if (queueScrollTop > 0) table.scrollTop = queueScrollTop;
+      table.addEventListener(
+        "scroll",
+        () => {
+          queueScrollTop = table.scrollTop;
+        },
+        { passive: true },
+      );
+    }
     const b = card.querySelector<HTMLButtonElement>("[data-run]");
     b?.addEventListener("click", () => {
       b.disabled = true;
@@ -956,6 +980,8 @@ export function createBubble(
    *  report advances chips, progress bar and row states in place. */
   function startBatch(keys: string[]) {
     if (!keys.length) return;
+    // Reverse-bump so keys[0] (processed first) lands highest in the feed.
+    for (const k of [...keys].reverse()) bump(k);
     keys.forEach((k, i) => {
       rowState.set(k, i === 0 ? "processing" : "queued");
       deselected.delete(k);
@@ -964,9 +990,13 @@ export function createBubble(
     if (open) renderCard();
     h.onProcess(keys, (key, ok) => {
       rowState.set(key, ok ? "done" : "failed");
+      bump(key);
       // Sequential batch: promote the next queued row to "processing".
       const next = keys.find((k) => rowState.get(k) === "queued");
-      if (next) rowState.set(next, "processing");
+      if (next) {
+        rowState.set(next, "processing");
+        bump(next); // the in-flight row leads the feed
+      }
       renderPill();
       if (open) renderCard();
     });
@@ -1006,6 +1036,11 @@ export function createBubble(
     update(f: Finding[]) {
       const grew = f.length > findings.length;
       if (grew) view = "queue"; // new hits pull focus back to the live queue
+      // Newly discovered rows enter the feed at the top.
+      for (const x of f) {
+        const k = rowKey(x);
+        if (!activitySeq.has(k)) bump(k);
+      }
       findings = f;
       // Prune state for rows that left the page — but keep everything the
       // session archive still renders (its rows read rowState/autoRows too).
@@ -1016,6 +1051,7 @@ export function createBubble(
       for (const k of [...doneSeen]) if (!live.has(k)) doneSeen.delete(k);
       for (const k of [...autoRows]) if (!live.has(k)) autoRows.delete(k);
       for (const k of [...autoVerbs.keys()]) if (!live.has(k)) autoVerbs.delete(k);
+      for (const k of [...activitySeq.keys()]) if (!live.has(k)) activitySeq.delete(k);
       root.style.display = "";
       renderPill();
       if (open) renderCard();
@@ -1049,8 +1085,10 @@ export function createBubble(
       for (const k of [...autoVerbs.keys()]) if (!archivedKeys.has(k)) autoVerbs.delete(k);
       for (const k of [...seenRows]) if (!archivedKeys.has(k)) seenRows.delete(k);
       for (const k of [...doneSeen]) if (!archivedKeys.has(k)) doneSeen.delete(k);
+      for (const k of [...activitySeq.keys()]) if (!archivedKeys.has(k)) activitySeq.delete(k);
       deselected.clear();
       view = "queue";
+      queueScrollTop = 0;
       collapse();
       renderPill();
     },
@@ -1062,6 +1100,7 @@ export function createBubble(
       autoRows.add(key);
       if (verbLabel) autoVerbs.set(key, verbLabel);
       rowState.set(key, st);
+      bump(key); // every auto transition leads the feed
       renderPill();
       if (open) renderCard();
     },
