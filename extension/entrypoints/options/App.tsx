@@ -994,6 +994,15 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
   const ghLogin = async () => {
     setMsg(null);
     try {
+      if (import.meta.env.BROWSER === "firefox") {
+        const dataGranted = await chrome.permissions.request({
+          data_collection: ["authenticationInfo", "personallyIdentifyingInfo"],
+        } as chrome.permissions.Permissions & { data_collection: string[] });
+        if (!dataGranted) {
+          setMsg({ text: "未授权白名单申请所需的数据传输权限。", ok: false });
+          return;
+        }
+      }
       const granted = await chrome.permissions.request({ origins: ["https://github.com/*"] });
       if (!granted) {
         setMsg({ text: "未授权访问 github.com——一键登录需要该权限（仅用于 GitHub 配对登录）。", ok: false });

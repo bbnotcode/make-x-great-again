@@ -41,7 +41,7 @@ X 现在的问题，大家都知道：
 - 算法决定你看到谁，而不是你决定
 - 看一个人聊过什么、最热几条是什么——只能手动翻几十层
 
-**Make X Great Again (MXGA)** 装上之后，内置的社区共建公开黑名单帮你标出这些垃圾号，一键本地隐藏——默认「本地隐藏」模式不调用 X 的任何接口、扩展本身零网络请求；如需更进一步，可在设置里选择用你自己的 X 登录态调用 X 原生静音 / 拉黑（仍不经过我们的服务器、不收集任何数据）。
+**Make X Great Again (MXGA)** 装上之后，定期同步的社区共建公开黑名单帮你标出这些垃圾号，一键本地隐藏——默认「本地隐藏」不调用 X 的任何接口，也不上传浏览或扫描数据；如需更进一步，可在设置里选择用你自己的 X 登录态调用 X 原生静音 / 拉黑（动作仍不经过我们的服务器）。
 
 不收集你的信息，不要注册，源码全开。
 
@@ -49,7 +49,7 @@ X 现在的问题，大家都知道：
 
 | # | 想做的事 | 状态 | 简介 |
 |---|---|:---:|---|
-| **01** | **干掉刷评论的垃圾号** | ✅ Live | 扩展内置社区共建的公开黑名单，命中即出徽标，一键本地隐藏（默认仅本地隐藏，可随时取消；也可选用你自己的 X 登录态做原生静音 / 拉黑）。名单由关键词规则 + AI 初筛、维护者人工确认后公开。 |
+| **01** | **干掉刷评论的垃圾号** | ✅ Live | 扩展定时同步社区共建的公开黑名单，命中即出徽标，一键本地隐藏（默认仅本地隐藏，可随时取消；也可选用你自己的 X 登录态做原生静音 / 拉黑）。名单由关键词规则 + AI 初筛、维护者人工确认后公开。 |
 | **02** | **看一眼就知道这个 KOL 靠谱不** | 🚧 计划 | 鼠标停在 @handle 上 → 浮卡：账号年龄、原创比、主题集中度、互动质量 |
 | **03** | **进 profile 自动出摘要** | 🚧 计划 | 「这个人主要谈 A/B/C」「最近一个月最热的 5 条」「最佳互动时段」—— 不用手动翻 |
 | **04** | **让信号穿过算法噪声** | 🚧 计划 | 在推文下提示「你关注的 3 个 KOL 转过 / 评论过」，找回算法之前的发现感 |
@@ -61,12 +61,12 @@ X 现在的问题，大家都知道：
 
 这是已经跑在 [x.zuoluo.tv](https://x.zuoluo.tv) 上的部分。公榜数量会持续变化，实时数据请看 [/list](https://x.zuoluo.tv/list)。
 
-- **内置公开黑名单**：约 4.6 万条 `human_confirmed` 条目直接打包进扩展（仅保留有数字 X ID 的条目，去重、剥离证据文本），加载和命中全部本地完成，**默认模式下扩展运行时零网络请求**
+- **自动同步公开名单**：安装 / 更新后立即下载，此后每 6 小时检查一次；匹配仍在本地完成，请求不会携带页面内容、X 身份、扫描结果或处理记录
 - **本地徽标 + 一键隐藏**：命中名单的账号在推文旁出徽标，点「隐藏」本地隐藏该账号的帖子（5 秒可撤销）——**默认是纯本地隐藏，不调用 X 的任何接口**
 - **三种处理方式（可选）**：设置页「处理方式」里可切换点「隐藏」时的默认行为——**本地隐藏**（默认，零联网，X 无感）/ **X 静音**（用你的 X 登录态调 X 原生静音，单向、对方不知情、关注关系不变）/ **X 拉黑**（X 原生屏蔽，互相看不到、解除关注）。静音 / 拉黑均为可选，且只在切换到该模式时才在运行时申请 x.com 的可选权限；这两种动作经过一个全局限速队列（跨 tab 串行、约 1.2s 间隔 + 抖动、阶段性冷却、429 退避）调用 X 自家接口，不经过我们的服务器，也不收集任何数据
 - **随时取消隐藏**：设置页可查看本地隐藏列表，一键取消隐藏纠正误判（本地隐藏一侧始终可恢复）
 - **误判申诉**：徽标里点「申诉」会打开 GitHub 上的申诉 issue 模板，由维护者人工复核
-- **零数据收集**：默认权限只有 `storage`；x.com 的 host 权限是「可选权限」，只有当你切换到 X 静音 / 拉黑时才在运行时弹窗申请，拒绝则停留在本地模式。无登录、无统计上报；统计数字只存在你本机，任何模式下都不向我们或第三方上传数据
+- **最小数据流**：默认权限为 `storage`、`alarms`、`unlimitedStorage`；x.com 与 GitHub host 权限按功能申请。无统计上报，浏览内容、扫描结果和处理记录只存在本机；GitHub 登录与白名单 API 仅在你主动申请白名单时使用
 - **守门员审核台**（[/admin](https://x.zuoluo.tv/admin)，需要 ADMIN_TOKEN）：待审队列 / 黑名单 / 白名单 / 审计日志 四个 tab，全自定义弹窗
 - **公开公榜**（[/list](https://x.zuoluo.tv/list)）：所有 `human_confirmed` 账号公开可查，含理由 + 举报人数
 - **共建机制（在网站端，不在扩展里）**：举报 / 确认走 [x.zuoluo.tv](https://x.zuoluo.tv) 的 API（GitHub token 验证、加盐指纹存储）；alpha 阶段所有举报先进人工队列。`3 个 ≥90 天 GH 账号 + AI 置信 ≥0.9` 是保留的自动发布治理门槛，目前默认关闭
@@ -154,12 +154,11 @@ npx wrangler secret put ADMIN_TOKEN      # /admin 网关
 
 ```
 src/                  本地 LLM 分类 CLI + node:test 单测（开发用，非生产路径）
-extension/            MV3 浏览器扩展：WXT + React 19 + Tailwind v4（默认零网络请求）
+extension/            MV3 浏览器扩展：WXT + React 19 + Tailwind v4（名单下载、本地匹配）
   entrypoints/
     content.ts        X DOM 的被动观察 + 气泡 UI + 一键隐藏（5 秒可撤销；按处理方式叠加 X 静音/拉黑）
-    background.ts     只回应本地消息（索引健康检查 / 统计），不发任何 fetch
+    background.ts     名单定时同步、GitHub Device Flow、本地健康检查 / 统计
     popup/ options/   React 弹窗 + 设置页（含本地隐藏列表的取消隐藏、处理方式选择）
-  public/blacklist-data.json  打包进扩展的公开黑名单（scripts/compile-blacklist.js 生成）
   lib/                cache / blocklist / local-index / detect / stats / x-action（X 静音/拉黑限速队列）
 services/edge/        Cloudflare Worker（Hono）+ D1（xss-db）
   src/index.ts        /v1/* API + scheduled cron + Env 类型
@@ -186,11 +185,11 @@ CONTRIBUTING.md       贡献指南
 ## 当前进度
 
 **v0.5.0**（最新，2026-06-10）—— 被动本地优先 + 可选 X 原生动作
-- **默认零网络请求**：公开黑名单直接打包进扩展（约 4.6 万条，仅保留有数字 X ID 的条目），命中、统计全部本地完成；移除 GitHub 登录、MAIN-world 脚本和向服务端的一切 fetch
+- **名单下载、本地匹配**：公开黑名单与白名单由后台定时同步；命中和统计在本地完成，不上传浏览内容、扫描结果或处理记录
 - **处理方式三选一**：点「隐藏」默认仅**本地隐藏**（display:none + 本地隐藏列表，零联网，可随时取消）；可选 **X 静音** / **X 拉黑**——用你自己的 X 登录态调用 X 自家接口（`mutes/users/create.json` / `blocks/create.json`），经全局限速队列调度，不经过我们的服务器
-- **权限按需申请**：默认权限仍只有 `storage`；x.com 的 host 权限改为「可选权限」，仅在你切换到 X 静音 / 拉黑时由 `chrome.permissions.request` 在运行时申请，拒绝则停留在本地模式
+- **权限分层**：默认权限为 `storage`、`alarms`、`unlimitedStorage`；x.com 与 GitHub host 权限仅在启用对应功能时申请
 - **误判申诉**：改为打开 GitHub 申诉 issue 模板，不再向服务端 POST
-- **零数据收集不变**：任何模式都不向我们或第三方上传数据；Firefox 保留 `data_collection_permissions: none`（静音 / 拉黑是你用自己的 X 账号经 X 接口操作，不构成数据收集）
+- **白名单自助申请**：可选 GitHub Device Flow 验证账号年龄，并向服务端提交自己的公开 X handle 与可选附言；完整数据流见隐私声明
 - **服务端加固**：admin 鉴权 timing-safe、`/v1/classify` 与 `/v1/appeal` 限流、cron 拆分（R2 工件每 10 分钟 / GitHub 镜像每 6 小时）、举报人只存加盐指纹（无盐则 fail-closed）
 
 **v0.4.0**（2026-05-28）
@@ -239,11 +238,11 @@ CONTRIBUTING.md       贡献指南
 
 | 层 | 选型 | 备注 |
 |---|---|---|
-| 扩展 | WXT 0.20 · React 19 · Tailwind v4 · Shadow DOM · Chrome + Firefox MV3 | content-script 用 Shadow DOM 隔离样式，不污染 X；同一套代码出 Chrome / Firefox 两个产物；默认模式零网络请求，名单随包内置；可选 X 静音/拉黑用 x.com 可选权限调 X 自家接口 |
+| 扩展 | WXT 0.20 · React 19 · Tailwind v4 · Shadow DOM · Chrome + Firefox MV3 | content-script 用 Shadow DOM 隔离样式，不污染 X；同一套代码出 Chrome / Firefox 两个产物；后台同步公开名单、本地匹配；可选 X 静音/拉黑用 x.com 可选权限调 X 自家接口 |
 | 边缘 | Cloudflare Worker · Hono · D1 SQLite · R2 | 单 region，custom domain `x.zuoluo.tv` |
 | LLM | 任何 OpenAI 兼容 `/chat/completions` | 仅靠 system prompt 约束，不微调；只在服务端策展管线使用 |
 | 身份 | GitHub token 验证（仅网站端举报/共建流程） | 扩展无任何登录；X 静音/拉黑复用你浏览器已有的 X 登录态，不读取也不上传该凭据；服务端只存加盐 HMAC 指纹 |
-| 同步 | Workers Cron：`*/10 * * * *` 发布 R2 工件 · `0 */6 * * *` 镜像 data/ 仓库 | 扩展端名单随扩展包内置，无运行时同步 |
+| 同步 | Workers Cron：`*/10 * * * *` 发布 R2 工件 · `0 */6 * * *` 镜像 data/ 仓库 | 扩展安装/更新后拉取，之后每 6 小时检查名单版本 |
 
 更细的架构与决策记录在 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)。
 

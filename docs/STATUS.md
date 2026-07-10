@@ -43,22 +43,22 @@ toolchain** for the classifier.
 
 | 组件 | 作用 | 栈 | 状态 |
 |---|---|---|---|
-| `extension/` | 消费端 MV3 扩展（检测/本地隐藏/面板） | WXT, React, Shadow DOM | 可用（v0.5.0：纯被动消费版 — 名单随包分发 + 本地隐藏，零网络请求，无 GitHub 登录） |
+| `extension/` | 消费端 MV3 扩展（检测/本地隐藏/面板） | WXT, React, Shadow DOM | 可用（v0.5.0：公开名单定时同步 + 本地匹配；可选 GitHub 白名单申请） |
 | `services/edge/` | 边缘 API + D1 + /admin + agent staging | Hono, Zod, Wrangler | **已部署**线上 |
 | `src/` | 本地分类器/CLI/旧 localhost 服务 | tsx, Zod, node:test | 早期，部分被 edge 取代 |
 | `docs/` | ARCHITECTURE/UX/FLOW/PRODUCT/MODERATION/MVP/RUNNING/STATUS | — | 较全 |
 
-### 3.1 v0.5.0 变更（2026-06：纯被动消费版）
+### 3.1 v0.5.0 当前实现（2026-07）
 
 | 模块 | 改动 | 说明 |
 |---|---|---|
-| 网络层 | 扩展归零网络请求 | 移除 `/v1/check` 批量查询、`/v1/classify` 调用与 X `blocks/create.json` 静默拉黑；扩展不再调用任何 edge / X 接口。 |
-| 名单分发 | 编译进包 | `extension/public/blacklist-data.json`（约 4.63 万条，仅收录有数字 ID 的条目）随扩展打包，构建时由 `scripts/compile-blacklist.js` 生成；检测全部本地完成，名单更新随发版。 |
+| 网络层 | 每账号请求归零 | 浏览时不调用 `/v1/check` 或 `/v1/classify`；后台只同步共享公开名单，可选功能才调用 X / GitHub / 白名单申请接口。 |
+| 名单分发 | 下载后本地缓存 | 安装 / 更新后立即拉取，此后每 6 小时检查版本；检测全部本地完成，请求不携带浏览上下文或处理记录。 |
 | 拉黑 → 隐藏 | 本地 `display:none` | 命中账号本地隐藏并记入 `chrome.storage`，options 页可取消隐藏；UI 文案统一为「隐藏」。 |
-| GitHub 登录 | 移除 | Device Flow 深链整体下线（后台对 `gh_start`/`gh_poll` 返回 disabled）；上报/共建改由官网（GitHub token 校验）承担。 |
+| GitHub 登录 | 可选 | Device Flow 仅供用户主动发起白名单自助申请，日常防护无需登录。 |
 | MAIN-world 脚本 | 删除 | `entrypoints/x-graphql-main.content.ts` 已删除；`lib/graphql-users.ts` 保留为 `detect.ts` 的解析库（当前无注入数据源）。 |
 | 误判申诉 | GitHub issue 模板 | 「误判?」在新标签页打开 GitHub appeal issue 模板，扩展自身不发请求。 |
-| 权限 | 收敛到 `["storage"]` | 无 host permissions。 |
+| 权限 | 分层申请 | 默认 `storage`、`alarms`、`unlimitedStorage`；X 与 GitHub host 权限按功能在运行时申请。 |
 | 服务端配套 | 限流 + 定时任务拆分 | `/v1/classify` 限 20 次/小时；`/v1/appeal` 限 5 次/小时/IP + 按 handle 每日去重；定时任务拆为 publishArtifacts 每 10 分钟、mirrorToGitHub 每 6 小时。 |
 
 ### 3.2 v0.4.0 增量（2026-05-28，历史）
@@ -102,8 +102,8 @@ Wrangler 4 · @cloudflare/workers-types · @types/chrome。
 |---|---|---|
 | **LLM 推理（外部 OpenAI 兼容供应商）** | 服务端分类 | 第三方、单点、经常性成本；`LLM_API_BASE` / `LLM_API_MODEL` / `LLM_API_KEY` 全部 Worker secret，**不入仓** |
 | **Cloudflare**（Workers + D1） | 边缘服务 / 数据库 | 平台依赖，需要备份和交接预案 |
-| **GitHub OAuth App** | 上报 / 分类鉴权（官网/受信客户端；扩展已无登录） | client_id 公开常量；REQUIRE_AUTH 开启后强依赖 |
-| **X DOM 结构** | 页面解析 | DOM/React fiber 身份与 bio 解析；X 改版即坏，**最脆环节**（v0.5.0 起扩展不再调用 X 任何接口，风险仅剩 DOM 解析） |
+| **GitHub OAuth App** | 上报 / 分类鉴权与扩展白名单自助申请 | client_id 公开常量；Device Flow 仅由用户主动触发 |
+| **X DOM 结构** | 页面解析 | DOM/React fiber 身份与 bio 解析；X 改版即坏，**最脆环节**；可选静音/拉黑还依赖 X 私有网页接口 |
 | **unavatar.io** | 审核台老数据头像兜底 | 第三方，仅维护者侧、非关键 |
 
 ## 5. 数据与存储
