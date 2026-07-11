@@ -2,6 +2,7 @@ name = "x-spam-sentinel-edge"
 main = "src/index.ts"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
+
 # Cloudflare account for the public Worker deployment.
 account_id = "cfab318ffd80d3f933cb6742534e88f3"
 
@@ -61,3 +62,17 @@ crons = ["0 */6 * * *", "*/10 * * * *"]
 [[r2_buckets]]
 binding = "ARTIFACTS"
 bucket_name = "xss-blocklist"
+
+# Persist a bounded sample of structured logs and traces for incident review.
+# This only takes effect on a future deploy; no cloud resource is changed by
+# local builds or this repository change.
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 0.1
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.01

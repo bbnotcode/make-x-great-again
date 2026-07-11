@@ -15,6 +15,7 @@
     "db:init": "wrangler d1 execute xss-db --file=./schema.sql",
     "db:init:remote": "wrangler d1 execute xss-db --remote --file=./schema.sql",
     "typecheck": "tsc --noEmit",
+    "types:check": "wrangler types worker-configuration.d.ts --check",
     "typecheck:app": "tsc -p tsconfig.app.json --noEmit",
     "test": "tsx --test test/**/*.test.ts"
   },
@@ -30,7 +31,6 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241218.0",
     "@tailwindcss/cli": "^4.1.0",
     "@tailwindcss/vite": "^4.3.1",
     "@types/node": "^22.10.2",

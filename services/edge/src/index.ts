@@ -7,13 +7,10 @@ import { adminHtml } from "./pages/admin";
 import { landingHtml } from "./pages/landing";
 import { listHtml } from "./pages/list";
 
-interface Env {
-  DB: D1Database;
-  ARTIFACTS: R2Bucket;
-  // Static-assets binding (wrangler [assets]). Used to fetch the built React
-  // SPA shell (static/app/index.html) so the Worker can serve it for page
-  // routes while keeping ownership of /v1/* and per-route response headers.
-  ASSETS: Fetcher;
+// Runtime bindings are generated from wrangler.toml in
+// worker-configuration.d.ts. Only secrets (which intentionally do not live in
+// config) are declared by hand here.
+interface Secrets {
   // LLM provider config — ALL three are Worker secrets (NOT in wrangler.toml).
   // The provider URL + model name are treated as sensitive (so the project can
   // be open-sourced without doxxing the inference dependency); the API key
@@ -40,7 +37,24 @@ interface Env {
   WHITELIST_SYNC_REPO?: string; // "owner/repo", defaults to foru17/make-x-great-again
 }
 
-type Ctx = Context<{ Bindings: Env }>;
+type Bindings = Env & Secrets;
+type Ctx = Context<{ Bindings: Bindings }>;
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function logError(event: string, error: unknown, details: Record<string, unknown> = {}): void {
+  console.error(JSON.stringify({ event, error: errorMessage(error), ...details }));
+}
+
+function logWarn(event: string, details: Record<string, unknown> = {}): void {
+  console.warn(JSON.stringify({ event, ...details }));
+}
+
+function logInfo(event: string, details: Record<string, unknown> = {}): void {
+  console.log(JSON.stringify({ event, ...details }));
+}
 
 const AUTO_CONF = 0.9; // AI confidence floor for auto-publish
 const AUTO_REPORTERS = 3; // distinct GitHub reporters required for auto-publish
@@ -149,7 +163,7 @@ async function requireReporter(c: Ctx): Promise<Reporter | null> {
   return c.env.REQUIRE_AUTH === "1" ? null : { id: "anon", ageDays: 0 };
 }
 
-async function reporterFingerprint(env: Env, reporterId: string): Promise<string | null> {
+async function reporterFingerprint(env: Bindings, reporterId: string): Promise<string | null> {
   const salt = env.REPORT_SALT?.trim();
   if (!salt) return null;
   const key = await crypto.subtle.importKey(
@@ -419,7 +433,7 @@ interface ChatChoice {
   finish_reason?: string;
 }
 
-async function classify(env: Env, s: Signals): Promise<Verdict> {
+async function classify(env: Bindings, s: Signals): Promise<Verdict> {
   const messages: { role: string; content: string }[] = [
     { role: "system", content: SYSTEM },
     { role: "user", content: userPrompt(s) },
@@ -492,7 +506,7 @@ function reportEvidence(s: Signals): string {
 // gracefully (count 0) when the rate_log table hasn't been migrated yet — a
 // partially-migrated DB must not 500 the public endpoints.
 async function rateLogCount(
-  env: Env,
+  env: Bindings,
   keys: [string, string],
   windowStart: number,
 ): Promise<number> {
@@ -502,14 +516,14 @@ async function rateLogCount(
     .bind(keys[0], keys[1], windowStart)
     .first<{ n: number }>()
     .catch((err) => {
-      console.error("rate_log lookup failed (treating as empty):", err);
+      logError("rate_log.lookup_failed", err, { fallback: "empty" });
       return null;
     });
   return row?.n ?? 0;
 }
 
 async function reportRate(
-  env: Env,
+  env: Bindings,
   aliases: [string, string],
   now: number,
 ): Promise<{ ok: boolean; remaining: number }> {
@@ -520,19 +534,19 @@ async function reportRate(
   };
 }
 
-async function recordReportRate(env: Env, fp: string, now: number): Promise<void> {
+async function recordReportRate(env: Bindings, fp: string, now: number): Promise<void> {
   await env.DB.batch([
     env.DB.prepare("INSERT INTO rate_log (fp, created_at) VALUES (?,?)").bind(fp, now),
     env.DB.prepare("DELETE FROM rate_log WHERE created_at<?").bind(now - REPORT_WINDOW_MS * 2),
   ]).catch((err) => {
     // Same degrade-gracefully contract as rateLogCount — losing one rate
     // sample beats 500ing the public write path on a partially-migrated DB.
-    console.error("rate_log write failed (ignored):", err);
+    logError("rate_log.write_failed", err, { fallback: "ignored" });
   });
 }
 
 async function activeReporterBan(
-  env: Env,
+  env: Bindings,
   aliases: [string, string],
   now: number,
 ): Promise<{ id: number; reporter_fp: string; reason: string | null } | null> {
@@ -550,7 +564,7 @@ async function activeReporterBan(
       .catch((err) => {
         // reporter_bans arrived in a later migration — treat "table missing"
         // as "no ban" instead of 500ing the public report path.
-        console.error("reporter_bans lookup failed (treating as no ban):", err);
+        logError("reporter_bans.lookup_failed", err, { fallback: "not_banned" });
         return null;
       })) ?? null
   );
@@ -560,11 +574,11 @@ async function activeReporterBan(
  *  Always salted (same fail-closed REPORT_SALT contract as reports): the
  *  caller must 503 when this returns null rather than fall back to storing
  *  a raw identity/IP in rate_log. */
-async function throttleFingerprint(env: Env, scope: string, id: string): Promise<string | null> {
+async function throttleFingerprint(env: Bindings, scope: string, id: string): Promise<string | null> {
   return reporterFingerprint(env, `${scope}|${id}`);
 }
 
-async function throttleOk(env: Env, fp: string, now: number, max: number): Promise<boolean> {
+async function throttleOk(env: Bindings, fp: string, now: number, max: number): Promise<boolean> {
   return (await rateLogCount(env, [fp, fp], now - REPORT_WINDOW_MS)) < max;
 }
 
@@ -623,7 +637,7 @@ interface AccountRow {
 }
 
 async function findAccount(
-  env: Env,
+  env: Bindings,
   handle: string,
   uid: string | null,
 ): Promise<AccountRow | null> {
@@ -718,7 +732,7 @@ function safeReasons(raw: string | null | undefined): string[] {
 }
 
 async function writeAccount(
-  env: Env,
+  env: Bindings,
   w: AccountWrite,
   retried = false,
 ): Promise<AccountRow | null> {
@@ -852,7 +866,7 @@ async function writeAccount(
 }
 
 async function updateAccountSignalSnapshot(
-  env: Env,
+  env: Bindings,
   rowid: number,
   snapshot: AccountSignalSnapshot,
 ): Promise<void> {
@@ -895,7 +909,7 @@ async function updateAccountSignalSnapshot(
 //
 // Idempotent: re-running on already-cleaned state writes nothing.
 async function cleanupHandleOnlyAccountDuplicates(
-  env: Env,
+  env: Bindings,
   handle: string,
   keepRowid: number,
 ): Promise<void> {
@@ -958,7 +972,7 @@ async function cleanupHandleOnlyAccountDuplicates(
 }
 
 async function insertReportIfNew(
-  env: Env,
+  env: Bindings,
   s: Signals,
   handle: string,
   uid: string | null,
@@ -1027,7 +1041,7 @@ interface KeywordRule {
 const RULE_CACHE_TTL_MS = 30_000;
 let ruleCache: { at: number; rules: KeywordRule[] } | null = null;
 
-async function getKeywordRules(env: Env): Promise<KeywordRule[]> {
+async function getKeywordRules(env: Bindings): Promise<KeywordRule[]> {
   const now = Date.now();
   if (ruleCache && now - ruleCache.at < RULE_CACHE_TTL_MS) return ruleCache.rules;
   const rows = await env.DB.prepare(
@@ -1085,7 +1099,7 @@ function ruleMatchesText(rule: KeywordRule, s: Signals): boolean {
   }
 }
 
-async function matchKeywordRules(env: Env, s: Signals): Promise<KeywordRule | null> {
+async function matchKeywordRules(env: Bindings, s: Signals): Promise<KeywordRule | null> {
   const rules = await getKeywordRules(env);
   for (const rule of rules) {
     if (ruleMatchesText(rule, s)) return rule;
@@ -1150,7 +1164,7 @@ function extractMentions(s: Signals): string[] {
 // is logged with actor='rule:<id>' so it is traceable and reversible, exactly
 // like the primary rule hit. Returns the list of newly-promoted handles.
 async function autoBlacklistMentions(
-  env: Env,
+  env: Bindings,
   rule: KeywordRule,
   s: Signals,
   now: number,
@@ -1204,7 +1218,7 @@ async function autoBlacklistMentions(
   return promoted;
 }
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<{ Bindings: Bindings }>();
 
 // CORS is scoped to the public read/report surface only. The admin and agent
 // routes are same-origin (the /admin panel) or server-to-server, and must NOT
@@ -1857,7 +1871,7 @@ const ReporterBanBody = z
   });
 
 async function reporterFpForAdmin(
-  env: Env,
+  env: Bindings,
   body: z.infer<typeof ReporterBanBody>,
 ): Promise<string | null> {
   if (body.reporterFp) return body.reporterFp.trim();
@@ -2285,7 +2299,7 @@ function statusForAction(action: DecideAction): string {
 // cleanup), 1 when handle-only. The last statement appended by the caller
 // is always the review_log INSERT.
 function buildDecideStatements(
-  env: Env,
+  env: Bindings,
   handle: string,
   xUserId: string | undefined,
   action: DecideAction,
@@ -2363,7 +2377,7 @@ function buildDecideStatements(
 }
 
 function reviewLogStmt(
-  env: Env,
+  env: Bindings,
   xUserId: string | null,
   handle: string,
   action: string,
@@ -2814,7 +2828,7 @@ const WhitelistAdd = z.object({
 // the admin's explicit action wins. Shared by POST /v1/admin/whitelist and
 // the whitelist-request approve endpoint so the SQL can't drift.
 async function whitelistUpsert(
-  env: Env,
+  env: Bindings,
   uid: string | null,
   handle: string,
   displayName: string,
@@ -3049,7 +3063,7 @@ app.get("/v1/admin/whitelist-requests", async (c) => {
 });
 
 async function pendingWhitelistRequest(
-  env: Env,
+  env: Bindings,
   id: number,
 ): Promise<
   | { row: { id: number; x_user_id: string | null; handle: string; note: string | null; status: string } }
@@ -3269,7 +3283,7 @@ app.get("/v1/list/meta", async (c) => {
       published_at: number;
     }>()
     .catch((err) => {
-      console.error("list/meta: publications lookup failed:", err);
+      logError("list_meta.publications_lookup_failed", err);
       return null;
     });
 
@@ -3548,7 +3562,7 @@ app.get("/admin.legacy", (c) => {
 type MirrorPublishResult = "skipped" | "committed" | "failed" | "disabled";
 
 async function mirrorToGitHub(
-  env: Env,
+  env: Bindings,
 ): Promise<{
   whitelist: MirrorPublishResult;
   blacklist: MirrorPublishResult;
@@ -3643,7 +3657,11 @@ async function mirrorToGitHub(
       }),
     });
     if (!put.ok) {
-      console.warn(`mirror ${path} failed`, put.status, (await put.text()).slice(0, 200));
+      logWarn("mirror.put_failed", {
+        path,
+        status: put.status,
+        response: (await put.text()).slice(0, 200),
+      });
       return "failed";
     }
     return "committed";
@@ -3715,9 +3733,7 @@ async function mirrorToGitHub(
     // Don't silently cap: the published `count` would understate reality, which
     // is exactly the bug this guard prevents. Paginate or move to the Git Data
     // API when this fires.
-    console.warn(
-      `mirror: blacklist export hit the ${BL_EXPORT_LIMIT} cap — true total is higher; file is truncated.`,
-    );
+    logWarn("mirror.blacklist_truncated", { limit: BL_EXPORT_LIMIT });
   }
 
   const whitelist = await publish(
@@ -4104,7 +4120,7 @@ const AgentPromoteBatch = z.object({
 });
 
 function agentPromoteStmts(
-  env: Env,
+  env: Bindings,
   handle: string,
   xUserId: string | undefined,
   target: z.infer<typeof AgentPromoteBody>["target"],
@@ -4248,7 +4264,7 @@ app.post("/v1/admin/sync-mirror", async (c) => {
   return c.json({ ok: true, results });
 });
 
-async function publishArtifacts(env: Env): Promise<void> {
+async function publishArtifacts(env: Bindings): Promise<void> {
   const rows = await env.DB.prepare(
     "SELECT x_user_id, handle, verdict_label, confidence, category, published_at, published_tier FROM accounts WHERE status='human_confirmed' ORDER BY published_at DESC",
   ).all<{
@@ -4442,7 +4458,7 @@ async function publishArtifacts(env: Env): Promise<void> {
 const KEEP_PUBLICATIONS = 24;
 const PRUNE_MAX_DELETE_PER_RUN = 2000;
 
-async function prunePublications(env: Env): Promise<void> {
+async function prunePublications(env: Bindings): Promise<void> {
   // Objects referenced by the newest KEEP_PUBLICATIONS versions — never delete
   // these (the live version is always among them).
   const keep = await env.DB.prepare(
@@ -4482,7 +4498,7 @@ async function prunePublications(env: Env): Promise<void> {
   )
     .bind(KEEP_PUBLICATIONS)
     .run();
-  console.log(`pruned ${batch.length} stale R2 artifacts (kept ${keepSet.size})`);
+  logInfo("artifacts.pruned", { pruned: batch.length, kept: keepSet.size });
 }
 
 // =========================================================================
@@ -4527,7 +4543,7 @@ interface BackfillRow {
   reasons: string | null;
 }
 
-async function backfillCategories(env: Env): Promise<void> {
+async function backfillCategories(env: Bindings): Promise<void> {
   if (!env.LLM_API_BASE || !env.LLM_API_KEY) return;
   // ORDER BY RANDOM(), not rowid: with a deterministic order + temperature 0,
   // a batch whose content makes the model fail (e.g. runaway reasoning →
@@ -4592,10 +4608,12 @@ async function backfillCategories(env: Env): Promise<void> {
                 'Reply with ONLY the compact JSON object {"categories":[{"i":<n>,"c":"<category>"}...]} covering every row — no reasoning, no markdown fences.',
             },
           );
-          if (attempt === 1) console.warn("category backfill parse error", parseErr);
+          if (attempt === 1) {
+            logWarn("category_backfill.parse_failed", { error: errorMessage(parseErr) });
+          }
         }
       } catch (e) {
-        console.warn("category backfill LLM error", e);
+        logError("category_backfill.llm_failed", e);
         break; // network/HTTP failure — skip this batch, try the next one
       }
     }
@@ -4610,33 +4628,36 @@ async function backfillCategories(env: Env): Promise<void> {
         ).bind(a.c, batch[a.i]!.rowid),
       );
     if (updates.length) await env.DB.batch(updates);
-    console.log(`category backfill: labeled ${updates.length}/${batch.length} rows`);
+    logInfo("category_backfill.completed", {
+      labeled: updates.length,
+      batch: batch.length,
+    });
   }
 }
 
 export default {
   fetch: app.fetch,
-  scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): void {
+  scheduled(event: ScheduledController, env: Bindings, ctx: ExecutionContext): void {
     // Dispatch by trigger (must match wrangler.toml [triggers].crons):
     //   "0 */6 * * *"  → GitHub mirror only. Running it on every trigger was
     //                    why the data repo got a sync commit every 10 minutes.
     //   "*/10 * * * *" → R2 artifact publish (cheap, diff-tolerant).
     if (event.cron === "0 */6 * * *") {
-      ctx.waitUntil(mirrorToGitHub(env).catch((e) => console.warn("mirror error", e)));
+      ctx.waitUntil(mirrorToGitHub(env).catch((e) => logError("mirror.failed", e)));
     } else {
       // Publish, then prune old R2 artifacts regardless of publish outcome so
       // the retention sweep always runs (and drains the historical backlog).
       ctx.waitUntil(
         publishArtifacts(env)
-          .catch((e) => console.warn("artifact publish error", e))
+          .catch((e) => logError("artifact_publish.failed", e))
           .then(() => prunePublications(env))
-          .catch((e) => console.warn("artifact prune error", e)),
+          .catch((e) => logError("artifact_prune.failed", e)),
       );
       // Legacy-row category sweep (bounded LLM spend per tick; self-stops
       // once every published spam row carries a category).
       ctx.waitUntil(
-        backfillCategories(env).catch((e) => console.warn("category backfill error", e)),
+        backfillCategories(env).catch((e) => logError("category_backfill.failed", e)),
       );
     }
   },
-};
+} satisfies ExportedHandler<Bindings>;

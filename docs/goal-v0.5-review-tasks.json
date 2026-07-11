@@ -106,7 +106,16 @@
       "id": "worker-hardening",
       "task": "Apply verified Worker production hardening for configuration, logging, and generated binding types",
       "verify": "Worker config/types validate and targeted tests confirm no behavior regression",
-      "passes": false
+      "passes": true,
+      "evidence": [
+        "Wrangler-generated bindings/runtime types are current (--check passed)",
+        "Hand-written Env binding duplication removed; only secret names remain hand-typed",
+        "Exported handler now satisfies ExportedHandler<Bindings> and uses ScheduledController",
+        "Structured JSON logs replace unstructured operational output",
+        "Observability config enables 10% logs and 1% traces on a future deploy",
+        "Wrangler deploy --dry-run passed without changing cloud state",
+        "Edge tests: 43 passed, 0 failed; both type checks and production build passed"
+      ]
     },
     {
       "id": "release-proof",
@@ -165,10 +174,10 @@
       "impact": "Resolved for the browser-extension release artifact"
     },
     {
-      "severity": "low",
+      "severity": "resolved-low",
       "area": "worker-operations",
       "evidence": "services/edge/wrangler.toml has no observability block and services/edge/src/index.ts contains unstructured console output",
-      "impact": "Production incidents are harder to query and correlate"
+      "impact": "Resolved with sampled observability and structured event logs"
     }
   ]
 }
