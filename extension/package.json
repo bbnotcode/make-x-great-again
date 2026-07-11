@@ -29,6 +29,12 @@
     "tailwindcss": "^4.3.0",
     "tsx": "^4.23.0",
     "typescript": "^5.7.2",
-    "wxt": "^0.20.6"
+    "wxt": "^0.20.27"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1",
+    "shell-quote": "^1.10.0",
+    "tmp": "^0.2.7",
+    "uuid": "^11.1.1"
   }
 }

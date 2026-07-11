@@ -1,6 +1,6 @@
 {
   "goal": "Upgrade MXGA to 0.5 through a verified product, performance, security, and UX review",
-  "updatedAt": "2026-07-11T00:50:00+08:00",
+  "updatedAt": "2026-07-11T10:45:00+08:00",
   "tasks": [
     {
       "id": "baseline-review",
@@ -121,7 +121,16 @@
       "id": "release-proof",
       "task": "Run an adversarial final review and produce the 0.5 release proof",
       "verify": "All tests/builds/audits pass, secrets scan is clean, versions match, and desktop/mobile/dark screenshots exist",
-      "passes": false
+      "passes": true,
+      "evidence": [
+        "Root lint and type check passed; root tests: 32 passed, 0 failed",
+        "Extension compile, Chrome/Firefox builds and packages passed; extension tests: 5 passed, 0 failed",
+        "Edge generated types check, Worker/app type checks, CSS/app builds passed; Edge tests: 43 passed, 0 failed",
+        "Root, extension, and Edge complete dependency audits: 0 vulnerabilities",
+        "Chrome package: 148.74 kB; Firefox package: 148.9 kB; Firefox source package: 167.11 kB",
+        "Tracked-source credential scan found no embedded private keys, GitHub tokens, Cloudflare tokens, or admin token assignments",
+        "Desktop light, mobile light, and admin dark screenshots exist and were visually inspected"
+      ]
     }
   ],
   "findings": [

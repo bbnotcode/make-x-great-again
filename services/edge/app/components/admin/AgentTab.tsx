@@ -66,10 +66,10 @@ export function AgentTab({
 
   const load = useCallback(
     async (more: boolean) => {
-      const parts = ["bucket=" + bucket, "limit=100"];
-      if (more && cursor.current) parts.push("before=" + cursor.current);
+      const parts = [`bucket=${bucket}`, "limit=100"];
+      if (more && cursor.current) parts.push(`before=${cursor.current}`);
       try {
-        const j = await api.agentList("?" + parts.join("&"));
+        const j = await api.agentList(`?${parts.join("&")}`);
         cursor.current = j.nextBefore;
         setHasMore(!!j.nextBefore);
         setRows((prev) => (more ? prev.concat(j.list) : j.list));
@@ -109,7 +109,7 @@ export function AgentTab({
     async () => {
       const keysArr = [...sel.sel];
       const ok = await confirm({
-        title: "批量" + label,
+        title: `批量${label}`,
         body: (
           <p>
             对已选 <b>{keysArr.length}</b> 条 agent 决策执行「{label}」？
@@ -145,7 +145,7 @@ export function AgentTab({
               size="sm"
               variant={primary.variant === "destructive" ? "destructive" : "default"}
               className={primary.variant === "success" ? "bg-success text-success-foreground hover:bg-success/90" : undefined}
-              onClick={batch(primary.target, "批量" + primary.label, primary.variant)}
+              onClick={batch(primary.target, `批量${primary.label}`, primary.variant)}
             >
               批量{primary.label}
             </Button>
@@ -184,11 +184,11 @@ export function AgentTab({
               ev = JSON.parse(a.agent_evidence || "{}") || {};
             } catch {}
             const evChips: string[] = [];
-            if (ev.account_age_days != null) evChips.push("账龄 " + ev.account_age_days + "d");
-            if (ev.follower_count != null) evChips.push("粉丝 " + fmtN(ev.follower_count as number));
-            if (ev.posting_rate_per_day != null) evChips.push("日发帖 " + ev.posting_rate_per_day);
+            if (ev.account_age_days != null) evChips.push(`账龄 ${ev.account_age_days}d`);
+            if (ev.follower_count != null) evChips.push(`粉丝 ${fmtN(ev.follower_count as number)}`);
+            if (ev.posting_rate_per_day != null) evChips.push(`日发帖 ${ev.posting_rate_per_day}`);
             if (ev.reply_offtopic_ratio != null)
-              evChips.push("回复跑题率 " + Math.round((ev.reply_offtopic_ratio as number) * 100) + "%");
+              evChips.push(`回复跑题率 ${Math.round((ev.reply_offtopic_ratio as number) * 100)}%`);
             return (
               <AccountRow
                 key={rowKey(a)}

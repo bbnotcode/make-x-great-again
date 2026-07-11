@@ -39,8 +39,8 @@ const j = <T>(url: string) => fetch(url).then((r) => r.json() as Promise<T>);
 
 export const publicApi = {
   meta: () => j<Meta>("/v1/list/meta"),
-  trends: () => j<Trends>("/v1/list/trends?tz=" + encodeURIComponent(new Date().getTimezoneOffset())),
-  list: (qs = "?limit=100") => j<ListResp>("/v1/list" + qs),
+  trends: () => j<Trends>(`/v1/list/trends?tz=${encodeURIComponent(new Date().getTimezoneOffset())}`),
+  list: (qs = "?limit=100") => j<ListResp>(`/v1/list${qs}`),
 };
 
 export const VERDICT_ZH: Record<string, string> = {
@@ -52,5 +52,5 @@ export const VERDICT_ZH: Record<string, string> = {
 };
 
 export function feedKey(r: FeedRow) {
-  return (r.x_user_id || "") + "|" + r.handle;
+  return `${r.x_user_id || ""}|${r.handle}`;
 }

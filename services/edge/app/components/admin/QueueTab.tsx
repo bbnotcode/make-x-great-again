@@ -72,13 +72,13 @@ export function QueueTab({ onAuth, onMutated }: { onAuth: () => void; onMutated:
   const load = useCallback(
     async (more: boolean, f: Filters, so: string) => {
       const parts = ["limit=100"];
-      if (more && cursor.current) parts.push("before=" + cursor.current);
-      if (so) parts.push("sort=" + encodeURIComponent(so));
-      (Object.keys(f) as (keyof Filters)[]).forEach((k) => {
-        if (f[k]) parts.push(k + "=" + encodeURIComponent(f[k]));
-      });
+      if (more && cursor.current) parts.push(`before=${cursor.current}`);
+      if (so) parts.push(`sort=${encodeURIComponent(so)}`);
+      for (const k of Object.keys(f) as (keyof Filters)[]) {
+        if (f[k]) parts.push(`${k}=${encodeURIComponent(f[k])}`);
+      }
       try {
-        const j = await api.queue("?" + parts.join("&"));
+        const j = await api.queue(`?${parts.join("&")}`);
         cursor.current = j.nextBefore;
         setHasMore(!!j.nextBefore);
         setQueue((prev) => (more ? prev.concat(j.queue) : j.queue));
@@ -90,9 +90,9 @@ export function QueueTab({ onAuth, onMutated }: { onAuth: () => void; onMutated:
     [onAuth],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only initial load
   useEffect(() => {
     load(false, EMPTY, "severity");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const apply = (f: Filters, so = sort) => {
@@ -121,7 +121,7 @@ export function QueueTab({ onAuth, onMutated }: { onAuth: () => void; onMutated:
   const batch = (action: string, label: string, variant: "destructive" | "default") => async () => {
     const keysArr = [...sel.sel];
     const ok = await confirm({
-      title: "批量" + label,
+      title: `批量${label}`,
       body: (
         <p>
           确认对已选 <b>{keysArr.length}</b> 条执行「{label}」？写 review_log，不可批量撤回。
@@ -309,12 +309,12 @@ export function QueueTab({ onAuth, onMutated }: { onAuth: () => void; onMutated:
                           按 handle：{a.handle}
                         </DropdownMenuItem>
                         {a.x_user_id && (
-                          <DropdownMenuItem onClick={() => { setAdv(true); apply({ ...EMPTY, uid: a.x_user_id! }); }}>
+                          <DropdownMenuItem onClick={() => { setAdv(true); apply({ ...EMPTY, uid: a.x_user_id ?? "" }); }}>
                             按 UID 前缀：{a.x_user_id}
                           </DropdownMenuItem>
                         )}
                         {a.display_name && (
-                          <DropdownMenuItem onClick={() => { setAdv(true); apply({ ...EMPTY, display_name: a.display_name! }); }}>
+                          <DropdownMenuItem onClick={() => { setAdv(true); apply({ ...EMPTY, display_name: a.display_name ?? "" }); }}>
                             按显示名：{a.display_name}
                           </DropdownMenuItem>
                         )}

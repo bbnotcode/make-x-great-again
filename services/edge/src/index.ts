@@ -1147,8 +1147,11 @@ function extractMentions(s: Signals): string[] {
   const text = [s.triggeringComment ?? "", ...s.recentTweets].join("\n");
   const out = new Set<string>();
   const re = /(?:^|[^A-Za-z0-9_@])@([A-Za-z0-9_]{1,15})\b/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) out.add(m[1].toLowerCase());
+  let match = re.exec(text);
+  while (match !== null) {
+    out.add(match[1].toLowerCase());
+    match = re.exec(text);
+  }
   return [...out];
 }
 
@@ -3493,22 +3496,12 @@ function pageHeaders(c: Ctx, cacheSeconds: number): void {
 const OG_BASE = BRAND.edgeBase;
 function landingHead(): string {
   return (
-    `<title>${BRAND.name} · ${BRAND.tagline}</title>` +
-    `<meta name="description" content="MXGA 是开源 X 扩展：标出广告号和色情引流号，拉黑由你确认。Chrome / Firefox 已上架。">` +
-    `<meta property="og:title" content="${BRAND.name} · ${BRAND.tagline}">` +
-    `<meta property="og:description" content="社区共建的公开黑名单，帮你把 X 上的广告号和色情 bot 标出来。">` +
-    `<meta property="og:type" content="website"><meta property="og:url" content="${OG_BASE}/">` +
-    `<meta property="og:image" content="${OG_BASE}/og.png">` +
-    `<meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="${OG_BASE}/og.png">` +
-    googleAnalyticsHead()
+    `<title>${BRAND.name} · ${BRAND.tagline}</title><meta name="description" content="MXGA 是开源 X 扩展：标出广告号和色情引流号，拉黑由你确认。Chrome / Firefox 已上架。"><meta property="og:title" content="${BRAND.name} · ${BRAND.tagline}"><meta property="og:description" content="社区共建的公开黑名单，帮你把 X 上的广告号和色情 bot 标出来。"><meta property="og:type" content="website"><meta property="og:url" content="${OG_BASE}/"><meta property="og:image" content="${OG_BASE}/og.png"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="${OG_BASE}/og.png">${googleAnalyticsHead()}`
   );
 }
 function listHead(): string {
   return (
-    `<title>公开名单 · ${BRAND.acronym}</title>` +
-    `<meta name="robots" content="noindex,follow">` +
-    `<meta name="description" content="MXGA 已确认的垃圾号公开名单 · AI 初筛，维护者复核。">` +
-    googleAnalyticsHead()
+    `<title>公开名单 · ${BRAND.acronym}</title><meta name="robots" content="noindex,follow"><meta name="description" content="MXGA 已确认的垃圾号公开名单 · AI 初筛，维护者复核。">${googleAnalyticsHead()}`
   );
 }
 
@@ -4625,7 +4618,7 @@ async function backfillCategories(env: Bindings): Promise<void> {
       .map((a) =>
         env.DB.prepare(
           "UPDATE accounts SET category=? WHERE rowid=? AND category IS NULL",
-        ).bind(a.c, batch[a.i]!.rowid),
+        ).bind(a.c, batch[a.i]?.rowid),
       );
     if (updates.length) await env.DB.batch(updates);
     logInfo("category_backfill.completed", {

@@ -77,7 +77,7 @@ function AddRuleDialog({ onAdded }: { onAdded: () => void }) {
         note: note.trim() || undefined,
       });
       if (!j.ok) throw new Error(j.detail || j.error);
-      toast.success("已创建 rule#" + j.id);
+      toast.success(`已创建 rule#${j.id}`);
       setOpen(false);
       setPattern("");
       setNote("");

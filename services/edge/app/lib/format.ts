@@ -14,12 +14,12 @@ export function ago(ms: number | null | undefined): string {
   if (!ms) return "";
   const d = Date.now() - ms;
   const s = Math.round(d / 1000);
-  if (s < 60) return s + "s";
+  if (s < 60) return `${s}s`;
   const m = Math.round(s / 60);
-  if (m < 60) return m + "m";
+  if (m < 60) return `${m}m`;
   const h = Math.round(m / 60);
-  if (h < 24) return h + "h";
-  return Math.round(h / 24) + "d";
+  if (h < 24) return `${h}h`;
+  return `${Math.round(h / 24)}d`;
 }
 
 function ymd(ms: number): string {
@@ -30,12 +30,12 @@ function ymd(ms: number): string {
 }
 
 export function xUrl(handle: string | undefined): string {
-  return "https://x.com/" + encodeURIComponent(handle || "");
+  return `https://x.com/${encodeURIComponent(handle || "")}`;
 }
 
 export function displayName(a: { display_name?: string; handle?: string }): string {
   const n = (a.display_name || "").trim();
-  return n || "@" + (a.handle || "");
+  return n || `@${a.handle || ""}`;
 }
 
 /** Verdict label → Chinese text + the token color used for the row edge/badge. */
@@ -54,12 +54,13 @@ export function verdictZh(label: string | undefined): string {
 /** Tailwind classes for the 4px left edge of a row, by verdict tone. */
 export function edgeClass(label: string | undefined): string {
   const tone = (label && VERDICTS[label]?.tone) || "muted";
-  return {
+  const classes: Record<string, string> = {
     destructive: "before:bg-destructive",
     violet: "before:bg-violet",
     success: "before:bg-success",
     muted: "before:bg-border",
-  }[tone]!;
+  };
+  return classes[tone] ?? classes.muted;
 }
 
 /** Build a "注册 / 粉丝 / 关注" chip list from an account row. */
@@ -77,14 +78,14 @@ export function accountChips(a: AccountLike): { text: string; title: string }[] 
     if (age != null) {
       const base =
         num(a.last_scored) || num(a.published_at) || num(a.agent_at) || Date.now();
-      created = { text: "约 " + ymd(base - age * 86400000), title: `按账龄 ${fmtN(age)} 天估算` };
+      created = { text: `约 ${ymd(base - age * 86400000)}`, title: `按账龄 ${fmtN(age)} 天估算` };
     }
   }
-  if (created?.text) chips.push({ text: "注册 " + created.text, title: created.title });
+  if (created?.text) chips.push({ text: `注册 ${created.text}`, title: created.title });
   const followers = num(a.followers_count);
   const following = num(a.following_count);
-  if (followers != null) chips.push({ text: "粉丝 " + fmtN(followers), title: "被关注人数" });
-  if (following != null) chips.push({ text: "关注 " + fmtN(following), title: "关注人数" });
+  if (followers != null) chips.push({ text: `粉丝 ${fmtN(followers)}`, title: "被关注人数" });
+  if (following != null) chips.push({ text: `关注 ${fmtN(following)}`, title: "关注人数" });
   return chips;
 }
 
@@ -107,10 +108,10 @@ export function actorBadge(
   const kind = i >= 0 ? by.slice(0, i) : by;
   const who = i >= 0 ? by.slice(i + 1) : "";
   if (kind === "human")
-    return { icon: "👤", text: who || "人工", title: "人工决策：" + who, tone: "human" };
+    return { icon: "👤", text: who || "人工", title: `人工决策：${who}`, tone: "human" };
   if (kind === "agent")
-    return { icon: "🤖", text: who || "agent", title: "AI agent 决策：" + who, tone: "agent" };
+    return { icon: "🤖", text: who || "agent", title: `AI agent 决策：${who}`, tone: "agent" };
   if (kind === "rule")
-    return { icon: "🔧", text: "规则#" + who, title: "关键词规则 #" + who, tone: "rule" };
+    return { icon: "🔧", text: `规则#${who}`, title: `关键词规则 #${who}`, tone: "rule" };
   return { icon: "🛠", text: by, title: by, tone: "sys" };
 }

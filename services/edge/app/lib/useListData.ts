@@ -31,9 +31,10 @@ export function useListData(fetcher: Fetcher, initialSort: string, onAuth: () =>
     [fetcher, onAuth],
   );
 
+  // The initial request intentionally runs once; interactive reloads use the latest callback.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only initial load
   useEffect(() => {
     load(false, "", initialSort);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const runSearch = (s: string) => {

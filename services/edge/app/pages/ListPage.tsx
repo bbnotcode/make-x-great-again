@@ -19,14 +19,14 @@ function reasonsTitle(r: FeedRow): string {
   try {
     arr = r.reasons ? (typeof r.reasons === "string" ? JSON.parse(r.reasons) : r.reasons) : [];
   } catch {}
-  return Array.isArray(arr) && arr.length ? "AI 理由：" + arr.join("；") : "";
+  return Array.isArray(arr) && arr.length ? `AI 理由：${arr.join("；")}` : "";
 }
 
 function Row({ r }: { r: FeedRow }) {
   const lbl = r.verdict_label || "uncertain";
   const conf = typeof r.confidence === "number" ? Math.max(0, Math.min(100, Math.round(r.confidence * 100))) : 0;
-  const profile = "https://x.com/" + encodeURIComponent(r.handle);
-  const name = (r.display_name || "").trim() || "@" + r.handle;
+  const profile = `https://x.com/${encodeURIComponent(r.handle)}`;
+  const name = (r.display_name || "").trim() || `@${r.handle}`;
   const reps = r.reporters || 0;
   const evid = (r.evidence_text || "").replace(/\s+/g, " ").trim();
   return (
@@ -58,7 +58,7 @@ function Row({ r }: { r: FeedRow }) {
         <div className="hidden w-20 sm:block">
           <div className="text-right font-mono text-sm font-semibold tabular-nums">{conf}%</div>
           <div className="mt-1 h-1 overflow-hidden rounded-full bg-muted">
-            <i className="block h-full rounded-full bg-foreground/60" style={{ width: conf + "%" }} />
+            <i className="block h-full rounded-full bg-foreground/60" style={{ width: `${conf}%` }} />
           </div>
         </div>
         <a href={profile} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground" aria-label="去 X 主页">
@@ -94,7 +94,7 @@ export function ListPage() {
     const poll = setInterval(async () => {
       if (!latest.current) return;
       try {
-        const j = await publicApi.list("?limit=100&since=" + latest.current);
+        const j = await publicApi.list(`?limit=100&since=${latest.current}`);
         const fresh = j.list || [];
         if (!fresh.length) return;
         setRows((prev) => {
@@ -117,7 +117,7 @@ export function ListPage() {
     if (!oldest) return;
     setLoadingMore(true);
     try {
-      const j = await publicApi.list("?limit=100&before=" + oldest);
+      const j = await publicApi.list(`?limit=100&before=${oldest}`);
       setRows((prev) => {
         const seen = new Set(prev.map(feedKey));
         return prev.concat((j.list || []).filter((r) => !seen.has(feedKey(r))));
@@ -143,7 +143,7 @@ export function ListPage() {
               issue
             </a>
             ，复核后撤下。完整快照每 6h 同步到{" "}
-            <a href={BRAND.repo + "/tree/main/data"} target="_blank" rel="noopener" className="text-info underline">
+            <a href={`${BRAND.repo}/tree/main/data`} target="_blank" rel="noreferrer noopener" className="text-info underline">
               仓库 data/
             </a>
             。
@@ -151,7 +151,7 @@ export function ListPage() {
         </div>
         <div className="mt-4 inline-flex items-center gap-2 text-[12.5px] text-muted-foreground">
           <span className="size-1.5 rounded-full bg-success" />
-          <span dangerouslySetInnerHTML={{ __html: pulse }} />
+          <span>{pulse}</span>
         </div>
       </section>
 

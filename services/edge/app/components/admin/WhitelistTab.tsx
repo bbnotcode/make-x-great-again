@@ -98,10 +98,10 @@ export function WhitelistTab({ onAuth, onMutated }: { onAuth: () => void; onMuta
   const confirm = useConfirm();
   const fetcher = useCallback((cursor: number | null, search: string, sort: string) => {
     const parts = ["limit=100"];
-    if (cursor) parts.push("before=" + cursor);
-    if (search) parts.push("q=" + encodeURIComponent(search));
-    if (sort) parts.push("sort=" + encodeURIComponent(sort));
-    return api.whitelist("?" + parts.join("&"));
+    if (cursor) parts.push(`before=${cursor}`);
+    if (search) parts.push(`q=${encodeURIComponent(search)}`);
+    if (sort) parts.push(`sort=${encodeURIComponent(sort)}`);
+    return api.whitelist(`?${parts.join("&")}`);
   }, []);
   const { list, search, sort, hasMore, runSearch, changeSort, reload, loadMore } = useListData(
     fetcher,

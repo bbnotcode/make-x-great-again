@@ -90,6 +90,8 @@ const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
 
   return (
     <style
+      // Theme keys and colors come from the local typed chart configuration, never user input.
+      // biome-ignore lint/security/noDangerouslySetInnerHtml: React has no text API for dynamic style content
       dangerouslySetInnerHTML={{
         __html: Object.entries(THEMES)
           .map(

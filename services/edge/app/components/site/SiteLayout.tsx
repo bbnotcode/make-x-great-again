@@ -23,7 +23,7 @@ function NavLink({
     active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
   );
   return external ? (
-    <a href={to} target="_blank" rel="noopener" className={cls} aria-label={label}>
+    <a href={to} target="_blank" rel="noreferrer noopener" className={cls} aria-label={label}>
       {children}
     </a>
   ) : (
@@ -43,7 +43,7 @@ export function SiteLayout({
   return (
     <div className="mx-auto w-full min-w-0 max-w-[1080px] overflow-x-clip px-6 sm:px-7">
       <header className="sticky top-0 z-30 -mx-6 flex min-w-0 items-center justify-between border-b border-border/60 px-6 py-4 backdrop-blur-md transition-colors supports-[backdrop-filter]:bg-background/70 sm:-mx-7 sm:px-7">
-        <Link to="/" className="flex items-center gap-2 font-semibold tracking-tight" aria-label={BRAND.name + " 首页"}>
+        <Link to="/" className="flex items-center gap-2 font-semibold tracking-tight" aria-label={`${BRAND.name} 首页`}>
           <img src="/mxga-mark.png" alt="" width={32} height={32} className="size-8" />
           <span>{BRAND.acronym}</span>
         </Link>
@@ -52,7 +52,7 @@ export function SiteLayout({
             <NavLink to="/list" active={current === "list"} label="公共名单">
               <List className="size-3.5" /> <span className="hidden sm:inline">名单</span>
             </NavLink>
-            <NavLink to={BRAND.repo + "/tree/main/data"} external label="公开数据">
+            <NavLink to={`${BRAND.repo}/tree/main/data`} external label="公开数据">
               <Database className="size-3.5" /> <span className="hidden sm:inline">公开数据</span>
             </NavLink>
             <NavLink to={BRAND.repo} external label="GitHub 源码">

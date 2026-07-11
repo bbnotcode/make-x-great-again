@@ -43,7 +43,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     clearToken();
     throw new AuthError("forbidden");
   }
-  if (!res.ok) throw new Error("HTTP " + res.status);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return (await res.json()) as T;
 }
 
@@ -139,11 +139,11 @@ export type AgentItem = { handle: string; x_user_id?: string };
 
 export const api = {
   stats: () => req<Stats>("/v1/admin/stats"),
-  queue: (qs: string) => req<QueueResult>("/v1/admin/queue" + qs),
-  blacklist: (qs: string) => req<ListResult>("/v1/admin/blacklist" + qs),
-  whitelist: (qs: string) => req<ListResult>("/v1/admin/whitelist" + qs),
-  agentList: (qs: string) => req<{ list: Account[]; nextBefore: number | null }>("/v1/admin/agent-list" + qs),
-  log: (qs: string) => req<{ log: LogEntry[]; nextCursor: number | null }>("/v1/admin/log" + qs),
+  queue: (qs: string) => req<QueueResult>(`/v1/admin/queue${qs}`),
+  blacklist: (qs: string) => req<ListResult>(`/v1/admin/blacklist${qs}`),
+  whitelist: (qs: string) => req<ListResult>(`/v1/admin/whitelist${qs}`),
+  agentList: (qs: string) => req<{ list: Account[]; nextBefore: number | null }>(`/v1/admin/agent-list${qs}`),
+  log: (qs: string) => req<{ log: LogEntry[]; nextCursor: number | null }>(`/v1/admin/log${qs}`),
   rules: () => req<{ rules: Rule[] }>("/v1/admin/keyword-rules"),
 
   decide: (handle: string, xUserId: string | undefined | null, action: string) =>
@@ -181,21 +181,19 @@ export const api = {
     }),
   whitelistRemove: (handle: string, xUserId?: string) =>
     req<{ ok: boolean }>(
-      "/v1/admin/whitelist?handle=" +
-        encodeURIComponent(handle) +
-        (xUserId ? "&xUserId=" + encodeURIComponent(xUserId) : ""),
+      `/v1/admin/whitelist?handle=${encodeURIComponent(handle)}${xUserId ? `&xUserId=${encodeURIComponent(xUserId)}` : ""}`,
       { method: "DELETE" },
     ),
   whitelistRequests: (status = "pending") =>
     req<{ list: WhitelistRequest[] }>(
-      "/v1/admin/whitelist-requests?status=" + encodeURIComponent(status),
+      `/v1/admin/whitelist-requests?status=${encodeURIComponent(status)}`,
     ),
   whitelistRequestApprove: (id: number) =>
-    req<{ ok: boolean; status?: string }>("/v1/admin/whitelist-requests/" + id + "/approve", {
+    req<{ ok: boolean; status?: string }>(`/v1/admin/whitelist-requests/${id}/approve`, {
       method: "POST",
     }),
   whitelistRequestReject: (id: number) =>
-    req<{ ok: boolean; status?: string }>("/v1/admin/whitelist-requests/" + id + "/reject", {
+    req<{ ok: boolean; status?: string }>(`/v1/admin/whitelist-requests/${id}/reject`, {
       method: "POST",
     }),
   whitelistRemoveBatch: (items: Item[]) =>
@@ -211,13 +209,13 @@ export const api = {
       body: JSON.stringify(body),
     }),
   ruleToggle: (id: number, enabled: boolean) =>
-    req<{ ok: boolean }>("/v1/admin/keyword-rules/" + id, {
+    req<{ ok: boolean }>(`/v1/admin/keyword-rules/${id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ enabled }),
     }),
   ruleDelete: (id: number) =>
-    req<{ ok: boolean }>("/v1/admin/keyword-rules/" + id, { method: "DELETE" }),
+    req<{ ok: boolean }>(`/v1/admin/keyword-rules/${id}`, { method: "DELETE" }),
   rulesApply: () =>
     req<{ ok: boolean; matched: number; perRule?: { id: number; hits: number }[]; error?: string }>(
       "/v1/admin/keyword-rules/apply-to-queue",
@@ -238,7 +236,7 @@ export function chunk<T>(arr: T[], n: number): T[][] {
   return out;
 }
 export const BATCH_CHUNK = 100;
-export const rowKey = (a: Account) => (a.x_user_id || "") + "|" + a.handle;
+export const rowKey = (a: Account) => `${a.x_user_id || ""}|${a.handle}`;
 
 export const SORT_OPTIONS: { value: string; label: string }[] = [
   { value: "time_desc", label: "更新时间 ↓" },

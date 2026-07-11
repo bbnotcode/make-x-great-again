@@ -25,7 +25,7 @@ export function BatchBar({
         selected > 0 && "border-ring/40 ring-1 ring-ring/15",
       )}
     >
-      <label className="flex cursor-pointer select-none items-center gap-2.5 text-[13px]">
+      <div className="flex cursor-pointer select-none items-center gap-2.5 text-[13px]">
         <Checkbox
           checked={indeterminate ? "indeterminate" : allChecked}
           onCheckedChange={(v) => onToggleAll(v === true)}
@@ -36,7 +36,7 @@ export function BatchBar({
           <b className="tabular-nums">{visible}</b>
           <span className="ml-1.5 text-[11.5px] text-muted-foreground">（Shift+点可范围多选）</span>
         </span>
-      </label>
+      </div>
       {selected > 0 && <div className="flex flex-wrap gap-2">{actions}</div>}
     </div>
   );

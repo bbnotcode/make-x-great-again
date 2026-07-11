@@ -15,9 +15,9 @@ const AdminPage = lazy(() =>
 function RouteFallback() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">
-      <span role="status" aria-live="polite">
+      <output aria-live="polite">
         正在加载…
-      </span>
+      </output>
     </main>
   );
 }

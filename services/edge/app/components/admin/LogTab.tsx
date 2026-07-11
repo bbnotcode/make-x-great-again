@@ -28,9 +28,9 @@ export function LogTab({ onAuth }: { onAuth: () => void }) {
   const load = useCallback(
     async (more: boolean) => {
       const parts = ["limit=50"];
-      if (more && cursor.current) parts.push("before=" + cursor.current);
+      if (more && cursor.current) parts.push(`before=${cursor.current}`);
       try {
-        const j = await api.log("?" + parts.join("&"));
+        const j = await api.log(`?${parts.join("&")}`);
         cursor.current = j.nextCursor;
         setHasMore(!!j.nextCursor);
         setLog((prev) => (more ? prev.concat(j.log) : j.log));
@@ -52,7 +52,7 @@ export function LogTab({ onAuth }: { onAuth: () => void }) {
         desc={
           <>
             每一次加入、移除、白名单、驳回都留痕。完整数据每 6h 镜像到仓库{" "}
-            <a href={REPO + "/tree/main/data"} target="_blank" rel="noopener">
+            <a href={`${REPO}/tree/main/data`} target="_blank" rel="noreferrer noopener">
               data/
             </a>
             ，git history 可审计。
@@ -82,7 +82,7 @@ export function LogTab({ onAuth }: { onAuth: () => void }) {
                 <TableCell className="font-mono text-[11.5px] text-muted-foreground">{e.actor}</TableCell>
                 <TableCell>
                   {e.handle ? (
-                    <a href={"https://x.com/" + e.handle} target="_blank" rel="noopener" className="hover:text-info">
+                    <a href={`https://x.com/${e.handle}`} target="_blank" rel="noreferrer noopener" className="hover:text-info">
                       @{e.handle}
                     </a>
                   ) : (

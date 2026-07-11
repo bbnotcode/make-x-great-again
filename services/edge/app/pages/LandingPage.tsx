@@ -17,7 +17,7 @@ import { type FeedRow, feedKey, type Meta, publicApi, type Trends, VERDICT_ZH } 
 import { Area, AreaChart, Bar, BarChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 
 const X_ICON = (
-  <svg viewBox="0 0 24 24" fill="currentColor" className="size-3" aria-hidden>
+  <svg viewBox="0 0 24 24" fill="currentColor" className="size-3" role="img" aria-label="X">
     <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
   </svg>
 );
@@ -41,7 +41,7 @@ function StoreBadge({
     <a
       href={href}
       target="_blank"
-      rel="noopener"
+      rel="noreferrer noopener"
       onClick={(e) => onInstall(e, href)}
       className={`group inline-flex min-w-[212px] cursor-pointer items-center gap-3.5 rounded-2xl border border-border/70 px-4 py-2.5 transition-all duration-200 hover:-translate-y-0.5 hover:border-foreground/25 hover:shadow-lg hover:shadow-black/5 ${warm ? "bg-gradient-to-b from-warning/5 to-card" : "bg-card"}`}
     >
@@ -86,7 +86,7 @@ function HeroStats() {
       </div>
       <p className="flex items-center justify-center gap-1.5 border-t border-border/60 bg-muted/30 py-2 text-[11.5px] text-muted-foreground">
         <span className="size-1.5 animate-pulse rounded-full bg-success" />
-        {meta?.generatedAt ? "刚刚同步 " + agoCn(meta.generatedAt) : "每分钟同步"}
+        {meta?.generatedAt ? `刚刚同步 ${agoCn(meta.generatedAt)}` : "每分钟同步"}
       </p>
     </div>
   );
@@ -102,19 +102,19 @@ function LiveFeed() {
       .then((j) => {
         setRows((j.list || []).slice(0, 6));
         latest.current = j.latestAt;
-        setStatus("已同步 " + (j.list || []).length + " 条");
+        setStatus(`已同步 ${(j.list || []).length} 条`);
       })
       .catch(() => setStatus("连接失败"));
     const id = setInterval(async () => {
       if (!latest.current) return;
       try {
-        const j = await publicApi.list("?limit=6&since=" + latest.current);
+        const j = await publicApi.list(`?limit=6&since=${latest.current}`);
         const fresh = j.list || [];
         setRows((prev) => {
           const seen = new Set(prev.map(feedKey));
           const added = fresh.filter((r) => !seen.has(feedKey(r)));
           if (!added.length) return prev;
-          setStatus("+" + added.length + " 条新增");
+          setStatus(`+${added.length} 条新增`);
           latest.current = j.latestAt || latest.current;
           return added.concat(prev).slice(0, 6);
         });
@@ -150,8 +150,8 @@ function LiveFeed() {
                   <span className="w-7 font-mono text-[11px] tabular-nums text-muted-foreground">{String(i + 1).padStart(2, "0")}</span>
                   <FeedAvatar handle={r.handle} url={r.avatar_url} className="size-8" />
                   <div className="min-w-0 flex-1">
-                    <a href={"https://x.com/" + r.handle} target="_blank" rel="noopener noreferrer" className="truncate text-sm font-medium hover:text-info">
-                      {(r.display_name || "").trim() || "@" + r.handle}
+                    <a href={`https://x.com/${r.handle}`} target="_blank" rel="noopener noreferrer" className="truncate text-sm font-medium hover:text-info">
+                      {(r.display_name || "").trim() || `@${r.handle}`}
                     </a>
                     <div className="text-[11px] text-muted-foreground">{VERDICT_ZH[lbl] || lbl}</div>
                   </div>
@@ -180,7 +180,7 @@ function TrendCharts() {
   const hourly = (t?.hourly || []).slice(-24);
   const daily = t?.daily || [];
   const sum = (a: { count: number }[]) => a.reduce((s, p) => s + (p.count || 0), 0);
-  const plus = (n: number) => (n > 0 ? "+" + fmtCn(n) : fmtCn(n));
+  const plus = (n: number) => (n > 0 ? `+${fmtCn(n)}` : fmtCn(n));
   return (
     <section className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
       <div className="rounded-2xl border border-border/70 bg-card p-5">
@@ -203,7 +203,7 @@ function TrendCharts() {
             <Tooltip
               contentStyle={{ background: "var(--popover)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
               labelFormatter={(v) => new Date(v as number).toLocaleString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
-              formatter={(v) => [v + " 条", "新增"]}
+              formatter={(v) => [`${v} 条`, "新增"]}
             />
             <Area type="monotone" dataKey="count" stroke="var(--info)" strokeWidth={2} fill="url(#g24)" />
           </AreaChart>
@@ -231,7 +231,7 @@ function TrendCharts() {
               cursor={{ fill: "var(--accent)" }}
               contentStyle={{ background: "var(--popover)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
               labelFormatter={(v) => new Date(v as number).toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "short" })}
-              formatter={(v) => [v + " 条", "处理"]}
+              formatter={(v) => [`${v} 条`, "处理"]}
             />
             <Bar dataKey="count" fill="var(--violet)" radius={[4, 4, 0, 0]} />
           </BarChart>
@@ -299,7 +299,7 @@ export function LandingPage() {
               </Link>
             </Button>
             <Button asChild variant="ghost" size="sm">
-              <a href={BRAND.repo} target="_blank" rel="noopener">
+              <a href={BRAND.repo} target="_blank" rel="noreferrer noopener">
                 <GhIcon className="size-4" /> 看源码
               </a>
             </Button>
@@ -329,7 +329,7 @@ export function LandingPage() {
           <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
             X 会对短时间内连续、大量拉黑触发风控，可能导致 Ghost Ban、功能受限甚至冻结。MXGA 默认只「标注」，拉黑始终由你手动确认 —— 请量力而行，分批处理。
           </p>
-          <a href={BRAND.governance} target="_blank" rel="noopener" className="mt-2 inline-block text-[12.5px] text-warning hover:underline">
+          <a href={BRAND.governance} target="_blank" rel="noreferrer noopener" className="mt-2 inline-block text-[12.5px] text-warning hover:underline">
             了解我们如何降低误伤与风险 →
           </a>
         </div>
@@ -379,7 +379,12 @@ export function LandingPage() {
         </div>
       </section>
 
-      <Dialog open={pending !== null} onOpenChange={(o) => !o && (ack(), setPending(null))}>
+      <Dialog open={pending !== null} onOpenChange={(open) => {
+        if (!open) {
+          ack();
+          setPending(null);
+        }
+      }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">

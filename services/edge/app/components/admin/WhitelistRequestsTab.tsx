@@ -164,7 +164,7 @@ export function WhitelistRequestsTab({
                   <a
                     href={xUrl(r.handle)}
                     target="_blank"
-                    rel="noopener"
+                    rel="noreferrer noopener"
                     className="text-[13.5px] font-semibold hover:underline"
                   >
                     @{r.handle}

@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 
 function Avatar({ a }: { a: Account }) {
   const [err, setErr] = useState(false);
-  const url = a.avatar_url || "https://unavatar.io/twitter/" + encodeURIComponent(a.handle);
+  const url = a.avatar_url || `https://unavatar.io/twitter/${encodeURIComponent(a.handle)}`;
   const fb = (a.handle || "?").slice(0, 1).toUpperCase();
   return (
     <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-sm font-medium text-muted-foreground">
@@ -82,7 +82,7 @@ export function AccountRow({
       <Checkbox
         checked={selected}
         onClick={(e) => onToggle((e as React.MouseEvent).shiftKey)}
-        aria-label={"选中 @" + a.handle}
+        aria-label={`选中 @${a.handle}`}
       />
       <Avatar a={a} />
       <div className="col-span-1 min-w-0">

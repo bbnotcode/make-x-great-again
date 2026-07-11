@@ -18,10 +18,10 @@ export function BlacklistTab({ onAuth, onMutated }: { onAuth: () => void; onMuta
   const fetcher = useCallback(
     (cursor: number | null, search: string, sort: string) => {
       const parts = ["limit=100"];
-      if (cursor) parts.push("before=" + cursor);
-      if (search) parts.push("q=" + encodeURIComponent(search));
-      if (sort) parts.push("sort=" + encodeURIComponent(sort));
-      return api.blacklist("?" + parts.join("&"));
+      if (cursor) parts.push(`before=${cursor}`);
+      if (search) parts.push(`q=${encodeURIComponent(search)}`);
+      if (sort) parts.push(`sort=${encodeURIComponent(sort)}`);
+      return api.blacklist(`?${parts.join("&")}`);
     },
     [],
   );
@@ -47,7 +47,7 @@ export function BlacklistTab({ onAuth, onMutated }: { onAuth: () => void; onMuta
     async () => {
       const keysArr = [...sel.sel];
       const ok = await confirm({
-        title: "批量" + label,
+        title: `批量${label}`,
         body: (
           <p>
             对已选 <b>{keysArr.length}</b> 条执行「{label}」？
@@ -73,7 +73,7 @@ export function BlacklistTab({ onAuth, onMutated }: { onAuth: () => void; onMuta
         desc={
           <>
             已公榜账号，在{" "}
-            <a href="/list" target="_blank" rel="noopener">
+            <a href="/list" target="_blank" rel="noreferrer noopener">
               /list
             </a>{" "}
             公开可见。误判可直接 → <b>白名单</b> 或 <b>驳回</b>。
