@@ -238,7 +238,10 @@ export const STYLE = `
 .qrow.active { background: color-mix(in srgb, var(--danger) 8%, transparent); }
 .qrow.queued { background: color-mix(in srgb, var(--brand) 7%, transparent); }
 .qrow.failed { background: color-mix(in srgb, var(--warn) 8%, transparent); }
-.qrow.done { background: color-mix(in srgb, var(--danger) 7%, transparent); }
+/* Done rows go QUIET (neutral, not red): strikethrough + dimmed avatar
+ * already say "handled", and full red tint here drowned the hierarchy —
+ * red is reserved for the in-flight row and the small status accents. */
+.qrow.done { background: color-mix(in srgb, var(--muted) 7%, transparent); }
 .qavatar {
   width: 26px; height: 26px; border-radius: 50%; flex: none; object-fit: cover;
   transition: filter .18s ease, opacity .18s ease;
@@ -757,7 +760,7 @@ export function createBubble(
         <div class="sub" style="display:block;line-height:1.6">
           正在被动检查本页账号。发现可疑的垃圾/色情机器人时，会在这里提示并提供一键处理。</div>
         <div class="row"><span class="lnk" data-gov>为什么 / 治理</span></div>`;
-      card.querySelector("[data-x]")?.addEventListener("click", collapse);
+      card.querySelector("[data-x]")?.addEventListener("click", collapseByUser);
       card.querySelector("[data-gov]")?.addEventListener("click", () =>
         window.open(BRAND.governance, "_blank", "noopener"),
       );
@@ -910,7 +913,7 @@ export function createBubble(
           : s.running > 0
             ? `<button class="btn" disabled style="background:var(--brand)">${verb}中 · 正在 ${s.processing} · 待 ${s.queued}</button>`
             : selectableCount === 0
-              ? `<button class="btn" disabled style="opacity:.75">✓ 已全部处理 (${s.done})</button>`
+              ? `<button class="btn" disabled style="background:color-mix(in srgb, var(--danger) 12%, transparent);color:var(--danger);opacity:1">✓ 已全部处理 (${s.done})</button>`
               : selectedPending === 0
                 ? `<button class="btn" disabled style="opacity:.55">未选中任何账号 (剩余 ${selectableCount})</button>`
                 : `<button class="btn" data-run>一键${verb}选中 ${selectedPending}${s.done ? ` · 已完成 ${s.done}` : ""}${selectedPending < selectableCount ? ` · 跳过 ${selectableCount - selectedPending}` : ""}</button>`
@@ -918,7 +921,7 @@ export function createBubble(
       <div class="row"><span class="lnk" data-each>逐个查看处理</span>
         <span class="lnk" data-ign>忽略本页</span></div>`;
     bindAutoRow();
-    card.querySelector("[data-x]")?.addEventListener("click", collapse);
+    card.querySelector("[data-x]")?.addEventListener("click", collapseByUser);
     card.querySelector("[data-ign]")?.addEventListener("click", () => {
       h.onDismiss();
       root.remove();
@@ -1017,9 +1020,48 @@ export function createBubble(
     open = false;
     card.classList.remove("open");
   }
-  pill.addEventListener("click", () => (open ? collapse() : expand()));
+  // Auto-show while the extension works: the card pops open when the AUTO
+  // path starts acting, stays for the whole batch, then folds back a few
+  // seconds after the last row settles — the user sees the product working
+  // without ever clicking. A manual close wins: no more auto-opens on this
+  // page (reset on SPA navigation).
+  let autoOpened = false;
+  let userClosed = false;
+  let collapseTimer: ReturnType<typeof setTimeout> | undefined;
+  function collapseByUser() {
+    userClosed = true;
+    autoOpened = false;
+    clearTimeout(collapseTimer);
+    collapse();
+  }
+  function scheduleAutoCollapse() {
+    clearTimeout(collapseTimer);
+    collapseTimer = setTimeout(() => {
+      if (autoOpened && open && stats().running === 0) {
+        autoOpened = false;
+        collapse();
+      }
+    }, 6000);
+  }
+  // Hovering the card = the user is reading; hold it open. Leaving with the
+  // batch settled re-arms the fold-back.
+  card.addEventListener("pointerenter", () => clearTimeout(collapseTimer));
+  card.addEventListener("pointerleave", () => {
+    if (autoOpened && open && stats().running === 0) scheduleAutoCollapse();
+  });
+  pill.addEventListener("click", () => {
+    if (open) {
+      collapseByUser();
+    } else {
+      // Manual open: sticky — never auto-folded.
+      userClosed = false;
+      autoOpened = false;
+      clearTimeout(collapseTimer);
+      expand();
+    }
+  });
   root.addEventListener("keydown", (e) => {
-    if ((e as KeyboardEvent).key === "Escape") collapse();
+    if ((e as KeyboardEvent).key === "Escape") collapseByUser();
   });
 
   // Always-visible calm pill from the start, so the user has feedback that
@@ -1095,6 +1137,11 @@ export function createBubble(
       deselected.clear();
       view = "queue";
       queueScrollTop = 0;
+      // New page = a fresh conversation: auto-open is allowed again even if
+      // the user dismissed the card on the previous page.
+      autoOpened = false;
+      userClosed = false;
+      clearTimeout(collapseTimer);
       collapse();
       renderPill();
     },
@@ -1107,8 +1154,17 @@ export function createBubble(
       if (verbLabel) autoVerbs.set(key, verbLabel);
       rowState.set(key, st);
       bump(key); // every auto transition leads the feed
+      clearTimeout(collapseTimer); // fresh activity holds the card open
+      if (st === "processing" && !open && !userClosed) {
+        // Show the work as it happens — pop the card open on the first
+        // auto action; it folds back on its own once the batch settles.
+        autoOpened = true;
+        open = true;
+        card.classList.add("open");
+      }
       renderPill();
       if (open) renderCard();
+      if (autoOpened && open && stats().running === 0) scheduleAutoCollapse();
     },
     /** Sync the header switch when settings change elsewhere (options page
      *  or another tab). Optionally refresh the category-count/scope hint. */
