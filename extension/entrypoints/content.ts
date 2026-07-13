@@ -13,6 +13,7 @@ import { type IndexEntry, isWhitelisted, lookupLocal, warmLocalIndex } from "../
 import { matchLocalRules } from "../lib/local-rules";
 import {
   type ActionMode,
+  type CategoryAction,
   type Settings,
   getSettings,
   onSettingsChange,
@@ -26,6 +27,7 @@ import {
   type BadgeSource,
   type Finding,
   STYLE,
+  createActingBadge,
   createBadge,
   createBubble,
 } from "../lib/ui";
@@ -111,6 +113,26 @@ function hideTweet(node: Element | null) {
   const cell =
     node?.closest('[data-testid="cellInnerDiv"]') ?? node?.closest("article");
   if (cell instanceof HTMLElement) cell.style.display = "none";
+}
+
+/** Animated hide for the visible auto queue: quick fade + shrink, then
+ *  display:none. Height stays untouched — X's virtualized timeline owns row
+ *  geometry, and animating it fights the virtualizer. Falls back to the
+ *  instant hide under prefers-reduced-motion. */
+function collapseTweet(node: Element | null) {
+  const cell =
+    node?.closest('[data-testid="cellInnerDiv"]') ?? node?.closest("article");
+  if (!(cell instanceof HTMLElement)) return;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    cell.style.display = "none";
+    return;
+  }
+  cell.style.transition = "opacity .3s ease, transform .3s ease";
+  cell.style.opacity = "0";
+  cell.style.transform = "scale(.985)";
+  setTimeout(() => {
+    cell.style.display = "none";
+  }, 320);
 }
 
 /** Each inline badge gets its own shadow host so X CSS can't touch it. */
@@ -280,6 +302,123 @@ export default defineContentScript({
       });
     }
 
+    // ---- Visible auto-processing queue (the v0.4 爽感 path) ----
+    // Auto hits do NOT vanish silently: each account is queued and worked
+    // ONE AT A TIME — in-place pulsing "拉黑中" badge on the tweet, live
+    // queued→processing→done row states in the bubble (which auto-opens),
+    // then an animated collapse of the cell. The decision itself is recorded
+    // up-front, so only the theater is deferred, never the protection.
+    const AUTO_MIN_ACT_MS = 900; // every item is visibly "worked" this long
+    const AUTO_SETTLE_MS = 240; // beat between items (v0.4: 180ms)
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    interface AutoItem {
+      key: string;
+      sig: Signals;
+      action: CategoryAction;
+      verb: string;
+      anchor: HTMLElement;
+      verdict: Verdict;
+      categoryZh: string;
+      tweetId?: string;
+    }
+    const autoQueue: AutoItem[] = [];
+    // Keys owned by the queue — step 0's insta-hide must spare the cell the
+    // animation is (about to be) playing on.
+    const autoActing = new Set<string>();
+    let autoDraining = false;
+
+    function mountActing(anchor: HTMLElement, verb: string, queued: boolean) {
+      clearMounts(anchor);
+      mountBadge(anchor, () => createActingBadge(verb, queued));
+    }
+
+    /** X recycles article nodes: trust the captured anchor only while it
+     *  still renders this account, else fall back to the tagged row. */
+    function autoTarget(it: AutoItem): HTMLElement | null {
+      const art = articleOf(it.anchor);
+      const same =
+        !!art && handleFromArticle(art)?.toLowerCase() === it.sig.handle.toLowerCase();
+      if (same) return it.anchor;
+      return document.querySelector<HTMLElement>(
+        `[data-xss-key="${CSS.escape(it.key)}"]`,
+      );
+    }
+
+    function enqueueAuto(it: AutoItem) {
+      if (autoActing.has(it.key)) return;
+      autoActing.add(it.key);
+      // Record FIRST — the protection survives navigation even if the
+      // animation never gets to play.
+      void addBlocked(it.key);
+      if (it.sig.userId) void addBlocked(it.sig.userId);
+      void bumpStats({ blocks: 1 });
+      void bumpStat("blocked");
+      articleOf(it.anchor)?.setAttribute("data-xss-key", it.key);
+      mountActing(it.anchor, it.verb, true);
+      bubbleApi?.markAuto(it.key, "queued", it.verb);
+      autoQueue.push(it);
+      void drainAuto();
+    }
+
+    async function drainAuto() {
+      if (autoDraining) return;
+      autoDraining = true;
+      try {
+        await drainAutoLoop();
+      } finally {
+        autoDraining = false;
+      }
+    }
+
+    async function drainAutoLoop() {
+      while (autoQueue.length) {
+        const it = autoQueue.shift();
+        if (!it) break;
+        // One broken item (dead DOM node, render error) must not strand the
+        // rest of the queue — fail it and move on.
+        try {
+          const t0 = Date.now();
+          const acting = autoTarget(it);
+          if (acting) mountActing(acting, it.verb, false);
+          bubbleApi?.markAuto(it.key, "processing", it.verb);
+          const xOk =
+            it.action === "mute" || it.action === "block"
+              ? await applyXAction(it.action, it.sig)
+              : true;
+          if (!xOk)
+            console.warn(`[MXGA] 自动${it.verb}：X 原生动作失败`, it.sig.handle, it.sig.userId);
+          // Even the instant local-hide mode dwells long enough to be SEEN.
+          const dwell = AUTO_MIN_ACT_MS - (Date.now() - t0);
+          if (dwell > 0) await sleep(dwell);
+          collapseTweet(autoTarget(it));
+          const tweetText = it.sig.triggeringComment || it.sig.recentTweets[0];
+          void addBlockRecord({
+            id: it.key,
+            handle: it.sig.handle,
+            ...(it.sig.displayName ? { displayName: it.sig.displayName } : {}),
+            ...(it.sig.avatarUrl ? { avatarUrl: it.sig.avatarUrl } : {}),
+            ...(it.tweetId ? { tweetId: it.tweetId } : {}),
+            ...(tweetText ? { tweetText } : {}),
+            verdict: it.verdict,
+            reason: `${it.categoryZh} · 自动${it.verb}${xOk ? "" : "（X 动作失败，仅本地隐藏）"}`,
+            source: "auto",
+            ts: Date.now(),
+          });
+          bubbleApi?.markAuto(it.key, xOk ? "done" : "failed", it.verb);
+        } catch (e) {
+          console.warn(`[MXGA] 自动${it.verb}处理异常`, it.sig.handle, e);
+          try {
+            bubbleApi?.markAuto(it.key, "failed", it.verb);
+          } catch {
+            /* bubble unavailable — the record above still stands */
+          }
+        } finally {
+          autoActing.delete(it.key);
+        }
+        await sleep(AUTO_SETTLE_MS);
+      }
+    }
+
     function pushFinding(
       sig: Signals,
       v: Verdict,
@@ -398,11 +537,6 @@ export default defineContentScript({
       });
         return;
       }
-      void addBlocked(key);
-      if (sig.userId) void addBlocked(sig.userId);
-      void bumpStats({ blocks: 1 });
-      void bumpStat("blocked");
-      hideTweet(anchor);
       // Auto-processed accounts still show up in the bubble panel — as
       // display-only rows driven through markAuto (checkbox disabled,
       // button is a status chip). Chips + radar pill counts follow.
@@ -412,30 +546,20 @@ export default defineContentScript({
         ...(hitTweetId ? { tweetId: hitTweetId } : {}),
       });
       const verb = action === "mute" ? "静音" : action === "block" ? "拉黑" : "隐藏";
-      bubbleApi?.markAuto(key, "processing", verb);
-      // Record AFTER the X action settles so the 处理记录 row can state
-      // honestly whether the native mute/block actually landed — a silent
-      // fire-and-forget here is how "自动拉黑" degrades into hide-only
-      // without anyone noticing.
-      void (async () => {
-        const xOk =
-          action === "mute" || action === "block" ? await applyXAction(action, sig) : true;
-        if (!xOk) console.warn(`[MXGA] 自动${verb}：X 原生动作失败`, sig.handle, sig.userId);
-        const autoTweetText = sig.triggeringComment || sig.recentTweets[0];
-        void addBlockRecord({
-          id: key,
-          handle: sig.handle,
-          ...(sig.displayName ? { displayName: sig.displayName } : {}),
-          ...(sig.avatarUrl ? { avatarUrl: sig.avatarUrl } : {}),
-          ...(hitTweetId ? { tweetId: hitTweetId } : {}),
-          ...(autoTweetText ? { tweetText: autoTweetText } : {}),
-          verdict: entry.verdict,
-          reason: `${CATEGORY_ZH[entry.category]} · 自动${verb}${xOk ? "" : "（X 动作失败，仅本地隐藏）"}`,
-          source: "auto",
-          ts: Date.now(),
-        });
-        bubbleApi?.markAuto(key, xOk ? "done" : "failed", verb);
-      })();
+      // The visible queue owns everything from here: records up-front, then
+      // in-place badge → paced X action → animated collapse → bubble row
+      // states. The 处理记录 line is written after the X action settles so it
+      // can state honestly whether the native mute/block actually landed.
+      enqueueAuto({
+        key,
+        sig,
+        action,
+        verb,
+        anchor,
+        verdict: entry.verdict,
+        categoryZh: CATEGORY_ZH[entry.category],
+        ...(hitTweetId ? { tweetId: hitTweetId } : {}),
+      });
     }
 
     async function process(sig: Signals, anchor: HTMLElement, ctx: ScanContext = "feed") {
@@ -445,8 +569,16 @@ export default defineContentScript({
       try {
         anchorByKey.set(key, anchor);
 
-        // 0. Already blocked → hide, never render again.
+        // 0. Already blocked → hide, never render again. Exception: the cell
+        //    the visible auto queue is working on (it was recorded up-front)
+        //    — its animation owns the hide; OTHER cells by the same account
+        //    still vanish instantly.
         if (isBlockedSync(key) || (sig.userId && isBlockedSync(sig.userId))) {
+          if (
+            autoActing.has(key) &&
+            articleOf(anchor)?.getAttribute("data-xss-key") === key
+          )
+            return;
           hideTweet(anchor);
           return;
         }
