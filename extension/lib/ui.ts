@@ -228,10 +228,13 @@ export const STYLE = `
 .queue-table {
   max-height: 226px; overflow: auto; margin: 0 -4px 10px; padding: 0 4px;
   scrollbar-width: thin;
+  /* Rows carry state tints now — breathing room between them, or adjacent
+   * tinted rows fuse into one solid slab. */
+  display: flex; flex-direction: column; gap: 5px;
 }
 .qrow {
-  display: flex; align-items: flex-start; gap: 8px; padding: 6px 4px;
-  border-radius: 10px; transform-origin: top center;
+  display: flex; align-items: flex-start; gap: 8px; padding: 7px 6px;
+  border-radius: 10px; transform-origin: top center; flex: none;
   transition: background .14s ease, opacity .14s ease;
 }
 .qrow.new { animation: qrowin .24s cubic-bezier(.2,.7,.2,1); }
