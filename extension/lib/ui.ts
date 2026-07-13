@@ -101,8 +101,8 @@ export const STYLE = `
 .metric.tab { cursor: pointer; user-select: none; transition: background .14s ease, box-shadow .14s ease; }
 .metric.tab:hover { background: color-mix(in srgb, var(--muted) 16%, transparent); }
 .metric.tab.on {
-  background: color-mix(in srgb, var(--safe) 13%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--safe) 40%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 38%, transparent);
 }
 .queue-empty {
   display: flex; align-items: center; justify-content: center; gap: 6px;
@@ -127,8 +127,11 @@ export const STYLE = `
 }
 .xss-act:hover { filter: brightness(1.08); }
 .xss-act:disabled { cursor: default; }
+/* Done chip stays in the danger family (v0.4 处理垃圾 = 红色语言) — tinted,
+ * not solid, so it can't be mistaken for the still-clickable solid button. */
 .xss-act.done {
-  background: var(--safe); color: #fff; opacity: .9;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger); opacity: .95;
 }
 .xss-act.queue {
   background: transparent; color: var(--brand);
@@ -212,7 +215,7 @@ export const STYLE = `
 .progress-seg + .progress-seg {
   box-shadow: inset 1px 0 0 color-mix(in srgb, var(--surface) 70%, transparent);
 }
-.progress-seg.done { background: linear-gradient(90deg, color-mix(in srgb, var(--safe) 78%, #fff), var(--safe)); }
+.progress-seg.done { background: linear-gradient(90deg, color-mix(in srgb, var(--danger) 78%, #fff), var(--danger)); }
 .progress-seg.active {
   background:
     repeating-linear-gradient(115deg, rgba(255,255,255,.22) 0 6px, transparent 6px 12px),
@@ -235,7 +238,7 @@ export const STYLE = `
 .qrow.active { background: color-mix(in srgb, var(--danger) 8%, transparent); }
 .qrow.queued { background: color-mix(in srgb, var(--brand) 7%, transparent); }
 .qrow.failed { background: color-mix(in srgb, var(--warn) 8%, transparent); }
-.qrow.done { background: color-mix(in srgb, var(--safe) 8%, transparent); }
+.qrow.done { background: color-mix(in srgb, var(--danger) 7%, transparent); }
 .qavatar {
   width: 26px; height: 26px; border-radius: 50%; flex: none; object-fit: cover;
   transition: filter .18s ease, opacity .18s ease;
@@ -272,11 +275,11 @@ export const STYLE = `
 .qrow.done .qsnip {
   text-decoration: line-through; opacity: .52;
 }
-/* One-shot green flash the moment a row flips to done — the checklist
- * "tick" that makes batch progress feel tangible. */
+/* One-shot red flash the moment a row flips to done — the checklist
+ * "tick" that makes batch progress feel tangible (danger family, v0.4). */
 .qrow.done.flip { animation: qdoneflash .45s ease-out; }
 @keyframes qdoneflash {
-  0% { background: color-mix(in srgb, var(--safe) 28%, transparent); transform: scale(1.015); }
+  0% { background: color-mix(in srgb, var(--danger) 26%, transparent); transform: scale(1.015); }
 }
 svg { display: block; }
 .xss-badge {
@@ -521,7 +524,7 @@ export function createBubble(
   const deselected = new Set<string>();
   // Rows already rendered once — suppresses the slide-in replay on rerender.
   const seenRows = new Set<string>();
-  // Rows already rendered in the done state — the green "tick" flash plays
+  // Rows already rendered in the done state — the red "tick" flash plays
   // only on the render where a row first flips to done.
   const doneSeen = new Set<string>();
   // Rows driven by the AUTO path (per-category policy): the extension acts
@@ -676,12 +679,15 @@ export function createBubble(
         return;
       }
       if (s.done > 0 && s.done + s.failed >= s.found) {
+        // Completed batch reads in the danger family too — 处理掉的是垃圾，
+        // 绿色勾会被误读成"这些账号正常"（v0.4 红色语言）。
         pill.innerHTML = progressMarkup({
           iconName: "shield-check",
-          iconColor: "var(--safe)",
+          iconColor: "var(--danger)",
           title: `已${verb}`,
           count: String(s.done),
           percent: 100,
+          danger: true,
         });
         return;
       }
@@ -800,7 +806,7 @@ export function createBubble(
         <span class="metric${doneRows.length ? " tab" : ""}${view === "done" ? " on" : ""}"
           ${doneRows.length ? `data-tab-done role="button" tabindex="0" aria-pressed="${view === "done"}"` : ""}
           title="${s.failed ? `失败 ${s.failed}，` : ""}本次浏览已处理（含之前页面）${doneRows.length ? " · 点击查看明细" : ""}">
-          <i style="background:${s.failed ? "var(--warn)" : "var(--safe)"}"></i><b>${s.done + archivedRows.length}</b><em>已处理</em>
+          <i style="background:${s.failed ? "var(--warn)" : "var(--danger)"}"></i><b>${s.done + archivedRows.length}</b><em>已处理</em>
         </span>
       </div>
       ${batchTouched ? renderProgress(s) : ""}
@@ -891,7 +897,7 @@ export function createBubble(
                 ${st === "processing" ? `<div class="qnote" style="color:var(--danger)">${isAuto ? `自动${autoVerbs.get(id) ?? "处理"}中…` : `正在${verb}…`}</div>` : ""}
                 ${st === "queued" ? `<div class="qnote" style="color:var(--brand)">排队等待处理</div>` : ""}
                 ${st === "failed" ? `<div class="qnote" style="color:var(--warn)">${isAuto ? `自动${autoVerbs.get(id) ?? "处理"}失败` : "处理失败"} · <a href="https://x.com/${esc(f.handle)}" target="_blank" rel="noopener" style="color:var(--warn)">手动处理</a></div>` : ""}
-                ${st === "done" ? `<div class="qnote" style="color:var(--safe)">✓ 已${isAuto ? `自动${autoVerbs.get(id) ?? "处理"}` : verb}</div>` : ""}
+                ${st === "done" ? `<div class="qnote" style="color:var(--danger)">✓ 已${isAuto ? `自动${autoVerbs.get(id) ?? "处理"}` : verb}</div>` : ""}
               </div>
               <button class="${actClass}" data-one="${esc(id)}"${actDisabled ? " disabled" : ""}>${actText}</button>
             </div>`;
@@ -904,7 +910,7 @@ export function createBubble(
           : s.running > 0
             ? `<button class="btn" disabled style="background:var(--brand)">${verb}中 · 正在 ${s.processing} · 待 ${s.queued}</button>`
             : selectableCount === 0
-              ? `<button class="btn" disabled style="background:var(--safe)">✓ 已全部处理 (${s.done})</button>`
+              ? `<button class="btn" disabled style="opacity:.75">✓ 已全部处理 (${s.done})</button>`
               : selectedPending === 0
                 ? `<button class="btn" disabled style="opacity:.55">未选中任何账号 (剩余 ${selectableCount})</button>`
                 : `<button class="btn" data-run>一键${verb}选中 ${selectedPending}${s.done ? ` · 已完成 ${s.done}` : ""}${selectedPending < selectableCount ? ` · 跳过 ${selectableCount - selectedPending}` : ""}</button>`
