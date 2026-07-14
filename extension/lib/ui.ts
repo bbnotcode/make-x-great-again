@@ -619,12 +619,16 @@ export function createBubble(
   const DONE_LINGER_MS = 2600;
   const absorbed = new Set<string>();
   const absorbTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  // Keys whose row is folding / whose ghost is queued or flying. Renders
-  // exclude them (a table rebuild must not resurrect a folding row); the
-  // serial flight runner moves them into `absorbed` as each ghost lands.
+  // Keys whose row is folding / whose ghost is flying. Renders exclude them
+  // (a table rebuild must not resurrect a folding row); flyKeys() moves them
+  // into `absorbed` as the ghosts land.
   const absorbing = new Set<string>();
-  const flights: { key: string; ghost: HTMLElement; r0: DOMRect }[] = [];
+  // Keys waiting for a SOLO flight (auto path) — geometry is measured at
+  // takeoff, not enqueue time, so a shifted/scrolled list can't go stale.
+  const flights: string[] = [];
   let flying = false;
+  // Manual bulk: the whole batch lingers briefly, then flies as ONE flock.
+  const BATCH_LINGER_MS = 1600;
   // Rows driven by the AUTO path (per-category policy): the extension acts
   // on its own, so the checkbox and per-row button are display-only.
   const autoRows = new Set<string>();
@@ -1102,55 +1106,23 @@ export function createBubble(
     );
   }
 
-  /** Absorb entry point (linger timer fired). Captures the row's ghost and
-   *  start rect IMMEDIATELY — later re-renders (other rows changing state)
-   *  rebuild the table and would otherwise destroy the element mid-fold —
-   *  then hands the flight to a serial runner so simultaneous settles glide
-   *  into the chip one after another instead of stomping on each other. */
+  /** Absorb entry point (linger timer fired): queue a SOLO flight. */
   function absorb(key: string) {
-    if (absorbed.has(key) || absorbing.has(key)) return;
-    const row = card.querySelector<HTMLElement>(`[data-rk="${CSS.escape(key)}"]`);
-    const chip = card.querySelector<HTMLElement>("[data-done-chip]");
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const r0 = row?.getBoundingClientRect();
-    if (!open || view !== "queue" || !row || !chip || reduced || !r0?.width) {
-      absorbed.add(key);
-      if (open) renderCard();
-      return;
-    }
-    // From this point the key is "absorbing": renders exclude it, so a
-    // rebuild can't resurrect the folding row.
-    absorbing.add(key);
-    const ghost = row.cloneNode(true) as HTMLElement;
-    ghost.className = "q-fly";
-    ghost.style.left = `${r0.left}px`;
-    ghost.style.top = `${r0.top}px`;
-    ghost.style.width = `${r0.width}px`;
-    // The real row folds shut NOW (its ghost flies later, in turn) so the
-    // list closes the gap smoothly; if a re-render kills the element first
-    // the gap simply closes instantly — it can't come back either way.
-    row.style.overflow = "hidden";
-    row.animate(
-      [
-        { height: `${r0.height}px`, opacity: 1 },
-        { height: "0px", opacity: 0, paddingTop: "0px", paddingBottom: "0px" },
-      ],
-      { duration: 380, easing: "ease-in", fill: "forwards" },
-    );
-    flights.push({ key, ghost, r0 });
+    if (absorbed.has(key) || absorbing.has(key) || flights.includes(key)) return;
+    flights.push(key);
     void runFlights();
   }
 
-  /** One flight at a time: pop → glide into the chip → +1 → short beat →
-   *  next. Keeps a burst of settles readable (and the chip pops N times). */
+  /** One solo flight at a time: glide into the chip → +1 → short beat →
+   *  next. Keeps a trickle of settles readable. */
   async function runFlights() {
     if (flying) return;
     flying = true;
     try {
       while (flights.length) {
-        const f = flights.shift();
-        if (!f) break;
-        await flyOne(f);
+        const key = flights.shift();
+        if (!key) break;
+        await flyKeys([key]);
         await new Promise((r) => setTimeout(r, 160));
       }
     } finally {
@@ -1158,51 +1130,106 @@ export function createBubble(
     }
   }
 
-  function flyOne(f: { key: string; ghost: HTMLElement; r0: DOMRect }): Promise<void> {
-    return new Promise((resolve) => {
-      const land = () => {
-        absorbing.delete(f.key);
-        absorbed.add(f.key);
-        if (open) renderCard();
-        resolve();
-      };
-      const chip = card.querySelector<HTMLElement>("[data-done-chip]");
-      if (!open || !chip) {
-        land(); // card closed mid-queue — no theater, just the bookkeeping
-        return;
+  /** Fly settled rows into the 已处理 chip — geometry measured NOW, at
+   *  takeoff, so positions are always current. keys.length === 1 is the auto
+   *  path's solo glide; more = a manual batch flying as one flock (small
+   *  per-ghost stagger, ONE chip pop with a +N floater at the end). Rows
+   *  scrolled out of the list viewport skip the theater and just land —
+   *  a ghost taking off from outside the card reads as a glitch. */
+  function flyKeys(rawKeys: string[]): Promise<void> {
+    const keys = rawKeys.filter((k) => !absorbed.has(k) && !absorbing.has(k));
+    if (!keys.length) return Promise.resolve();
+    for (const k of keys) absorbing.add(k); // renders exclude them from here on
+    const landAll = () => {
+      for (const k of keys) {
+        absorbing.delete(k);
+        absorbed.add(k);
       }
-      const r1 = chip.getBoundingClientRect();
-      if (!r1.width) {
-        land();
-        return;
-      }
+      if (open) renderCard();
+    };
+    const chip = card.querySelector<HTMLElement>("[data-done-chip]");
+    const table = card.querySelector<HTMLElement>(".queue-table");
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!open || view !== "queue" || !chip || !table || reduced) {
+      landAll(); // bookkeeping only — the card isn't showing the queue
+      return Promise.resolve();
+    }
+    const r1 = chip.getBoundingClientRect();
+    const tb = table.getBoundingClientRect();
+    if (!r1.width) {
+      landAll();
+      return Promise.resolve();
+    }
+    const jobs: Promise<void>[] = [];
+    let slot = 0;
+    for (const key of keys) {
+      const row = card.querySelector<HTMLElement>(`[data-rk="${CSS.escape(key)}"]`);
+      const r0 = row?.getBoundingClientRect();
+      const visible =
+        !!row && !!r0?.width && r0.bottom > tb.top + 4 && r0.top < tb.bottom - 4;
+      if (!row || !r0 || !visible) continue; // lands with the group, no ghost
       // Ghost lives on the bubble root: the queue-table clips overflow, so
       // the real row could never fly past the card edge.
-      root.appendChild(f.ghost);
-      const dx = r1.left + r1.width / 2 - (f.r0.left + f.r0.width / 2);
-      const dy = r1.top + r1.height / 2 - (f.r0.top + f.r0.height / 2);
-      f.ghost.animate(
+      const ghost = row.cloneNode(true) as HTMLElement;
+      ghost.className = "q-fly";
+      ghost.style.left = `${r0.left}px`;
+      ghost.style.top = `${r0.top}px`;
+      ghost.style.width = `${r0.width}px`;
+      // The real row folds shut as its ghost lifts off, closing the gap
+      // smoothly; if a re-render kills the element the gap closes instantly
+      // (the key is already excluded — it can't come back either way).
+      row.style.overflow = "hidden";
+      row.animate(
         [
-          { transform: "translate(0,0) scale(1)", opacity: 1 },
-          { transform: `translate(${dx}px,${dy}px) scale(.06)`, opacity: 0.25 },
+          { height: `${r0.height}px`, opacity: 1 },
+          { height: "0px", opacity: 0, paddingTop: "0px", paddingBottom: "0px" },
         ],
-        { duration: 520, easing: "cubic-bezier(.55,-.05,.75,.35)", fill: "forwards" },
-      ).onfinish = () => {
-        f.ghost.remove();
-        land();
-        // Land: counter pops and a +1 floats off the chip.
-        const c = card.querySelector<HTMLElement>("[data-done-chip]");
-        if (!c) return;
-        c.classList.remove("tick");
-        void c.offsetWidth; // restart the pop for rapid consecutive landings
-        c.classList.add("tick");
-        const plus = document.createElement("span");
-        plus.className = "m-plus";
-        plus.textContent = "+1";
-        c.appendChild(plus);
-        setTimeout(() => plus.remove(), 850);
-      };
-    });
+        { duration: 380, easing: "ease-in", fill: "forwards" },
+      );
+      const dx = r1.left + r1.width / 2 - (r0.left + r0.width / 2);
+      const dy = r1.top + r1.height / 2 - (r0.top + r0.height / 2);
+      const delay = slot++ * 70; // flock: staggered takeoff, same destination
+      root.appendChild(ghost);
+      jobs.push(
+        new Promise((res) => {
+          ghost.animate(
+            [
+              { transform: "translate(0,0) scale(1)", opacity: 1 },
+              { transform: `translate(${dx}px,${dy}px) scale(.06)`, opacity: 0.25 },
+            ],
+            {
+              duration: 520,
+              delay,
+              easing: "cubic-bezier(.55,-.05,.75,.35)",
+              fill: "both",
+            },
+          ).onfinish = () => {
+            ghost.remove();
+            res();
+          };
+        }),
+      );
+    }
+    const finish = () => {
+      landAll();
+      // Land: counter pops once and floats a +N (+1 for solo flights).
+      const c = card.querySelector<HTMLElement>("[data-done-chip]");
+      if (!c) return;
+      c.classList.remove("tick");
+      void c.offsetWidth; // restart the pop for rapid consecutive landings
+      c.classList.add("tick");
+      const plus = document.createElement("span");
+      plus.className = "m-plus";
+      plus.textContent = `+${keys.length}`;
+      c.appendChild(plus);
+      setTimeout(() => plus.remove(), 850);
+    };
+    if (!jobs.length) {
+      // Nothing visible to animate — land instantly, still pop the counter.
+      finish();
+      return Promise.resolve();
+    }
+    return Promise.all(jobs).then(finish);
   }
 
   /** Kick off a batch: mark rows, then hand the keys to the caller. The
@@ -1210,6 +1237,11 @@ export function createBubble(
    *  report advances chips, progress bar and row states in place. */
   function startBatch(keys: string[]) {
     if (!keys.length) return;
+    // The user just acted on the card: a fold-back armed by an EARLIER auto
+    // batch must not yank it away mid-run — manual engagement makes the
+    // open sticky (until the user closes it themselves).
+    autoOpened = false;
+    clearTimeout(collapseTimer);
     // Reverse-bump so keys[0] (processed first) lands highest in the feed.
     for (const k of [...keys].reverse()) bump(k);
     keys.forEach((k, i) => {
@@ -1218,10 +1250,18 @@ export function createBubble(
     });
     renderPill();
     if (open) renderCard();
+    // Manual batch: rows do NOT absorb one by one — the whole batch lingers
+    // with its ✓s visible, then flies into the chip as one flock (+N pop).
+    const batchDone: string[] = [];
+    let reported = 0;
     h.onProcess(keys, (key, ok) => {
       rowState.set(key, ok ? "done" : "failed");
       bump(key);
-      if (ok) scheduleAbsorb(key); // manual batch rows fly into the chip too
+      if (ok) batchDone.push(key);
+      reported++;
+      if (reported >= keys.length && batchDone.length) {
+        setTimeout(() => void flyKeys([...batchDone]), BATCH_LINGER_MS);
+      }
       // Sequential batch: promote the next queued row to "processing".
       const next = keys.find((k) => rowState.get(k) === "queued");
       if (next) {
@@ -1383,7 +1423,7 @@ export function createBubble(
       absorbTimers.clear();
       absorbed.clear();
       absorbing.clear();
-      for (const f of flights.splice(0)) f.ghost.remove();
+      flights.length = 0; // ghosts self-remove on animation finish
       // New page = a fresh conversation: auto-open is allowed again even if
       // the user dismissed the card on the previous page.
       autoOpened = false;
