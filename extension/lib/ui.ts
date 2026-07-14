@@ -1527,36 +1527,40 @@ export function createBadge(
 ): HTMLElement {
   const el = document.createElement("span");
   el.tabIndex = 0;
-  if (!v) {
-    el.className = "xss-badge ghost";
-    el.innerHTML = `${icon("shield", "currentColor", 13)}<span>检查</span>`;
-    return el;
-  }
-  const meta = LABEL[v.label];
   // v0.4 visual language: every spammy tier renders in full danger red — the
   // amber likely_spam pill read as washed-out next to v0.4's badges.
-  const spammy = v.label === "spam" || v.label === "porn_bot" || v.label === "likely_spam";
-  const color = spammy ? "var(--danger)" : `var(${meta.varName})`;
-  const known = source === "list" || source === "cache" || source === "rule";
-  el.className = `xss-badge ${known ? "known" : "fresh"}`;
-  // Tinted pill: bg/border derive from --badge-color via color-mix in STYLE.
-  el.style.setProperty("--badge-color", color);
-  const tip =
-    source === "list"
-      ? "命中公共名单"
-      : source === "rule"
-        ? "命中官方关键词规则（本机比对）"
-        : source === "cache"
-          ? "本地缓存命中"
-          : "首次发现（本机首次判定，已记录待人工确认）";
-  // No native title: the hover popover already carries the details, and the
-  // OS tooltip floating next to it reads as visual noise.
-  el.setAttribute("aria-label", `${meta.zh} ${(v.confidence * 100).toFixed(0)}% · ${tip}`);
-  // Badge = icon + ONE short label word (色情/垃圾/疑似) on a solid pill —
-  // the compact shape users recognize. Source (公榜/规则/缓存) plus
-  // category/confidence/provenance all live in the hover popover.
-  const tag = known ? "" : `<span class="ntag">首发</span>`;
-  el.innerHTML = `${icon(meta.ic, "currentColor", 12)}<span>${BADGE_TEXT[v.label]}</span>${tag}`;
+  const spammy = !!v && (v.label === "spam" || v.label === "porn_bot" || v.label === "likely_spam");
+  const color = !v ? "var(--muted)" : spammy ? "var(--danger)" : `var(${LABEL[v.label].varName})`;
+  if (!v) {
+    // Unhit ghost — still INTERACTIVE: hover/focus opens the 手动处理
+    // popover (v0.4 behavior the v0.5 rewrite dropped). "Not on the list"
+    // is exactly when the user needs a manual handle on an obvious spammer.
+    el.className = "xss-badge ghost";
+    el.setAttribute("aria-label", "MXGA：未命中名单 · 悬停可手动处理");
+    el.innerHTML = `${icon("shield", "currentColor", 13)}<span>检查</span>`;
+  } else {
+    const meta = LABEL[v.label];
+    const known = source === "list" || source === "cache" || source === "rule";
+    el.className = `xss-badge ${known ? "known" : "fresh"}`;
+    // Tinted pill: bg/border derive from --badge-color via color-mix in STYLE.
+    el.style.setProperty("--badge-color", color);
+    const tip =
+      source === "list"
+        ? "命中公共名单"
+        : source === "rule"
+          ? "命中官方关键词规则（本机比对）"
+          : source === "cache"
+            ? "本地缓存命中"
+            : "首次发现（本机首次判定，已记录待人工确认）";
+    // No native title: the hover popover already carries the details, and the
+    // OS tooltip floating next to it reads as visual noise.
+    el.setAttribute("aria-label", `${meta.zh} ${(v.confidence * 100).toFixed(0)}% · ${tip}`);
+    // Badge = icon + ONE short label word (色情/垃圾/疑似) on a solid pill —
+    // the compact shape users recognize. Source (公榜/规则/缓存) plus
+    // category/confidence/provenance all live in the hover popover.
+    const tag = known ? "" : `<span class="ntag">首发</span>`;
+    el.innerHTML = `${icon(meta.ic, "currentColor", 12)}<span>${BADGE_TEXT[v.label]}</span>${tag}`;
+  }
 
   let pop: HTMLElement | null = null;
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1589,15 +1593,23 @@ export function createBadge(
     pop = document.createElement("div");
     pop.className = "xss pop card";
     pop.style.display = "block";
-    const spammy = ["spam", "porn_bot", "likely_spam"].includes(v.label);
-    pop.innerHTML = `
-      <h4 style="color:${color}">${meta.zh} · ${(v.confidence * 100).toFixed(0)}%</h4>
+    pop.innerHTML = v
+      ? `
+      <h4 style="color:${color}">${LABEL[v.label].zh} · ${(v.confidence * 100).toFixed(0)}%</h4>
       <ul>${v.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
       ${note ? `<div style="color:var(--muted)">${esc(note)}</div>` : ""}
       <div class="acts">
         ${spammy ? `<button data-b>${esc(verb)}</button>` : ""}
         ${spammy && verb !== "隐藏" && a.onHideLocal ? `<button data-h>隐藏</button>` : ""}
         <button data-a title="打开 GitHub 提交误判申诉 issue">误判?</button>
+      </div>`
+      : `
+      <h4>手动处理</h4>
+      <div style="color:var(--muted);line-height:1.55">
+        未命中公共名单与官方规则。确认是垃圾/骚扰账号时，可手动处理（5 秒内可撤销）。</div>
+      <div class="acts">
+        <button data-b>${esc(verb)}</button>
+        ${verb !== "隐藏" && a.onHideLocal ? `<button data-h>隐藏</button>` : ""}
       </div>`;
     pop.querySelector("[data-b]")?.addEventListener("click", a.onHide);
     pop.querySelector("[data-h]")?.addEventListener("click", () => a.onHideLocal?.());
