@@ -6,10 +6,10 @@
 //
 // Same red line as the server: rules are HUMAN-CURATED patterns, not local
 // guessing — and the same X-auto-translate guard applies: a CJK pattern is
-// never matched against tweet text when the author's own profile shows no
-// CJK (or the tweet is flagged as machine-translated), because the visible
-// text may be X's translation of a legit foreign tweet. Display names / bios
-// are not translated by X, so those fields stay fully matchable.
+// never matched against tweet text that X itself rendered as a translation
+// (attribution marker → tweetsTranslated), because that text may be X's
+// translation of a legit foreign tweet. Display names / bios are not
+// translated by X, so those fields stay fully matchable.
 import { type SpamCategory, categoryFromCode } from "./category";
 import type { Label, Signals } from "./types";
 

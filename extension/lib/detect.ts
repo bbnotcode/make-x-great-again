@@ -436,7 +436,7 @@ function isPromoted(article: HTMLElement): boolean {
 // attribution wording, not the "Translate post" button (which means the text
 // IS original). textContent (no layout) keeps this cheap per scan tick.
 const TRANSLATION_MARKER_RE =
-  /translated from|show original|翻译自|显示原文|由\s*\S{1,12}\s*翻译|原文を表示|から翻訳/i;
+  /translated from|show original|翻译自|显示原文|翻譯自|顯示原文|由\s*\S{1,12}\s*(?:翻译|翻譯)|原文を表示|から翻訳|번역함|원본 보기/i;
 
 function articleShowsTranslation(article: HTMLElement, tweetEl: HTMLElement | null): boolean {
   if (!tweetEl) return false;
