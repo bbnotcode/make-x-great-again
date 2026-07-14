@@ -310,6 +310,12 @@ export default defineContentScript({
     // up-front, so only the theater is deferred, never the protection.
     const AUTO_MIN_ACT_MS = 900; // every item is visibly "worked" this long
     const AUTO_SETTLE_MS = 240; // beat between items (v0.4: 180ms)
+    // Roster-first: the page scan surfaces hits one by one, so the sweep
+    // waits out a short gather window — the bubble fills with 排队中 rows
+    // FIRST, then the cleanup walks through them. Capped so a trickle of
+    // late hits can't stall the start forever.
+    const AUTO_GATHER_MS = 1600;
+    const AUTO_GATHER_MAX_MS = 4000;
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     interface AutoItem {
       key: string;
@@ -357,17 +363,37 @@ export default defineContentScript({
       mountActing(it.anchor, it.verb, true);
       bubbleApi?.markAuto(it.key, "queued", it.verb);
       autoQueue.push(it);
-      void drainAuto();
+      scheduleDrain();
+    }
+
+    let drainTimer: ReturnType<typeof setTimeout> | undefined;
+    let gatherStart = 0;
+    /** Debounced sweep start: every new hit extends the gather window by
+     *  AUTO_GATHER_MS, bounded by AUTO_GATHER_MAX_MS from the first hit. */
+    function scheduleDrain() {
+      if (autoDraining) return; // mid-sweep hits just join the tail
+      const now = Date.now();
+      if (!gatherStart) gatherStart = now;
+      const delay = Math.min(
+        AUTO_GATHER_MS,
+        Math.max(0, gatherStart + AUTO_GATHER_MAX_MS - now),
+      );
+      clearTimeout(drainTimer);
+      drainTimer = setTimeout(() => void drainAuto(), delay);
     }
 
     async function drainAuto() {
       if (autoDraining) return;
       autoDraining = true;
+      gatherStart = 0;
       try {
         await drainAutoLoop();
       } finally {
         autoDraining = false;
       }
+      // A hit that landed exactly as the loop exited would otherwise sit
+      // until the next enqueue — sweep it into a fresh (short) round.
+      if (autoQueue.length) scheduleDrain();
     }
 
     async function drainAutoLoop() {
