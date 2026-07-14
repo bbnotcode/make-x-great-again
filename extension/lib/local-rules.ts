@@ -78,11 +78,18 @@ export function matchLocalRules(s: Signals): LocalRuleHit | null {
   const name = s.displayName.toLowerCase();
   const bio = s.bio.toLowerCase();
   const tweets = [...s.recentTweets, s.triggeringComment ?? ""].map((t) => t.toLowerCase());
-  const profileCJK = hasCJK(s.displayName) || hasCJK(s.bio) || hasCJK(s.handle);
 
   for (const r of rules) {
     const p = r.patternLower;
-    const tweetTrusted = !r.patternCJK || (!s.tweetsTranslated && profileCJK);
+    // Translate guard: a CJK pattern must not match text X itself rendered
+    // as a translation (attribution marker → tweetsTranslated). That marker
+    // is the whole guard — an extra "author profile must also show CJK"
+    // belt used to sit here, and a porn ring walked straight through it by
+    // pairing Latin/kana display names with Chinese spam text (2026-07-14
+    // wave: "sao货…" replies from "Gigi 🌸"-style throwaways). A raw
+    // non-CJK tweet can never contain a CJK pattern anyway, so the marker
+    // check alone carries no extra false-positive surface for originals.
+    const tweetTrusted = !r.patternCJK || !s.tweetsTranslated;
     const tweetHit = () => tweetTrusted && tweets.some((t) => t.includes(p));
     const hit =
       r.field === "handle"
