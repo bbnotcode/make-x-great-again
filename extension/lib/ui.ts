@@ -76,8 +76,21 @@ export const STYLE = `
   font-variant-numeric: tabular-nums;
 }
 .card { width: 312px; padding: 14px; display: none; margin-top: 10px; }
-.card.open { display: block; animation: in .18s ease-out; }
-@keyframes in { from { opacity: 0; transform: translateY(8px); } }
+/* Expand = the card GROWS out of the pill with a springy overshoot
+ * (origin sits up near the pill), instead of teleporting into place. */
+.card { transform-origin: calc(100% - 34px) -8px; }
+.card.open { display: block; animation: cardin .38s cubic-bezier(.3, 1.28, .44, 1); }
+@keyframes cardin {
+  0% { opacity: 0; transform: translateY(-7px) scale(.9); }
+  55% { opacity: 1; }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+/* Fold-back mirrors the expand: shrink toward the pill, then display:none
+ * (class removed on animationend in collapse()). */
+.card.closing { display: block; animation: cardout .2s ease-in forwards; }
+@keyframes cardout {
+  to { opacity: 0; transform: translateY(-6px) scale(.92); }
+}
 .hd { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
 .hd .x { margin-left: auto; cursor: pointer; color: var(--muted); display: flex; }
 .hd .x:hover { color: var(--text); }
@@ -237,7 +250,13 @@ export const STYLE = `
   border-radius: 10px; transform-origin: top center; flex: none;
   transition: background .14s ease, opacity .14s ease;
 }
-.qrow.new { animation: qrowin .24s cubic-bezier(.2,.7,.2,1); }
+/* First render of a row slides in; on card expand every row is "new", and
+ * the per-slot delays turn that into a soft cascade down the list. */
+.qrow.new { animation: qrowin .26s cubic-bezier(.2,.7,.2,1) backwards; }
+.qrow.new:nth-child(2) { animation-delay: .045s; }
+.qrow.new:nth-child(3) { animation-delay: .09s; }
+.qrow.new:nth-child(4) { animation-delay: .135s; }
+.qrow.new:nth-child(n+5) { animation-delay: .18s; }
 .qrow.active { background: color-mix(in srgb, var(--danger) 8%, transparent); }
 .qrow.queued { background: color-mix(in srgb, var(--brand) 7%, transparent); }
 .qrow.failed { background: color-mix(in srgb, var(--warn) 8%, transparent); }
@@ -431,6 +450,7 @@ svg { display: block; }
 
 @media (prefers-reduced-motion: reduce) {
   .card.open { animation: fade .18s ease-out; }
+  .card.closing { display: none; animation: none; }
   @keyframes fade { from { opacity: 0; } }
   .xss-badge.fresh, .xss-badge.known { animation: fade .18s ease-out; }
   .xss-badge.analyzing::after, .xss-spin { animation: none; }
@@ -1050,13 +1070,23 @@ export function createBubble(
 
   function expand() {
     open = true;
+    card.classList.remove("closing");
     card.classList.add("open");
     renderCard();
   }
   function collapse() {
+    const wasOpen = open;
     open = false;
     card.classList.remove("open");
+    // Fold back toward the pill instead of vanishing (cardout keyframes);
+    // animationend clears the class → display:none. Reduced-motion CSS
+    // hides .closing instantly, so a missing animationend can't strand it.
+    if (wasOpen) card.classList.add("closing");
   }
+  card.addEventListener("animationend", (e) => {
+    if ((e as AnimationEvent).animationName === "cardout")
+      card.classList.remove("closing");
+  });
   // Auto-show while the extension works: the card pops open when the AUTO
   // path starts acting, stays for the whole batch, then folds back a few
   // seconds after the last row settles — the user sees the product working
