@@ -613,10 +613,11 @@ export function createBubble(
   // Rows already rendered in the done state — the red "tick" flash plays
   // only on the render where a row first flips to done.
   const doneSeen = new Set<string>();
-  // Done rows linger in the queue view for a beat, then fly INTO the
-  // 已处理 chip (shrink + absorb + counter pop). Absorbed keys leave the
-  // live list and are served by the 已处理 tab instead.
-  const DONE_LINGER_MS = 2600;
+  // A done row flies INTO the 已处理 chip (shrink + absorb + counter pop)
+  // as soon as its ✓ tick has registered — the tick flash and the takeoff
+  // read as ONE continuous motion, no dead wait in between. Absorbed keys
+  // leave the live list and are served by the 已处理 tab instead.
+  const DONE_LINGER_MS = 400;
   const absorbed = new Set<string>();
   const absorbTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // Keys whose row is folding / whose ghost is flying. Renders exclude them
@@ -627,8 +628,9 @@ export function createBubble(
   // takeoff, not enqueue time, so a shifted/scrolled list can't go stale.
   const flights: string[] = [];
   let flying = false;
-  // Manual bulk: the whole batch lingers briefly, then flies as ONE flock.
-  const BATCH_LINGER_MS = 1600;
+  // Manual bulk: a short beat for the last ✓ to register, then the whole
+  // batch flies as ONE flock.
+  const BATCH_LINGER_MS = 700;
   // Rows driven by the AUTO path (per-category policy): the extension acts
   // on its own, so the checkbox and per-row button are display-only.
   const autoRows = new Set<string>();
