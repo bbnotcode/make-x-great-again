@@ -21,15 +21,12 @@ A public-good, semi-open, crowdsourced anti-spam system for X (Twitter):
 The extension must **not** call the online service per account while you
 scroll. Instead it is **local-first**:
 
-1. The confirmed blocklist is **compiled into the extension package** at
-   build time (`extension/public/blacklist-data.json`, ~46.3k numeric ids);
-   every account is checked **locally** (<1 ms, no network).
-2. As shipped (v0.5.0) the extension makes **zero** network requests — list
-   updates ride each release. The compact **bloom filter** artifact on the
-   CDN (version-gated, `304 Not Modified` ⇒ ~zero bytes) remains the designed
-   runtime-update path; the edge already publishes artifacts
-   (`/v1/artifacts/*`, refreshed every 10 min) but the extension does not
-   pull them yet.
+1. The confirmed blocklist and whitelist are downloaded from the official
+   service, cached in `chrome.storage.local`, and checked **locally** while
+   browsing (<1 ms per lookup; no per-account request).
+2. The extension checks list metadata every six hours and downloads the lite
+   artifact only when its version changes. These GET requests contain no
+   browsing context, X identity, scan result, or action history.
 3. Confirmatory `GET /v1/check` lookups serve the website and third-party
    consumers, not the extension; reports are website-initiated and rare.
 
@@ -45,12 +42,11 @@ Cloudflare R2/CDN has **zero egress fees**.
                 │  Browser extension (MV3, passive)            │
    you browse X │  • read visible accounts (no scraping)       │
   ───────────►  │  • local heuristic prefilter                 │
-                │  • LOCAL check vs bundled list (in package)   │
+                │  • LOCAL check vs cached public list          │
                 │  • popup: "本页发现 N 个 spam" + list         │
                 │  • [一键隐藏] (local display:none, 可撤销)     │
                 └─────────────────────────────────────────────┘
-                  (ZERO network requests — list ships in the
-                   package, updates with each release)
+                  (one shared list sync; zero per-account API calls)
 
            website / third-party consumers
                        │ GET /v1/check    │ POST /v1/report
@@ -91,8 +87,7 @@ Cloudflare R2/CDN has **zero egress fees**.
 ## Data flow
 
 1. Extension reads visible accounts → local heuristic flags candidates →
-   **local bundled-list** membership check (compiled into the package; no
-   network).
+   **local cached-list** membership check (no per-account network request).
 2. Popup aggregates: "本页发现 N 个可疑账号" with per-account verdict.
 3. User chooses per account: **hide** (local `display:none` + a
    `chrome.storage` record, reversible in options — the extension never
@@ -137,7 +132,7 @@ they are kept handle-keyed with `id_resolved=false` until resolved.
   path — consumers pull the artifact, not per-id queries; the shipped
   extension instead bundles the list at build time)
 - `GET  /v1/check?ids=…` → per-id lookups for the website / third-party
-  consumers (the extension never calls it — it works from the bundled list)
+  consumers (the extension does not call it per account — it works from the cached list)
 - `POST /v1/report` → `202`, deduped; **a report is a signal, not a verdict**
 - `POST /v1/appeal` → queues a removal review
 - internal/admin (authed): review & publish
@@ -179,7 +174,7 @@ light read + cron + static-artifact workload.
 | Component | Scope |
 |---|---|
 | Data contract | D1 schema + API surface + report-abuse / appeal policy |
-| Extension | bundled-list local checks (zero network), per-page badge bubble, one-click local hide |
+| Extension | periodic public-list sync + local checks, per-page badge bubble, one-click local hide |
 | Classifier | LLM + human-review gate, runs on Workers |
 | Publish pipeline | Cron mirror → `data/*.json` in this repo + CDN |
 | Service plane | Workers API + D1 + Cron + SSR pages (no self-host) |

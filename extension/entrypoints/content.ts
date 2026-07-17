@@ -1,17 +1,34 @@
+import { autoEligible } from "../lib/auto-policy";
 import { addBlocked, isBlockedSync, warm as warmBlocklist } from "../lib/blocklist";
 import { BRAND } from "../lib/brand";
 import { type Cached, cacheGet, signalsHash } from "../lib/cache";
-import { extractFromArticle, extractProfile, extractThreadTopic } from "../lib/detect";
-import { type IndexEntry, lookupLocal, warmLocalIndex } from "../lib/local-index";
-import { type ActionMode, getSettings, onSettingsChange } from "../lib/settings";
+import {
+  extractFromArticle,
+  extractProfile,
+  extractThreadTopic,
+  viewerHandle,
+} from "../lib/detect";
+import { CATEGORY_ZH } from "../lib/category";
+import { LIST_KEY, WL_KEY } from "../lib/list-sync";
+import { type IndexEntry, isWhitelisted, lookupLocal, warmLocalIndex } from "../lib/local-index";
+import { matchLocalRules } from "../lib/local-rules";
+import {
+  type ActionMode,
+  type CategoryAction,
+  type Settings,
+  getSettings,
+  onSettingsChange,
+  setSetting,
+} from "../lib/settings";
 import { bumpStat } from "../lib/stats";
-import { addBlockRecord, bumpStats } from "../lib/store";
+import { addBlockRecord, bumpStats, updateBlockRecord } from "../lib/store";
 import type { Signals, Verdict } from "../lib/types";
 import { performXAction, retryDelayForAttempt } from "../lib/x-action";
 import {
   type BadgeSource,
   type Finding,
   STYLE,
+  createActingBadge,
   createBadge,
   createBubble,
 } from "../lib/ui";
@@ -31,18 +48,27 @@ function actionVerb(mode: ActionMode): string {
   return mode === "block" ? "拉黑" : mode === "mute" ? "静音" : "隐藏";
 }
 
+/** How many spam categories currently escalate beyond "badge" — shown as the
+ *  hint next to the bubble's 自动处理 switch. */
+function autoCategoryCount(s: Settings): number {
+  return Object.values(s.categoryActions).filter((a) => a !== "badge").length;
+}
+
 /** Fire X's native mute/block (best-effort, paced) with one retry. The local
- *  hide/record is applied separately and always — the X call rides on top. */
-async function applyXAction(mode: ActionMode, sig: Signals): Promise<void> {
-  if (mode === "local") return;
+ *  hide/record is applied separately and always — the X call rides on top.
+ *  Returns false only when the native X action definitively failed (used by
+ *  the bubble's batch panel to surface a per-row 重试 state). */
+async function applyXAction(mode: ActionMode, sig: Signals): Promise<boolean> {
+  if (mode === "local") return true;
   const attempt = await performXAction(mode, sig.userId, sig.handle);
-  if (!attempt.ok) {
-    const delay = retryDelayForAttempt(attempt, 1);
-    if (delay > 0) {
-      await new Promise((r) => setTimeout(r, delay));
-      await performXAction(mode, sig.userId, sig.handle); // one best-effort retry
-    }
+  if (attempt.ok) return true;
+  const delay = retryDelayForAttempt(attempt, 1);
+  if (delay > 0) {
+    await new Promise((r) => setTimeout(r, delay));
+    const second = await performXAction(mode, sig.userId, sig.handle); // one best-effort retry
+    return second.ok;
   }
+  return false;
 }
 
 /** Cheap author handle from the User-Name link href — no fiber walk, no
@@ -58,17 +84,68 @@ function handleFromArticle(art: HTMLElement): string | undefined {
   return undefined;
 }
 
+/** Where a scanned account was seen. Auto actions are scoped by this:
+ *  - "reply"   — a NON-focal article on a status page: someone replying under
+ *                a tweet. This is where the spam wave lives → auto-actable.
+ *  - "feed"    — the account's own post in a timeline / search / the focal
+ *                tweet itself. Detect + badge only under the default scope.
+ *  - "profile" — the profile header on the account's own page. Badge only. */
+type ScanContext = "reply" | "feed" | "profile";
+
+/** Status id of the tweet the current page is focused on, or null when not
+ *  on a /user/status/<id> page. */
+function focalStatusId(): string | null {
+  const m = location.pathname.match(/^\/[^/]+\/status\/(\d+)/);
+  return m?.[1] ?? null;
+}
+
+/** Status id of an article, read from its timestamp permalink. Null when the
+ *  article carries no <time> link (fail-safe → treated as non-reply). */
+function articleStatusId(art: HTMLElement): string | null {
+  for (const a of art.querySelectorAll<HTMLAnchorElement>('a[href*="/status/"]')) {
+    if (!a.querySelector("time")) continue;
+    const m = (a.getAttribute("href") ?? "").match(/\/status\/(\d+)/);
+    if (m?.[1]) return m[1];
+  }
+  return null;
+}
+
 function hideTweet(node: Element | null) {
   const cell =
     node?.closest('[data-testid="cellInnerDiv"]') ?? node?.closest("article");
   if (cell instanceof HTMLElement) cell.style.display = "none";
 }
 
+/** Animated hide for the visible auto queue: quick fade + shrink, then
+ *  display:none. Height stays untouched — X's virtualized timeline owns row
+ *  geometry, and animating it fights the virtualizer. Falls back to the
+ *  instant hide under prefers-reduced-motion. */
+function collapseTweet(node: Element | null) {
+  const cell =
+    node?.closest('[data-testid="cellInnerDiv"]') ?? node?.closest("article");
+  if (!(cell instanceof HTMLElement)) return;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    cell.style.display = "none";
+    return;
+  }
+  cell.style.transition = "opacity .3s ease, transform .3s ease";
+  cell.style.opacity = "0";
+  cell.style.transform = "scale(.985)";
+  setTimeout(() => {
+    cell.style.display = "none";
+  }, 320);
+}
+
 /** Each inline badge gets its own shadow host so X CSS can't touch it. */
 function mountBadge(anchor: HTMLElement, build: () => HTMLElement) {
   const host = document.createElement("span");
   host.className = "xss-mount";
-  host.style.display = "inline-flex";
+  // The profile header's UserName block is a flex container with the default
+  // align-items:stretch — an unpinned host (and the badge inside it, via the
+  // host's own default stretch) inflates to the full two-line row height and
+  // renders as a giant capsule. Pin both axes to content size.
+  host.style.cssText =
+    "display:inline-flex;align-items:center;align-self:center;vertical-align:middle;flex:none;";
   const sr = host.attachShadow({ mode: "open" });
   const st = document.createElement("style");
   st.textContent = STYLE;
@@ -91,6 +168,13 @@ interface PendingAction {
   anchor: HTMLElement;
   timer: ReturnType<typeof setTimeout>;
   ts: number;
+  /** Per-action override of settings.actionMode — the popover's secondary
+   *  隐藏 button schedules a local-only hide even when the mode is block. */
+  mode?: ActionMode;
+  /** Triggering tweet, captured while the DOM anchor is still alive —
+   *  lands in the 处理记录 audit trail. */
+  tweetId?: string;
+  tweetText?: string;
 }
 
 export default defineContentScript({
@@ -110,6 +194,9 @@ export default defineContentScript({
     if (!settings.enabled) return; // master off → don't init (applies next load)
     onSettingsChange((s) => {
       settings = s;
+      // Keep the bubble's 自动处理 switch + hint in sync (options page or
+      // another tab may have flipped it).
+      bubbleApi?.setAutoProcess(s.autoProcess, autoCategoryCount(s), s.autoScope === "all");
     });
 
     // Warm local data structures
@@ -118,18 +205,31 @@ export default defineContentScript({
 
     const keyOf = (s: Signals) => s.userId || `h:${s.handle}`;
 
-    /** Schedule a hide action with a 5-second undo window. */
-    function scheduleHide(key: string, sig: Signals, anchor: HTMLElement) {
+    /** Schedule a hide action with a 5-second undo window. `mode` overrides
+     *  settings.actionMode for this one action (popover 隐藏 → "local"). */
+    function scheduleHide(key: string, sig: Signals, anchor: HTMLElement, mode?: ActionMode) {
       if (pendingActions.has(key)) return; // already pending
       // Tag the row so executeHide can still find it if X recycles the node.
-      articleOf(anchor)?.setAttribute("data-xss-key", key);
+      const art = articleOf(anchor);
+      art?.setAttribute("data-xss-key", key);
+      const tweetId = art ? articleStatusId(art) : null;
+      const tweetText = sig.triggeringComment || sig.recentTweets[0];
       const timer = setTimeout(() => {
-        executeHide(key, sig);
+        void executeHide(key, sig);
         pendingActions.delete(key);
       }, PENDING_MS);
-      pendingActions.set(key, { key, sig, anchor, timer, ts: Date.now() });
+      pendingActions.set(key, {
+        key,
+        sig,
+        anchor,
+        timer,
+        ts: Date.now(),
+        ...(mode ? { mode } : {}),
+        ...(tweetId ? { tweetId } : {}),
+        ...(tweetText ? { tweetText } : {}),
+      });
       // Update UI to show pending state
-      badgeForPending(anchor, sig);
+      badgeForPending(anchor, sig, mode);
     }
 
     /** Cancel a pending hide action (user clicked undo). */
@@ -143,12 +243,21 @@ export default defineContentScript({
       clearMounts(pending.anchor);
     }
 
-    /** Execute the action after the preview window expires. The local record
-     *  + visual hide always happen (so the row stays gone across navigation);
-     *  if the user opted into "mute"/"block", X's native action rides on top
-     *  via the user's own session (best-effort, paced). */
-    function executeHide(key: string, sig: Signals) {
-      const mode = settings.actionMode;
+    /** Execute the action (after the preview window expires, or immediately
+     *  from the bubble's batch panel). The local record + visual hide always
+     *  happen (so the row stays gone across navigation); if the user opted
+     *  into "mute"/"block", X's native action rides on top via the user's
+     *  own session (best-effort, paced). Everything up to the X call runs
+     *  synchronously; the returned promise resolves once the native action
+     *  settled (true = local-only mode or X action succeeded). */
+    function executeHide(key: string, sig: Signals): Promise<boolean> {
+      const pend = pendingActions.get(key);
+      const mode = pend?.mode ?? settings.actionMode;
+      // Triggering-tweet audit trail: prefer what scheduleHide captured live,
+      // else the finding (bubble batch path — pending already cleared).
+      const fin = findings.find((x) => (x.userId || `h:${x.handle}`) === key);
+      const tweetId = pend?.tweetId ?? fin?.tweetId;
+      const tweetText = pend?.tweetText ?? fin?.snippet;
       void addBlocked(key);
       if (sig.userId) void addBlocked(sig.userId);
       void addBlockRecord({
@@ -156,16 +265,18 @@ export default defineContentScript({
         handle: sig.handle,
         ...(sig.displayName ? { displayName: sig.displayName } : {}),
         ...(sig.avatarUrl ? { avatarUrl: sig.avatarUrl } : {}),
+        ...(tweetId ? { tweetId } : {}),
+        ...(tweetText ? { tweetText } : {}),
         source: "manual",
         ts: Date.now(),
       });
       void bumpStats({ blocks: 1 });
       void bumpStat("blocked");
-      void applyXAction(mode, sig);
       // X recycles article nodes: only hide via the captured anchor if it
       // still belongs to this account; otherwise use the tagged row, else
       // abort the DOM hide (the block itself is already recorded).
-      const anchor = pendingActions.get(key)?.anchor ?? null;
+      const anchor =
+        pendingActions.get(key)?.anchor ?? anchorByKey.get(key) ?? null;
       const art = articleOf(anchor);
       const sameAuthor =
         !!art && handleFromArticle(art)?.toLowerCase() === sig.handle.toLowerCase();
@@ -173,11 +284,12 @@ export default defineContentScript({
         ? anchor
         : document.querySelector(`[data-xss-key="${CSS.escape(key)}"]`);
       if (target) hideTweet(target);
+      return applyXAction(mode, sig);
     }
 
-    function badgeForPending(anchor: HTMLElement, sig: Signals) {
+    function badgeForPending(anchor: HTMLElement, sig: Signals, mode?: ActionMode) {
       clearMounts(anchor);
-      const verb = actionVerb(settings.actionMode);
+      const verb = actionVerb(mode ?? settings.actionMode);
       mountBadge(anchor, () => {
         const el = document.createElement("span");
         el.className = "xss-badge pending";
@@ -191,15 +303,186 @@ export default defineContentScript({
       });
     }
 
-    function pushFinding(sig: Signals, v: Verdict, source: string) {
+    // ---- Visible auto-processing queue (the v0.4 爽感 path) ----
+    // Auto hits do NOT vanish silently: each account is queued and worked
+    // ONE AT A TIME — in-place pulsing "拉黑中" badge on the tweet, live
+    // queued→processing→done row states in the bubble (which auto-opens),
+    // then an animated collapse of the cell. The decision itself is recorded
+    // up-front, so only the theater is deferred, never the protection.
+    const AUTO_MIN_ACT_MS = 900; // every item is visibly "worked" this long
+    const AUTO_SETTLE_MS = 240; // beat between items (v0.4: 180ms)
+    // Roster-first: the page scan surfaces hits one by one, so the sweep
+    // waits out a short gather window — the bubble fills with 排队中 rows
+    // FIRST, then the cleanup walks through them. Capped so a trickle of
+    // late hits can't stall the start forever.
+    const AUTO_GATHER_MS = 1600;
+    const AUTO_GATHER_MAX_MS = 4000;
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    interface AutoItem {
+      key: string;
+      sig: Signals;
+      action: CategoryAction;
+      verb: string;
+      anchor: HTMLElement;
+      verdict: Verdict;
+      categoryZh: string;
+      tweetId?: string;
+    }
+    const autoQueue: AutoItem[] = [];
+    // Keys owned by the queue — step 0's insta-hide must spare the cell the
+    // animation is (about to be) playing on.
+    const autoActing = new Set<string>();
+    let autoDraining = false;
+
+    function mountActing(anchor: HTMLElement, verb: string, queued: boolean) {
+      clearMounts(anchor);
+      mountBadge(anchor, () => createActingBadge(verb, queued));
+    }
+
+    /** X recycles article nodes: trust the captured anchor only while it
+     *  still renders this account, else fall back to the tagged row. */
+    function autoTarget(it: AutoItem): HTMLElement | null {
+      const art = articleOf(it.anchor);
+      const same =
+        !!art && handleFromArticle(art)?.toLowerCase() === it.sig.handle.toLowerCase();
+      if (same) return it.anchor;
+      return document.querySelector<HTMLElement>(
+        `[data-xss-key="${CSS.escape(it.key)}"]`,
+      );
+    }
+
+    function enqueueAuto(it: AutoItem) {
+      if (autoActing.has(it.key)) return;
+      autoActing.add(it.key);
+      // Record FIRST — the protection survives navigation even if the
+      // animation never gets to play.
+      void addBlocked(it.key);
+      if (it.sig.userId) void addBlocked(it.sig.userId);
+      // The 处理记录 row too: the id lands in xss:blocked above, and a record
+      // is the only UI path back (恢复显示). Writing it after the paced X
+      // action left a window (tab close mid-queue) that produced permanently
+      // hidden accounts with no recover entry. The X-failure annotation is
+      // patched in later by the drain loop.
+      const tweetText = it.sig.triggeringComment || it.sig.recentTweets[0];
+      void addBlockRecord({
+        id: it.key,
+        handle: it.sig.handle,
+        ...(it.sig.displayName ? { displayName: it.sig.displayName } : {}),
+        ...(it.sig.avatarUrl ? { avatarUrl: it.sig.avatarUrl } : {}),
+        ...(it.tweetId ? { tweetId: it.tweetId } : {}),
+        ...(tweetText ? { tweetText } : {}),
+        verdict: it.verdict,
+        reason: `${it.categoryZh} · 自动${it.verb}`,
+        source: "auto",
+        ts: Date.now(),
+      });
+      void bumpStats({ blocks: 1 });
+      void bumpStat("blocked");
+      articleOf(it.anchor)?.setAttribute("data-xss-key", it.key);
+      mountActing(it.anchor, it.verb, true);
+      bubbleApi?.markAuto(it.key, "queued", it.verb);
+      autoQueue.push(it);
+      scheduleDrain();
+    }
+
+    let drainTimer: ReturnType<typeof setTimeout> | undefined;
+    let gatherStart = 0;
+    /** Debounced sweep start: every new hit extends the gather window by
+     *  AUTO_GATHER_MS, bounded by AUTO_GATHER_MAX_MS from the first hit. */
+    function scheduleDrain() {
+      if (autoDraining) return; // mid-sweep hits just join the tail
+      const now = Date.now();
+      if (!gatherStart) gatherStart = now;
+      const delay = Math.min(
+        AUTO_GATHER_MS,
+        Math.max(0, gatherStart + AUTO_GATHER_MAX_MS - now),
+      );
+      clearTimeout(drainTimer);
+      drainTimer = setTimeout(() => void drainAuto(), delay);
+    }
+
+    async function drainAuto() {
+      if (autoDraining) return;
+      autoDraining = true;
+      gatherStart = 0;
+      try {
+        await drainAutoLoop();
+      } finally {
+        autoDraining = false;
+      }
+      // A hit that landed exactly as the loop exited would otherwise sit
+      // until the next enqueue — sweep it into a fresh (short) round.
+      if (autoQueue.length) scheduleDrain();
+    }
+
+    async function drainAutoLoop() {
+      while (autoQueue.length) {
+        const it = autoQueue.shift();
+        if (!it) break;
+        // One broken item (dead DOM node, render error) must not strand the
+        // rest of the queue — fail it and move on.
+        try {
+          const t0 = Date.now();
+          const acting = autoTarget(it);
+          if (acting) mountActing(acting, it.verb, false);
+          bubbleApi?.markAuto(it.key, "processing", it.verb);
+          const xOk =
+            it.action === "mute" || it.action === "block"
+              ? await applyXAction(it.action, it.sig)
+              : true;
+          if (!xOk)
+            console.warn(`[MXGA] 自动${it.verb}：X 原生动作失败`, it.sig.handle, it.sig.userId);
+          // Even the instant local-hide mode dwells long enough to be SEEN.
+          const dwell = AUTO_MIN_ACT_MS - (Date.now() - t0);
+          if (dwell > 0) await sleep(dwell);
+          collapseTweet(autoTarget(it));
+          // The record itself was written at enqueue time; only the X-action
+          // outcome needs reconciling here.
+          if (!xOk) {
+            void updateBlockRecord(it.key, {
+              reason: `${it.categoryZh} · 自动${it.verb}（X 动作失败，仅本地隐藏）`,
+            });
+          }
+          bubbleApi?.markAuto(it.key, xOk ? "done" : "failed", it.verb);
+        } catch (e) {
+          console.warn(`[MXGA] 自动${it.verb}处理异常`, it.sig.handle, e);
+          try {
+            bubbleApi?.markAuto(it.key, "failed", it.verb);
+          } catch {
+            /* bubble unavailable — the record above still stands */
+          }
+        } finally {
+          autoActing.delete(it.key);
+        }
+        await sleep(AUTO_SETTLE_MS);
+      }
+    }
+
+    function pushFinding(
+      sig: Signals,
+      v: Verdict,
+      source: string,
+      meta?: { categoryZh?: string; tweetId?: string },
+    ) {
       if (!["spam", "porn_bot", "likely_spam"].includes(v.label)) return;
       const id = keyOf(sig);
-      if (findings.some((f) => (f.userId || `h:${f.handle}`) === id)) return;
+      // Dedupe by key AND by handle: the same account can be scanned once
+      // WITH a uid (article fiber walk) and once without (profile header),
+      // producing two different keys — the bubble then listed it twice.
+      const h = sig.handle.toLowerCase();
+      if (
+        findings.some(
+          (f) => (f.userId || `h:${f.handle}`) === id || f.handle.toLowerCase() === h,
+        )
+      )
+        return;
       const snippet = sig.triggeringComment || sig.recentTweets[0] || sig.bio;
       findings.push({
         handle: sig.handle,
         verdict: v,
         source,
+        ...(meta?.categoryZh ? { categoryZh: meta.categoryZh } : {}),
+        ...(meta?.tweetId ? { tweetId: meta.tweetId } : {}),
         ...(sig.userId ? { userId: sig.userId } : {}),
         ...(sig.avatarUrl ? { avatarUrl: sig.avatarUrl } : {}),
         ...(sig.displayName ? { displayName: sig.displayName } : {}),
@@ -222,6 +505,7 @@ export default defineContentScript({
           v,
           {
             onHide: () => scheduleHide(key, sig, anchor),
+            onHideLocal: () => scheduleHide(key, sig, anchor, "local"),
             onAppeal: openAppeal,
           },
           note,
@@ -236,24 +520,103 @@ export default defineContentScript({
       pushFinding(sig, c.verdict, "cache");
     }
 
-    function renderLocalIndex(anchor: HTMLElement, key: string, sig: Signals, entry: IndexEntry) {
-      badgeFor(anchor, key, sig, entry.verdict, undefined, "list");
-      pushFinding(sig, entry.verdict, "local-index");
+    function renderLocalIndex(
+      anchor: HTMLElement,
+      key: string,
+      sig: Signals,
+      entry: IndexEntry,
+      badgeSource: BadgeSource = "list",
+      ctx: ScanContext = "feed",
+    ) {
       if (!hitPublicSeen.has(key)) {
         hitPublicSeen.add(key);
         void bumpStat("hitPublic");
       }
+      // Triggering tweet for the audit trail (null on profile headers).
+      const hitArt = articleOf(anchor);
+      const hitTweetId = hitArt ? articleStatusId(hitArt) : null;
+      // Auto-action decision chain (each gate independent, no cross-talk):
+      //   1. ELIGIBILITY — autoEligible() in lib/auto-policy.ts. The hard
+      //      line lives there: list hits auto-act only when human-confirmed
+      //      (tier "confirmed") — AI/rule/mention auto-published entries are
+      //      badge-only; rule hits are reply-section-only; cache never.
+      //      entry.tier (人工确认/自动收录) stays visible in the popover;
+      //      /v1/check keeps the same human-tier filter for legacy clients.
+      //   2. SCOPE — settings.autoScope: replies-only by default; "all"
+      //      opts feed+profile in (list hits only, see above).
+      //   3. MASTER SWITCH — settings.autoProcess (bubble toggle), below.
+      //   4. POLICY — per-category action (badge/hide/mute/block).
+      // (Auto actions stay reversible from the 处理记录 tab, and mute/block
+      // ride the user's own X session like the manual path.)
+      const eligible = autoEligible({
+        source: badgeSource,
+        tier: entry.tier,
+        inReply: ctx === "reply",
+        autoScope: settings.autoScope,
+      });
+      const action = eligible
+        ? (settings.categoryActions[entry.category] ?? "badge")
+        : "badge";
+      // 自动处理 master switch off → everything degrades to mark-only,
+      // regardless of the per-category policy.
+      if (action === "badge" || !settings.autoProcess) {
+        badgeFor(anchor, key, sig, entry.verdict, undefined, badgeSource);
+        pushFinding(sig, entry.verdict, badgeSource === "rule" ? "local-rule" : "local-index", {
+        categoryZh: CATEGORY_ZH[entry.category],
+        ...(hitTweetId ? { tweetId: hitTweetId } : {}),
+      });
+        return;
+      }
+      // Auto-processed accounts still show up in the bubble panel — as
+      // display-only rows driven through markAuto (checkbox disabled,
+      // button is a status chip). Chips + radar pill counts follow.
+      pushFinding(sig, entry.verdict, badgeSource === "rule" ? "local-rule" : "local-index", {
+        categoryZh: CATEGORY_ZH[entry.category],
+        ...(hitTweetId ? { tweetId: hitTweetId } : {}),
+      });
+      const verb = action === "mute" ? "静音" : action === "block" ? "拉黑" : "隐藏";
+      // The visible queue owns everything from here: records up-front, then
+      // in-place badge → paced X action → animated collapse → bubble row
+      // states. The 处理记录 line is written after the X action settles so it
+      // can state honestly whether the native mute/block actually landed.
+      enqueueAuto({
+        key,
+        sig,
+        action,
+        verb,
+        anchor,
+        verdict: entry.verdict,
+        categoryZh: CATEGORY_ZH[entry.category],
+        ...(hitTweetId ? { tweetId: hitTweetId } : {}),
+      });
     }
 
-    async function process(sig: Signals, anchor: HTMLElement) {
+    async function process(sig: Signals, anchor: HTMLElement, ctx: ScanContext = "feed") {
       const key = keyOf(sig);
       if (inFlight.has(key)) return; // a concurrent scan is already on it
       inFlight.add(key);
       try {
         anchorByKey.set(key, anchor);
 
-        // 0. Already blocked → hide, never render again.
-        if (isBlockedSync(key) || (sig.userId && isBlockedSync(sig.userId))) {
+        // 0. Already blocked → hide, never render again. Exception: the cell
+        //    the visible auto queue is working on (it was recorded up-front)
+        //    — its animation owns the hide; OTHER cells by the same account
+        //    still vanish instantly.
+        // Check every id form the account may have been recorded under: the
+        // same account can surface with a uid (fiber walk) or handle-only
+        // (profile header), and a hit stored under one form must short-circuit
+        // the other — otherwise it gets auto-processed twice and 恢复显示
+        // (which deletes one id) never actually un-hides it.
+        if (
+          isBlockedSync(key) ||
+          (sig.userId && isBlockedSync(sig.userId)) ||
+          isBlockedSync(`h:${sig.handle}`)
+        ) {
+          if (
+            autoActing.has(key) &&
+            articleOf(anchor)?.getAttribute("data-xss-key") === key
+          )
+            return;
           hideTweet(anchor);
           return;
         }
@@ -276,7 +639,38 @@ export default defineContentScript({
         // 3. Local public index lookup (no remote requests, <50ms).
         const entry = lookupLocal(sig.userId, sig.handle);
         if (entry) {
-          renderLocalIndex(anchor, key, sig, entry);
+          renderLocalIndex(anchor, key, sig, entry, "list", ctx);
+          return;
+        }
+
+        // 3.5 Maintainer-curated keyword rules, shipped with the synced list.
+        // Catches first-seen template accounts (brand-new porn-bot throwaways
+        // not yet on the public list) with zero upload. Whitelist wins.
+        const ruleHit = matchLocalRules(sig);
+        if (ruleHit && !isWhitelisted(sig.userId, sig.handle)) {
+          renderLocalIndex(
+            anchor,
+            key,
+            sig,
+            {
+              userId: sig.userId ?? "",
+              handle: sig.handle,
+              verdict: {
+                label: ruleHit.label,
+                // The matched pattern never surfaces in the UI: spammers read
+                // their own block screenshots, and a leaked keyword is a
+                // free evasion recipe. Category only.
+                confidence: 0.95,
+                reasons: [`命中官方规则 · ${CATEGORY_ZH[ruleHit.category]}`],
+              },
+              category: ruleHit.category,
+              tier: "auto", // rule hits are auto tier — reply-scope gated
+              source: "community",
+              updatedAt: new Date().toISOString(),
+            },
+            "rule",
+            ctx,
+          );
           return;
         }
 
@@ -287,7 +681,23 @@ export default defineContentScript({
       }
     }
 
+    // Persist the logged-in viewer's own handle for the options page's
+    // whitelist self-service flow (apply for YOUR account only).
+    let lastViewer: string | undefined;
+    function captureViewer() {
+      const v = viewerHandle();
+      if (v && v !== lastViewer) {
+        lastViewer = v;
+        try {
+          void chrome.storage.local.set({ "xss:viewer": { handle: v, ts: Date.now() } });
+        } catch {
+          /* non-fatal */
+        }
+      }
+    }
+
     function scan() {
+      captureViewer();
       const p = extractProfile();
       if (p) {
         const el = document.querySelector<HTMLElement>('[data-testid="UserName"]');
@@ -297,7 +707,7 @@ export default defineContentScript({
           if (nodeHandle.get(el) !== p.handle || !hasMount) {
             if (nodeHandle.get(el) !== p.handle) clearMounts(el);
             nodeHandle.set(el, p.handle);
-            void process(p, el);
+            void process(p, el, "profile");
           }
         }
       }
@@ -308,6 +718,11 @@ export default defineContentScript({
       // first (link href only) — full extraction (fiber walk, innerText)
       // runs only for nodes that actually need (re-)processing.
       const topic = extractThreadTopic();
+      // Reply detection: on a /user/status/<id> page every article whose own
+      // permalink id differs from the focal id is a conversation reply — the
+      // context where auto actions are allowed by default. Everything else
+      // (home/list/search feeds, the focal tweet itself) is "feed".
+      const focal = focalStatusId();
       for (const art of document.querySelectorAll<HTMLElement>(
         'article[data-testid="tweet"]',
       )) {
@@ -321,7 +736,9 @@ export default defineContentScript({
         if (topic && !info.threadTopic) info.threadTopic = topic;
         if (nodeHandle.get(art) !== handle) clearMounts(nameBlock); // recycled node
         nodeHandle.set(art, handle);
-        void process(info, nameBlock);
+        const sid = focal ? articleStatusId(art) : null;
+        const ctx: ScanContext = focal && sid && sid !== focal ? "reply" : "feed";
+        void process(info, nameBlock, ctx);
       }
     }
 
@@ -334,30 +751,41 @@ export default defineContentScript({
         st.textContent = STYLE;
         container.appendChild(st);
         const bubble = createBubble({
-          onHideAll(keys: string[]) {
-            // Schedule all hides with 5s undo window
-            for (const key of keys) {
-              const anchor = anchorByKey.get(key);
-              if (anchor) {
-                // Find the signals from findings
+          onProcess(keys: string[], onProgress: (key: string, ok: boolean) => void) {
+            // Batch panel: the user explicitly confirmed, so act immediately
+            // (no 5s undo window). Sequential await keeps the native X
+            // mute/block calls on x-action's global pacing; the bubble's
+            // chips/progress/rows advance on every onProgress callback.
+            void (async () => {
+              for (const key of keys) {
                 const f = findings.find(
                   (x) => (x.userId || `h:${x.handle}`) === key,
                 );
-                if (f) {
-                  const sig: Signals = {
-                    isProfile: false,
-                    handle: f.handle,
-                    displayName: f.displayName ?? "",
-                    bio: "",
-                    hasDefaultAvatar: false,
-                    recentTweets: [],
-                    ...(f.userId ? { userId: f.userId } : {}),
-                    ...(f.avatarUrl ? { avatarUrl: f.avatarUrl } : {}),
-                  };
-                  scheduleHide(key, sig, anchor);
+                if (!f) {
+                  onProgress(key, false);
+                  continue;
                 }
+                const sig: Signals = {
+                  isProfile: false,
+                  handle: f.handle,
+                  displayName: f.displayName ?? "",
+                  bio: "",
+                  hasDefaultAvatar: false,
+                  recentTweets: [],
+                  ...(f.userId ? { userId: f.userId } : {}),
+                  ...(f.avatarUrl ? { avatarUrl: f.avatarUrl } : {}),
+                };
+                // Take over any pending 5s-undo for this account — the batch
+                // action supersedes the preview window.
+                const pending = pendingActions.get(key);
+                if (pending) {
+                  clearTimeout(pending.timer);
+                  pendingActions.delete(key);
+                }
+                const ok = await executeHide(key, sig).catch(() => false);
+                onProgress(key, ok);
               }
-            }
+            })();
           },
           onReviewEach() {
             const first = findings[0];
@@ -370,7 +798,16 @@ export default defineContentScript({
           onDismiss() {
             dismissed = true;
           },
-        }, settings.bubblePos, actionVerb(settings.actionMode));
+          onToggleAuto(v: boolean) {
+            // Persist; the onSettingsChange listener updates `settings` (and
+            // echoes the new state back into the bubble, a no-op here).
+            void setSetting("autoProcess", v);
+          },
+        }, settings.bubblePos, actionVerb(settings.actionMode), {
+          autoProcess: settings.autoProcess,
+          autoCategoryCount: autoCategoryCount(settings),
+          autoScopeAll: settings.autoScope === "all",
+        });
         container.appendChild(bubble.el);
         if (!settings.bubble) bubble.el.style.display = "none";
         bubbleApi = bubble;
@@ -385,12 +822,16 @@ export default defineContentScript({
     ctx.addEventListener(window, "wxt:locationchange", () => {
       for (const [key, p] of pendingActions) {
         clearTimeout(p.timer);
-        executeHide(key, p.sig);
+        void executeHide(key, p.sig);
       }
       pendingActions.clear();
       anchorByKey.clear();
       findings = [];
-      bubbleApi?.update(findings);
+      // Collapse the card and archive this page's processed rows — the
+      // bubble follows the user across SPA navigations, so a stale open
+      // panel over a new page reads as broken; the session's records stay
+      // viewable in the 已处理 tab until a hard reload.
+      bubbleApi?.pageReset();
     });
 
     let debounce: ReturnType<typeof setTimeout> | undefined;
@@ -407,6 +848,24 @@ export default defineContentScript({
     // user stops scrolling (no new DOM mutations). ctx-bound: stops when
     // the content script is invalidated.
     ctx.setInterval(scan, 4000);
+    // List / whitelist hot-swap (background sync or 立即更新): the lookup
+    // maps already rebuilt via local-index's own onChanged hook, but rows
+    // rendered with the OLD data keep their badge (scan skips mounted
+    // nodes). Drop every neutral badge so the next scan re-evaluates the
+    // page against the fresh list. Pending/hidden rows are untouched.
+    try {
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area !== "local" || (!changes[LIST_KEY] && !changes[WL_KEY])) return;
+        for (const host of document.querySelectorAll<HTMLElement>(".xss-mount")) {
+          // Badges live in the host's shadow root; keep pending-undo flows.
+          if (host.shadowRoot?.querySelector(".xss-badge.pending")) continue;
+          host.remove();
+        }
+        scan();
+      });
+    } catch {
+      /* non-fatal */
+    }
     scan();
   },
 });

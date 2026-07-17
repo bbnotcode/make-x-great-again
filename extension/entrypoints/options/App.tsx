@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { clearGh, getGhLogin, getGhToken, ghUser, setGh } from "../../lib/auth";
 import { BRAND } from "../../lib/brand";
+import { CATEGORY_ZH, SPAM_CATEGORIES, type SpamCategory } from "../../lib/category";
 import { categorizeReason, categorizeReasons } from "../../lib/reason-category";
 import {
   type ActionMode,
+  type CategoryAction,
   type Settings,
   getSettings,
+  setCategoryAction,
   setSetting,
 } from "../../lib/settings";
+import { getStoredList, getStoredWhitelist } from "../../lib/list-sync";
 import {
   type BlockRecord,
   type CacheRow,
@@ -15,6 +20,7 @@ import {
   getCacheRows,
   getStats,
   removeBlock,
+  tweetUrl,
 } from "../../lib/store";
 import type { Label } from "../../lib/types";
 
@@ -271,12 +277,124 @@ const td = "border-b border-border px-3 py-2.5 align-middle whitespace-nowrap";
 const th = `${td} text-[10.5px] font-semibold uppercase tracking-[0.06em] text-fg-3`;
 const trHover = "transition hover:bg-card-hi";
 
+const CAT_COLOR: Record<string, string> = {
+  porn: "#a855f7",
+  crypto: "#f59e0b",
+  gambling: "#ec4899",
+  resource: "#3b82f6",
+  marketing: "#ef4444",
+  other: "#71717a",
+};
+
+const relTime = (ts: number | null | undefined): string => {
+  if (!ts) return "从未";
+  const m = Math.max(0, Math.round((Date.now() - ts) / 60000));
+  if (m < 1) return "刚刚";
+  if (m < 60) return `${m} 分钟前`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} 小时前`;
+  return `${Math.floor(h / 24)} 天前`;
+};
+
+interface ListState {
+  black: number;
+  white: number;
+  version: string | null;
+  fetchedAt: number | null;
+  rules: number;
+  catDist: Record<string, number>;
+}
+
+async function readListState(): Promise<ListState> {
+  const [list, wl] = await Promise.all([getStoredList(), getStoredWhitelist()]);
+  const catDist: Record<string, number> = {};
+  if (list) {
+    for (const e of list.entries) {
+      const code = String(e[2])[1] ?? "o";
+      catDist[code] = (catDist[code] ?? 0) + 1;
+    }
+  }
+  return {
+    black: list?.count ?? 0,
+    white: wl?.count ?? 0,
+    version: list?.version ?? null,
+    fetchedAt: list?.fetchedAt ?? null,
+    rules: list?.rules?.length ?? 0,
+    catDist,
+  };
+}
+
+/** 名单状态卡：黑/白名单规模、版本、同步时间 + 手动「立即更新」。 */
+function ListStatusCard({ ls, onRefreshed }: { ls: ListState; onRefreshed: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const refresh = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = (await chrome.runtime.sendMessage({ type: "list-sync", force: true })) as {
+        ok: boolean;
+        data?: { updated?: boolean; black?: number; white?: number; error?: string };
+        error?: string;
+      };
+      const d = r?.data;
+      if (r?.ok && d && !d.error) {
+        setMsg(d.updated ? `已更新 · 黑名单 ${d.black?.toLocaleString()} 条` : "已是最新版本");
+        onRefreshed();
+      } else {
+        setMsg(`更新失败：${d?.error ?? r?.error ?? "未知错误"}`);
+      }
+    } catch (e) {
+      setMsg(`更新失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mb-8 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3">
+      <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-[13px]">
+        <span>
+          <b className="font-mono text-[16px] tabular-nums">{ls.black.toLocaleString("zh-CN")}</b>
+          <span className="ml-1 text-fg-3">黑名单</span>
+        </span>
+        <span>
+          <b className="font-mono text-[16px] tabular-nums">{ls.white.toLocaleString("zh-CN")}</b>
+          <span className="ml-1 text-fg-3">白名单</span>
+        </span>
+        <span>
+          <b className="font-mono text-[16px] tabular-nums">{ls.rules}</b>
+          <span className="ml-1 text-fg-3">检测规则</span>
+        </span>
+        <span className="text-[12px] text-fg-3">
+          上次同步 {relTime(ls.fetchedAt)}
+          {ls.version ? ` · ${ls.version.slice(0, 14)}…` : ""} · 每 6 小时自动同步
+        </span>
+      </div>
+      <div className="flex items-center gap-3">
+        {msg && <span className="text-[12px] text-fg-3">{msg}</span>}
+        <Btn onClick={refresh} disabled={busy}>
+          {busy ? "同步中…" : "立即更新"}
+        </Btn>
+      </div>
+    </div>
+  );
+}
+
 function Overview() {
   const [s, setS] = useState<Awaited<ReturnType<typeof getStats>> | null>(null);
   const [bl, setBl] = useState(0);
+  const [autoBl, setAutoBl] = useState(0);
+  const [ls, setLs] = useState<ListState | null>(null);
+  const [st, setSt] = useState<Settings | null>(null);
+  const loadLists = () => readListState().then(setLs);
   useEffect(() => {
     getStats().then(setS);
-    getBlocklist().then((l) => setBl(l.length));
+    getBlocklist().then((l) => {
+      setBl(l.length);
+      setAutoBl(l.filter((r) => r.source === "auto").length);
+    });
+    getSettings().then(setSt);
+    void loadLists();
   }, []);
   if (!s) return <Page title="概览" sub="加载中…" />;
   const d = s.byLabel;
@@ -298,14 +416,83 @@ function Overview() {
       <div className="mt-2 text-[12px] text-fg-3">{l}</div>
     </div>
   );
+  const catTotal = ls ? Object.values(ls.catDist).reduce((a, b) => a + b, 0) || 1 : 1;
+  const CAT_ORDER: [string, SpamCategory][] = [
+    ["p", "porn"],
+    ["m", "marketing"],
+    ["r", "resource"],
+    ["c", "crypto"],
+    ["g", "gambling"],
+    ["o", "other"],
+  ];
   return (
     <Page title="概览" sub="本地统计 · 数据仅存于本机，无 PII">
+      {ls && <ListStatusCard ls={ls} onRefreshed={loadLists} />}
       <div className="mb-8 grid grid-cols-4 gap-px overflow-hidden rounded-lg border border-border bg-border">
         <Card n={s.detections} l="AI 检测总数" />
         <Card n={s.cacheHits} l="缓存命中 · 省下的 LLM 调用" />
-        <Card n={bl} l="已隐藏账号" />
+        <Card n={bl} l={autoBl ? `已处理账号 · 其中自动 ${autoBl.toLocaleString("zh-CN")}` : "已处理账号"} />
         <Card n={(d.spam ?? 0) + (d.porn_bot ?? 0)} l="判定为垃圾/色情bot" />
       </div>
+
+      {ls && ls.black > 0 && (
+        <div className="mb-8">
+          <SectionH>公共黑名单构成</SectionH>
+          <div className="my-2 flex h-1.5 overflow-hidden rounded-full bg-card">
+            {CAT_ORDER.map(([code, cat]) =>
+              ls.catDist[code] ? (
+                <i
+                  key={code}
+                  style={{
+                    width: `${((ls.catDist[code] / catTotal) * 100).toFixed(1)}%`,
+                    background: CAT_COLOR[cat],
+                  }}
+                  className="block h-full"
+                  title={`${CATEGORY_ZH[cat]} · ${ls.catDist[code]}`}
+                />
+              ) : null,
+            )}
+          </div>
+          <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1.5 text-[12px] text-fg-3">
+            {CAT_ORDER.map(([code, cat]) => (
+              <span key={code} className="inline-flex items-center gap-1.5">
+                <i className="block h-2 w-2 rounded-full" style={{ background: CAT_COLOR[cat] }} />
+                {CATEGORY_ZH[cat]} {(ls.catDist[code] ?? 0).toLocaleString("zh-CN")}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {st && (
+        <div className="mb-8">
+          <div className="flex items-baseline justify-between">
+            <SectionH>分级策略</SectionH>
+            <a href="?tab=settings" className="text-[12px] text-fg-3 hover:text-fg">
+              调整 →
+            </a>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {SPAM_CATEGORIES.map((cat) => {
+              const act = st.categoryActions[cat] ?? "badge";
+              const actZh =
+                act === "badge" ? "仅标记" : act === "hide" ? "自动隐藏" : act === "mute" ? "自动静音" : "自动拉黑";
+              return (
+                <span
+                  key={cat}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] ${
+                    act === "badge" ? "border-border-2 text-fg-3" : "border-fg/30 text-fg"
+                  }`}
+                >
+                  <i className="block h-2 w-2 rounded-full" style={{ background: CAT_COLOR[cat] }} />
+                  {CATEGORY_ZH[cat]} · {actZh}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <SectionH>检测类别分布</SectionH>
       <div className="my-2 flex h-1.5 overflow-hidden rounded-full bg-card">
         {seg("porn_bot", "#a855f7")}
@@ -354,16 +541,18 @@ function Blocklist() {
   );
   const src: Record<string, string> = {
     manual: "手动",
+    auto: "分级策略",
     block_all: "一键全部",
     list_hit: "公榜命中",
     cache_hit: "缓存命中",
   };
   return (
     <Page
-      title="隐藏记录"
-      sub={`共 ${list.length} 条 · 取消隐藏用于纠正误判（账号会重新可见）`}
+      title="处理记录"
+      sub={`共 ${list.length} 条 · 记录所有被隐藏 / 静音 / 拉黑的账号 · 恢复显示用于纠正误判（本地恢复可见；X 端的静音 / 拉黑需去 X 手动解除）`}
     >
       <input
+        aria-label="搜索处理记录"
         value={q}
         onChange={(e) => setQ(e.target.value)}
         placeholder="搜索 @handle / 显示名 / 理由"
@@ -418,7 +607,28 @@ function Blocklist() {
                   {r.verdict ? <Tag label={r.verdict.label} conf={r.verdict.confidence} /> : "—"}
                 </td>
                 <td className={td}>
-                  <ReasonChip raw={r.reason} />
+                  <div className="flex items-center gap-2">
+                    <ReasonChip raw={r.reason} />
+                    {tweetUrl(r) && (
+                      <a
+                        href={tweetUrl(r) as string}
+                        target="_blank"
+                        rel="noopener"
+                        title={r.tweetText ? `触发内容：${r.tweetText}` : "查看触发这次处理的推文"}
+                        className="whitespace-nowrap text-[11px] text-fg-3 underline decoration-dotted underline-offset-2 transition hover:text-accent"
+                      >
+                        现场 ↗
+                      </a>
+                    )}
+                  </div>
+                  {r.tweetText && (
+                    <div
+                      className="mt-1 max-w-[260px] truncate text-[11px] text-fg-3"
+                      title={r.tweetText}
+                    >
+                      “{r.tweetText}”
+                    </div>
+                  )}
                 </td>
                 <td className={`${td} text-fg-3`}>{src[r.source]}</td>
                 <td className={`${td} font-mono text-[12px] text-fg-3`}>{when(r.ts)}</td>
@@ -430,7 +640,7 @@ function Blocklist() {
                       load();
                     }}
                   >
-                    取消隐藏
+                    恢复显示
                   </Btn>
                 </td>
               </tr>
@@ -438,7 +648,7 @@ function Blocklist() {
           </tbody>
         </table>
       </div>
-      {!list.length && <div className="py-10 text-center text-fg-3">还没有隐藏记录</div>}
+      {!list.length && <div className="py-10 text-center text-fg-3">还没有处理记录</div>}
     </Page>
   );
 }
@@ -556,19 +766,19 @@ const ACTION_MODES: {
   {
     value: "local",
     label: "本地隐藏（推荐）",
-    hint: "只在本扩展里隐藏 ta 的推文，X 完全无感、零联网，可随时在「隐藏记录」里恢复。",
+    hint: "只在本扩展里隐藏，零联网，可随时在「处理记录」恢复。",
     needsX: false,
   },
   {
     value: "mute",
     label: "X 静音",
-    hint: "用你的 X 登录态调用 X 原生静音：你不再看到 ta，对方不知情、关注关系不变。需要授权访问 x.com。",
+    hint: "X 原生静音：你看不到 ta，对方无感知。需授权 x.com。",
     needsX: true,
   },
   {
     value: "block",
     label: "X 拉黑",
-    hint: "用你的 X 登录态调用 X 原生屏蔽：互相看不到、解除关注，最强。需要授权访问 x.com。高频批量拉黑可能触发 X 风控，请分批少量处理。",
+    hint: "X 原生拉黑：互相不可见、解除关注。需授权 x.com；大批量拉黑可能触发风控。",
     needsX: true,
   },
 ];
@@ -583,13 +793,467 @@ async function ensureXPermission(): Promise<boolean> {
   }
 }
 
+const CATEGORY_HINT: Record<SpamCategory, string> = {
+  porn: "约炮 / 上门 / 引流到主页的色情机器人",
+  crypto: "荐币、空投、合约喊单、股票投放",
+  gambling: "博彩、体育投注、棋牌推广",
+  resource: "网盘资源自取、盗版资源引流",
+  marketing: "广告矩阵、涨粉、通用营销引流",
+  other: "已确认是垃圾号但未归入以上类别",
+};
+
+const CATEGORY_ACTIONS: { value: CategoryAction; label: string; needsX: boolean }[] = [
+  { value: "badge", label: "仅标记", needsX: false },
+  { value: "hide", label: "自动隐藏", needsX: false },
+  { value: "mute", label: "自动静音", needsX: true },
+  { value: "block", label: "自动拉黑", needsX: true },
+];
+
+/** cat → 1-char lite-artifact code (schema v2), for the per-category counts
+ *  shown next to the policy rows. Mirrors CODE_TO_CATEGORY in lib/category. */
+const CAT_CODE: Record<SpamCategory, string> = {
+  porn: "p",
+  crypto: "c",
+  gambling: "g",
+  resource: "r",
+  marketing: "m",
+  other: "o",
+};
+
+/** One category row: name + hint on the left, 4-way segmented control on the
+ *  right. mute/block request the optional x.com permission first, exactly
+ *  like the manual 处理方式 selector. `count` = how many accounts of this
+ *  category are in the locally-synced public blacklist (hidden when no list). */
+function CategoryPolicyRow({
+  cat,
+  value,
+  count,
+  onChange,
+}: {
+  cat: SpamCategory;
+  value: CategoryAction;
+  count?: number;
+  onChange: (a: CategoryAction) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-border-2 p-3">
+      <div className="min-w-[150px]">
+        <span className="font-medium text-fg">{CATEGORY_ZH[cat]}</span>
+        {count !== undefined && (
+          <span
+            className="ml-1.5 font-mono text-[12px] tabular-nums text-fg-3"
+            title={`本地公共名单中该类别共 ${count.toLocaleString("zh-CN")} 个账号`}
+          >
+            · {count.toLocaleString("zh-CN")}
+          </span>
+        )}
+        <span className="block text-[12px] text-fg-3">{CATEGORY_HINT[cat]}</span>
+      </div>
+      <div className="flex overflow-hidden rounded-md border border-border-2">
+        {CATEGORY_ACTIONS.map((a) => {
+          const active = value === a.value;
+          return (
+            <button
+              key={a.value}
+              type="button"
+              onClick={() => onChange(a.value)}
+              className={`px-2.5 py-1.5 text-[12px] transition ${
+                active
+                  ? a.value === "block"
+                    ? "bg-danger/15 font-semibold text-danger"
+                    : "bg-card-hi font-semibold text-fg"
+                  : "text-fg-3 hover:text-fg"
+              }`}
+            >
+              {a.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+type ApplyStatus = "none" | "pending" | "approved" | "rejected";
+
+const APPLY_STATUS_ZH: Record<ApplyStatus, [string, string]> = {
+  none: ["尚未申请", "text-fg-3"],
+  pending: ["审核中", "text-warn"],
+  approved: ["已批准 ✓", "text-ok"],
+  rejected: ["已驳回", "text-danger"],
+};
+
+/** Map a /v1/whitelist/apply error response to a user-facing line. */
+function applyErrorText(status: number, error?: string): string {
+  if (status === 401) return "GitHub Token 无效或已过期，请重新生成后再试。";
+  if (status === 403 && error === "gh_account_too_young")
+    return "GitHub 账号注册需满 90 天才能申请（防滥用门槛）。";
+  if (status === 403 && error === "reporter_banned") return "该身份已被限制，无法提交申请。";
+  if (status === 409) return "已有一条待审申请（同一身份 / 同一账号同时只能有一条）。";
+  if (status === 429) return "请求太频繁，请约 1 小时后再试。";
+  if (status === 503) return "服务端暂不可用，请稍后再试。";
+  return `申请失败（HTTP ${status}${error ? ` · ${error}` : ""}）。`;
+}
+
+/** 「白名单」自助申请区：GitHub Token 做身份证明 + 提交自己的 @handle。 */
+function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
+  const base = (edgeBase || EDGE_DEFAULT).replace(/\/+$/, "");
+  const [token, setToken] = useState("");
+  const [login, setLogin] = useState<string | null>(null);
+  // The applicant's OWN X handle, captured by the content script from the
+  // logged-in x.com session ("xss:viewer"). No free-text input — you can
+  // only apply for the account you are actually logged in as (防滥用).
+  const [ownHandle, setOwnHandle] = useState<string | null>(null);
+  const [note, setNote] = useState("");
+  const [status, setStatus] = useState<ApplyStatus | null>(null);
+  const [statusHandle, setStatusHandle] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
+  const fetchStatus = async (tok: string) => {
+    try {
+      const res = await fetch(`${base}/v1/whitelist/apply/status`, {
+        headers: { authorization: `Bearer ${tok}` },
+      });
+      if (!res.ok) return;
+      const j = (await res.json()) as { status?: string; handle?: string };
+      if (j.status && j.status in APPLY_STATUS_ZH) {
+        setStatus(j.status as ApplyStatus);
+        setStatusHandle(j.handle ?? null);
+      }
+    } catch {
+      /* status display is best-effort */
+    }
+  };
+
+  useEffect(() => {
+    void (async () => {
+      const [tok, lg] = await Promise.all([getGhToken(), getGhLogin()]);
+      if (tok) {
+        setToken(tok);
+        setLogin(lg || null);
+        void fetchStatus(tok);
+      }
+      try {
+        const g = await chrome.storage.local.get("xss:viewer");
+        const v = g["xss:viewer"] as { handle?: string } | undefined;
+        if (v?.handle) setOwnHandle(v.handle);
+      } catch {
+        /* viewer capture is best-effort */
+      }
+    })();
+    // fetchStatus is stable for a given edgeBase; run once on mount.
+  }, []);
+
+  // ---- GitHub Device Flow (一键登录，v0.4 的引导交互) ----
+  const [ghFlow, setGhFlow] = useState<{ userCode: string; uri: string } | null>(null);
+  const [ghBusy, setGhBusy] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
+
+  const copyCode = async () => {
+    if (!ghFlow) return;
+    try {
+      await navigator.clipboard.writeText(ghFlow.userCode);
+      setCodeCopied(true);
+      setTimeout(() => setCodeCopied(false), 1600);
+    } catch {
+      /* clipboard denied — the code is still selectable */
+    }
+  };
+
+  const bg = (m: unknown) =>
+    new Promise<{ ok: boolean; data?: Record<string, unknown>; error?: string }>((res) => {
+      try {
+        chrome.runtime.sendMessage(m, (r) => res(r ?? { ok: false, error: "no response" }));
+      } catch (e) {
+        res({ ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
+    });
+
+  /** Shared success message incl. the 90d gate check (surfaced immediately). */
+  const showIdentity = async (lg: string) => {
+    setLogin(lg);
+    const tok = await getGhToken();
+    if (tok) {
+      setToken(tok);
+      const u = await ghUser(tok);
+      if (u?.ageDays !== null && u !== null && u.ageDays < 90) {
+        setMsg({
+          text: `已登录，GitHub 身份：@${lg} —— 注意：该账号注册仅 ${u.ageDays} 天，未满 90 天无法申请白名单（请换一个注册更久的 GitHub 账号）。`,
+          ok: false,
+        });
+      } else {
+        setMsg({
+          text: `已登录，GitHub 身份：@${lg}${u?.ageDays != null ? `（注册 ${u.ageDays} 天）` : ""}`,
+          ok: true,
+        });
+      }
+      void fetchStatus(tok);
+    }
+  };
+
+  const ghLogin = async () => {
+    setMsg(null);
+    try {
+      if (import.meta.env.BROWSER === "firefox") {
+        const dataGranted = await chrome.permissions.request({
+          data_collection: ["authenticationInfo", "personallyIdentifyingInfo"],
+        } as chrome.permissions.Permissions & { data_collection: string[] });
+        if (!dataGranted) {
+          setMsg({ text: "未授权白名单申请所需的数据传输权限。", ok: false });
+          return;
+        }
+      }
+      const granted = await chrome.permissions.request({ origins: ["https://github.com/*"] });
+      if (!granted) {
+        setMsg({ text: "未授权访问 github.com——一键登录需要该权限（仅用于 GitHub 配对登录）。", ok: false });
+        return;
+      }
+    } catch {
+      setMsg({ text: "无法请求 github.com 权限。", ok: false });
+      return;
+    }
+    setGhBusy(true);
+    try {
+      const start = await bg({ type: "gh_start" });
+      const d = start.data as
+        | { device_code?: string; user_code?: string; verification_uri?: string; interval?: number }
+        | undefined;
+      if (!start.ok || !d?.device_code || !d.user_code || !d.verification_uri) {
+        setMsg({ text: `发起 GitHub 登录失败${start.error ? `：${start.error}` : ""}`, ok: false });
+        return;
+      }
+      setGhFlow({ userCode: d.user_code, uri: d.verification_uri });
+      window.open(d.verification_uri, "_blank", "noopener");
+      const stepMs = Math.max(5, d.interval ?? 5) * 1000;
+      const deadline = Date.now() + 5 * 60_000; // GitHub device codes live ~15min; 5min is plenty
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, stepMs));
+        const poll = await bg({ type: "gh_poll", deviceCode: d.device_code });
+        const p = poll.data as { login?: string; pending?: string } | undefined;
+        if (p?.login) {
+          setGhFlow(null);
+          await showIdentity(p.login);
+          return;
+        }
+        if (p?.pending && p.pending !== "authorization_pending" && p.pending !== "slow_down") {
+          setGhFlow(null);
+          setMsg({ text: `GitHub 登录未完成（${p.pending}），可重试。`, ok: false });
+          return;
+        }
+      }
+      setGhFlow(null);
+      setMsg({ text: "登录等待超时，请重试。", ok: false });
+    } finally {
+      setGhBusy(false);
+    }
+  };
+
+  const saveToken = async () => {
+    const tok = token.trim();
+    setMsg(null);
+    if (!tok) {
+      await clearGh();
+      setLogin(null);
+      setStatus(null);
+      setMsg({ text: "已清除本机保存的 Token。", ok: true });
+      return;
+    }
+    setBusy(true);
+    const u = await ghUser(tok);
+    setBusy(false);
+    if (!u) {
+      setMsg({ text: "Token 校验失败：GitHub 拒绝了这个 Token。", ok: false });
+      return;
+    }
+    await setGh(tok, u.login);
+    setLogin(u.login);
+    // Surface the 90d anti-abuse gate NOW, not at submit time — "明明超过了
+    // 90 天" usually means the token belongs to a different (newer) account.
+    if (u.ageDays !== null && u.ageDays < 90) {
+      setMsg({
+        text: `已验证并保存，GitHub 身份：@${u.login} —— 注意：该账号注册仅 ${u.ageDays} 天，未满 90 天无法申请白名单（请换一个注册更久的 GitHub 账号的 Token）。`,
+        ok: false,
+      });
+    } else {
+      setMsg({
+        text: `已验证并保存，GitHub 身份：@${u.login}${u.ageDays !== null ? `（注册 ${u.ageDays} 天）` : ""}`,
+        ok: true,
+      });
+    }
+    void fetchStatus(tok);
+  };
+
+  const apply = async () => {
+    const h = (ownHandle ?? "").trim().replace(/^@+/, "");
+    setMsg(null);
+    if (!/^[A-Za-z0-9_]{1,15}$/.test(h)) {
+      setMsg({ text: "还没有识别到你的 X 账号——打开或刷新一次 x.com 再回到本页。", ok: false });
+      return;
+    }
+    const tok = token.trim();
+    if (!tok) {
+      setMsg({ text: "请先填写并保存 GitHub Token。", ok: false });
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch(`${base}/v1/whitelist/apply`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${tok}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          handle: h,
+          ...(note.trim() ? { note: note.trim().slice(0, 200) } : {}),
+        }),
+      });
+      const j = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        status?: string;
+        error?: string;
+      };
+      if (res.ok && j.status === "already_whitelisted") {
+        setMsg({ text: "该账号已在官方白名单中，无需申请。", ok: true });
+      } else if (res.ok && j.ok) {
+        setStatus("pending");
+        setStatusHandle(h);
+        setMsg({ text: "申请已提交，等待维护者审核。", ok: true });
+      } else {
+        setMsg({ text: applyErrorText(res.status, j.error), ok: false });
+      }
+    } catch (e) {
+      setMsg({ text: `网络错误：${e instanceof Error ? e.message : String(e)}`, ok: false });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const input =
+    "w-full rounded-md border border-border-2 bg-transparent px-3 py-2 text-[13px] outline-none transition focus:border-accent";
+  const [statusZh, statusCls] = status ? APPLY_STATUS_ZH[status] : ["", ""];
+
+  return (
+    <section>
+      <p className="mb-3 text-[13px] leading-relaxed text-fg-2">
+        三步：<b className="text-fg">GitHub 登录</b>（账号需注册满 90 天，防滥用）→
+        扩展自动识别<b className="text-fg">你登录的 X 账号</b> → 提交申请，维护者审核。
+        <span className="text-fg-3">凭证只存本机，仅用于身份验证。</span>
+      </p>
+      <div className="space-y-2.5">
+        {!login && !ghFlow && (
+          <div className="flex items-center gap-3">
+            <Btn tier="primary" onClick={ghLogin} disabled={ghBusy}>
+              {ghBusy ? "正在连接 GitHub…" : "用 GitHub 一键登录"}
+            </Btn>
+            <span className="text-[12px] text-fg-3">
+              跳转 GitHub 输入配对码即可，无需创建 Token
+            </span>
+          </div>
+        )}
+        {ghFlow && (
+          <div className="rounded-lg border border-border-2 bg-card p-4">
+            <div className="text-[12px] text-fg-3">在打开的 GitHub 页面输入这个配对码：</div>
+            <div className="my-2 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={copyCode}
+                title="点击复制配对码"
+                className="cursor-pointer rounded-md border border-transparent font-mono text-[26px] font-bold tracking-[0.2em] text-fg transition hover:border-border-2 hover:bg-card-hi"
+              >
+                {ghFlow.userCode}
+              </button>
+              <Btn size="sm" onClick={copyCode} className="flex-none">
+                {codeCopied ? "✓ 已复制" : "复制"}
+              </Btn>
+            </div>
+            <div className="text-[12px] text-fg-3">
+              等待你在 GitHub 上确认…（页面没弹出？
+              <a
+                href={ghFlow.uri}
+                target="_blank"
+                rel="noopener"
+                className="text-fg-2 underline hover:text-fg"
+              >
+                手动打开 ↗
+              </a>
+              ）
+            </div>
+          </div>
+        )}
+        {login && (
+          <p className="text-[12px] text-fg-3">
+            GitHub 身份：<b className="text-fg-2">@{login}</b>
+          </p>
+        )}
+        <details className="text-[12px] text-fg-3">
+          <summary className="cursor-pointer select-none">
+            高级：手动粘贴 GitHub Token（无需勾选任何权限）
+          </summary>
+          <div className="mt-2 flex items-center gap-2">
+            <input
+              aria-label="GitHub Token"
+              type="password"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder="GitHub Token（ghp_… / github_pat_…）"
+              autoComplete="off"
+              className={input}
+            />
+            <Btn onClick={saveToken} disabled={busy} className="flex-none">
+              验证并保存
+            </Btn>
+          </div>
+        </details>
+        <div className="flex items-center gap-2">
+          <div
+            className={`${input} flex items-center gap-2 ${ownHandle ? "" : "text-fg-3"}`}
+            title="由你当前登录的 x.com 会话自动识别，不可手填——只能为自己的账号申请"
+          >
+            {ownHandle ? (
+              <>
+                <span className="text-fg-3">申请账号（自动识别）</span>
+                <b className="text-fg">@{ownHandle}</b>
+              </>
+            ) : (
+              "未识别到你的 X 账号 · 打开或刷新一次 x.com 后回到本页"
+            )}
+          </div>
+          <input
+            aria-label="白名单申请附言"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            maxLength={200}
+            placeholder="附言（选填，≤200 字）"
+            className={input}
+          />
+        </div>
+        <div className="flex items-center gap-3">
+          <Btn tier="primary" onClick={apply} disabled={busy || !token.trim() || !ownHandle}>
+            {busy ? "提交中…" : "申请把我的 X 账号加入白名单"}
+          </Btn>
+          {status && (
+            <span className={`text-[12px] ${statusCls}`}>
+              申请状态：{statusZh}
+              {statusHandle ? ` · @${statusHandle}` : ""}
+            </span>
+          )}
+        </div>
+        {msg && <p className={`text-[12px] ${msg.ok ? "text-ok" : "text-danger"}`}>{msg.text}</p>}
+      </div>
+    </section>
+  );
+}
+
 function Settings() {
   const [cleared, setCleared] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
   const [st, setSt] = useState<Settings | null>(null);
+  const [ls, setLs] = useState<ListState | null>(null);
   const [permDenied, setPermDenied] = useState(false);
   useEffect(() => {
     getSettings().then(setSt);
+    // Loaded once so each 分级策略 row can show how many synced public-list
+    // accounts fall into its category. No list yet → counts stay hidden.
+    readListState().then(setLs);
   }, []);
   const save = async <K extends keyof Settings>(k: K, v: Settings[K]) => {
     await setSetting(k, v);
@@ -605,6 +1269,20 @@ function Settings() {
     }
     setPermDenied(false);
     await save("actionMode", mode);
+  };
+  const changeCategoryAction = async (cat: SpamCategory, action: CategoryAction) => {
+    if (action === "mute" || action === "block") {
+      const ok = await ensureXPermission();
+      if (!ok) {
+        setPermDenied(true);
+        return;
+      }
+    }
+    setPermDenied(false);
+    await setCategoryAction(cat, action);
+    setSt((p) =>
+      p ? { ...p, categoryActions: { ...p.categoryActions, [cat]: action } } : p,
+    );
   };
   return (
     <Page title="设置" sub="配置仅存于本机">
@@ -631,10 +1309,9 @@ function Settings() {
 
         {st && (
           <section>
-            <SectionH>处理方式</SectionH>
+            <SectionH>手动处理方式</SectionH>
             <p className="mb-3 text-[12px] text-fg-3">
-              点击「隐藏」按钮时，对识别出的垃圾号默认执行哪种处理。默认仅本地隐藏（零联网）；
-              选择 X 静音 / 拉黑会用你当前的 X 登录态调用 X 自家接口，不经过我们的服务器。
+              你手动点按钮时执行的动作。X 静音 / 拉黑走你自己的登录态，不经过我们的服务器；与自动分级互相独立。
             </p>
             <div className="space-y-2">
               {ACTION_MODES.map((m) => {
@@ -673,10 +1350,75 @@ function Settings() {
           </section>
         )}
 
+        {st && (
+          <section>
+            <SectionH>自动分级策略</SectionH>
+            <p className="mb-3 text-[12px] leading-relaxed text-fg-3">
+              命中<b className="text-fg-2">公共黑名单或官方规则</b>的账号按类别自动处理，其余只挂角标。
+              总开关在气泡里；规则命中只在评论区自动执行；白名单账号永不处理；一切可在「处理记录」撤销。
+            </p>
+            <div className="mb-4">
+              <div className="mb-1.5 text-[12px] font-semibold text-fg">自动处理范围</div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {(
+                  [
+                    {
+                      v: "replies",
+                      label: "仅推文评论区（推荐）",
+                      hint: "只自动处理别人推文下的回复——垃圾潮所在；信息流和主页只标记。",
+                    },
+                    {
+                      v: "all",
+                      label: "全局",
+                      hint: "信息流、主页、评论区都自动处理，误伤风险更高。",
+                    },
+                  ] as const
+                ).map((o) => {
+                  const active = (st.autoScope ?? "replies") === o.v;
+                  return (
+                    <button
+                      key={o.v}
+                      type="button"
+                      onClick={() => save("autoScope", o.v)}
+                      className={`flex items-start gap-2.5 rounded-lg border p-3 text-left transition ${
+                        active ? "border-fg bg-card-hi" : "border-border-2 hover:border-fg-3"
+                      }`}
+                    >
+                      <span
+                        className={`mt-0.5 flex h-4 w-4 flex-none items-center justify-center rounded-full border ${
+                          active ? "border-fg" : "border-border-2"
+                        }`}
+                      >
+                        {active && <span className="h-2 w-2 rounded-full bg-fg" />}
+                      </span>
+                      <span>
+                        <span className="text-[13px] font-medium text-fg">{o.label}</span>
+                        <span className="block text-[12px] leading-5 text-fg-3">{o.hint}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="space-y-2">
+              {SPAM_CATEGORIES.map((cat) => (
+                <CategoryPolicyRow
+                  key={cat}
+                  cat={cat}
+                  value={st.categoryActions[cat] ?? "badge"}
+                  count={ls && ls.black > 0 ? (ls.catDist[CAT_CODE[cat]] ?? 0) : undefined}
+                  onChange={(a) => changeCategoryAction(cat, a)}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+
         <section>
           <SectionH>数据与隐私</SectionH>
           <p className="mb-3 text-[13px] text-fg-2">
-            检测缓存、隐藏记录、统计均仅存于本机；除公开 X 数字 ID 外不存 PII。
+            检测缓存、处理记录、统计均仅存于本机；除公开 X 数字 ID 外不存 PII。
           </p>
           <div className="flex items-center gap-3">
             <Btn tier="danger" onClick={() => setClearOpen(true)}>
@@ -717,7 +1459,7 @@ const About = () => (
   <Page title="关于" sub={`${BRAND.name} · 公益、开源`}>
     <div className="max-w-[680px] space-y-4 text-[13px] leading-7 text-fg-2">
       <p>
-        X(Twitter) 反垃圾 / 色情机器人扩展。被动检测、名单随扩展打包：默认「本地隐藏」模式零远程请求，不经过任何服务器。如在「设置 → 处理方式」里选择 X 静音 / 拉黑，则会用你当前的 X 登录态调用 X 自家接口对账号生效（仍不经过我们的服务器、不收集任何数据）。
+        X(Twitter) 反垃圾 / 色情机器人扩展。被动检测：公共名单由扩展定期从官方源自动同步（只下载公开名单数据，不上传任何内容），比对全部在本机完成。如在「设置 → 处理方式」里选择 X 静音 / 拉黑，则会用你当前的 X 登录态调用 X 自家接口对账号生效（仍不经过我们的服务器、不收集任何数据）。
       </p>
       <div className="grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-2">
         <div className="bg-bg p-4">
@@ -780,11 +1522,25 @@ const Mascot = () => (
   />
 );
 
+/** 白名单自助申请 — its own nav page so the entry isn't buried in 设置. */
+function WhitelistPage() {
+  const [st, setSt] = useState<Settings | null>(null);
+  useEffect(() => {
+    getSettings().then(setSt);
+  }, []);
+  return (
+    <Page title="保护我的账号" sub="加入官方白名单 · 永不被检测、标记或上榜">
+      <div className="max-w-[680px]">{st && <WhitelistApplySection edgeBase={st.edgeBase} />}</div>
+    </Page>
+  );
+}
+
 const TABS = [
   ["overview", "概览", Overview],
-  ["blocklist", "隐藏记录", Blocklist],
+  ["blocklist", "处理记录", Blocklist],
   ["cache", "检测缓存", Cache],
   ["settings", "设置", Settings],
+  ["whitelist", "保护我的账号", WhitelistPage],
   ["about", "关于", About],
 ] as const;
 type TabId = (typeof TABS)[number][0];

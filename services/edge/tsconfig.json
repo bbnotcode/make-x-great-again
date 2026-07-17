@@ -4,11 +4,12 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "lib": ["ES2023"],
-    "types": ["@cloudflare/workers-types"],
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "verbatimModuleSyntax": true
+    "verbatimModuleSyntax": true,
+    "baseUrl": ".",
+    "paths": { "@/*": ["./app/*"] }
   },
-  "include": ["src"]
+  "include": ["src", "worker-configuration.d.ts"]
 }

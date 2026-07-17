@@ -114,7 +114,7 @@ const SCRIPT = `
     document.getElementById('agCount').textContent=fmt(meta.count);
     document.getElementById('agWeek').textContent=(meta.week>0?'+':'')+fmt(meta.week);
     document.getElementById('agDaily').textContent=fmt(Math.round((meta.week||0)/7));
-    document.getElementById('agLatest').textContent=meta.generatedAt?ago(meta.generatedAt):'—';
+    document.getElementById('agLatest').textContent=meta.latestAt?ago(meta.latestAt):'—';
   }
   function key(r){return (r.x_user_id||'')+'|'+r.handle}
   function setPulse(msg){pulseLabel.innerHTML=msg}

@@ -1,9 +1,9 @@
 # MXGA 隐私声明
 
-最后更新：2026-06-10
+最后更新：2026-07-11
 
-> 一句话概括：MXGA 浏览器扩展**不收集、不上传任何数据**；默认的「本地隐藏」模式**运行时零网络请求**。
-> 公开黑名单直接打包在扩展安装包里，所有判定、统计、隐藏列表都只存在你自己的浏览器里。
+> 一句话概括：MXGA **不会上传你的浏览记录、页面内容、扫描结果或隐藏 / 静音 / 拉黑记录**。
+> 扩展会定时从 x.zuoluo.tv 下载公开黑名单和白名单；判定、统计和处理记录只存在你的浏览器里。
 > 如果你**主动**在设置里开启 X 静音 / 拉黑，扩展会用你自己的 X 登录态调用 X 自家接口对账号生效——
 > 请求只发往 x.com，不经过我们的服务器、不收集任何数据（见下文 A.4）。
 > 网站端（x.zuoluo.tv）的举报/共建流程是独立、可选的，下面单独说明。
@@ -14,12 +14,12 @@
 
 ### 1. 扩展 **不** 做的
 
-- **默认不发任何网络请求**：默认权限清单只有 `storage` 一项；x.com 的 host 权限是「可选权限」，只有你主动切换到 X 静音 / 拉黑时才在运行时弹窗申请（见 A.4）。在默认的「本地隐藏」模式下，扩展不连我们的服务器、不连 X 的接口、不连任何第三方
+- **不上传浏览数据**：默认的「本地隐藏」不会调用 X 的接口，也不会上传页面内容或扫描结果；后台只会向 x.zuoluo.tv 下载公开名单（见 A.3）
 - **不收集个人身份信息（PII）**：姓名、邮箱、电话、地址 —— 全部不读、不存、不传
 - **不收集设备指纹**：浏览器 UA、屏幕分辨率、字体列表、Canvas 指纹 —— 全部不收集
-- **永不向我们或第三方上传数据**：默认「本地隐藏」是纯本地的视觉隐藏，不调用 X 的任何接口；只有你主动开启 X 静音 / 拉黑时，扩展才会用你浏览器里**已有**的 X 登录态去调用 X 自家的静音 / 拉黑接口——请求只发往 x.com、是你对自己 X 账号的操作，不读取也不外传该凭据，更不会发到我们这里（详见 A.4）
+- **不上传被扫描账号或处理记录**：默认「本地隐藏」是纯本地视觉操作；可选 X 静音 / 拉黑请求只发往 x.com。只有你主动使用白名单自助申请时，才会向 GitHub 和 x.zuoluo.tv 发送该流程所需的数据（见 A.6）
 - **不读你的浏览历史 / 其它 tab 内容**：content script 只对 `https://x.com/*` 和 `https://twitter.com/*` 生效
-- **没有任何登录**：不需要也不支持 GitHub 或其它账号登录
+- **登录仅用于可选白名单申请**：日常防护无需登录；白名单自助申请支持 GitHub Device Flow
 - **不嵌任何统计/追踪 SDK**：没有 Google Analytics、Sentry、Mixpanel
 
 Firefox 版在 manifest 里声明了 `data_collection_permissions: "none"`，这不是话术，是字面事实——即使在 X 静音 / 拉黑模式下它依然成立，因为那是**你**用**自己的** X 账号经 X 自家接口操作，没有任何用户数据被收集或发往我们 / 第三方。
@@ -28,26 +28,40 @@ Firefox 版在 manifest 里声明了 `data_collection_permissions: "none"`，这
 
 存于你浏览器自己的 `chrome.storage.local`，清空浏览器数据或卸载扩展即清空：
 
-- **内置公开黑名单**：随扩展包发布的 `blacklist-data.json`（约 4.6 万条公开账号条目），本地读取、本地匹配
+- **公开黑名单 / 白名单缓存**：从 x.zuoluo.tv 下载后存储，本地读取、本地匹配
 - **本地「已隐藏」账号列表**：你点过「隐藏」的 X 账号 ID；设置页可逐条「取消隐藏」恢复
 - **本地判定缓存**：避免重复扫描同一账号
 - **你自己的本地统计**：扫了多少 / 隐藏了多少 / 命中公榜多少 —— 纯本机计数器
 - **设置项**：总开关、气泡开关与位置等
 
-### 3. 扩展唯一会「打开」的外部页面
+### 3. 公开名单下载
+
+扩展安装或更新后会立即从 `https://x.zuoluo.tv` 下载公开黑名单和白名单，之后通过 `alarms` 每 6 小时检查更新。请求不携带当前页面、X 账号、扫描结果或处理记录；服务端返回的只是所有用户共用的公开名单。名单缓存使用 `storage` / `unlimitedStorage` 保存在本机。
+
+### 4. 扩展会打开的外部页面
 
 点徽标里的「申诉」时，扩展会在新标签页打开 GitHub 上的申诉 issue 模板
 （`github.com/foru17/make-x-great-again/issues/new?template=appeal.yml`）。
 这只是打开一个链接，由你决定是否在 GitHub 上提交；扩展自身不向任何服务器 POST 数据。
 
-### 4. 可选的 X 静音 / 拉黑（仅在你主动开启时）
+### 5. 可选的 X 静音 / 拉黑（仅在你主动开启时）
 
-设置页「处理方式」里默认是**本地隐藏**（零联网）。如果你把它切换到 **X 静音**或 **X 拉黑**，扩展会先用 `chrome.permissions.request` 在运行时弹窗申请 x.com 的可选 host 权限（你拒绝就停留在本地模式）。此后你点「隐藏」时，除了本地隐藏，扩展还会：
+设置页「处理方式」里默认是**本地隐藏**（不会联系 X）。如果你把它切换到 **X 静音**或 **X 拉黑**，扩展会先用 `chrome.permissions.request` 在运行时弹窗申请 x.com 的可选 host 权限（你拒绝就停留在本地模式）。此后你点「隐藏」时，除了本地隐藏，扩展还会：
 
 - **发送什么**：向 x.com 发一个针对你选中那个账号的静音 / 拉黑请求（`POST /i/api/1.1/mutes/users/create.json` 或 `POST /i/api/1.1/blocks/create.json`），带上你浏览器里**已有**的 X 登录态（页面的 `ct0` CSRF cookie + X 网页端公开 bearer）。这等同于你自己在 X 上点「静音 / 拉黑」，只是由扩展代为发起。请求经过一个限速队列（跨 tab 串行、间隔 + 抖动、阶段性冷却、429 退避）以降低触发 X 风控的概率
 - **不发送什么**：这个请求**只**发往 x.com，**绝不**发往我们的服务器（x.zuoluo.tv）或任何第三方。我们看不到、也不记录你静音 / 拉黑了谁。除了本地隐藏列表里早已保存的公开 X 数字 ID 外，不额外存储任何 PII，也不读取或外传你的 X 凭据
 
 换句话说：静音 / 拉黑是**你用自己的 X 账号**经 X 自家接口做的操作，扩展只是帮你按下按钮，数据流向与你手动操作完全一致。
+
+### 6. 可选的白名单自助申请
+
+只有你在设置页主动发起该流程时，扩展才会请求 `github.com` 可选权限并使用 GitHub Device Flow：
+
+- 向 GitHub 发送公开 OAuth client id，获得设备码并轮询授权结果；权限范围为 `read:user`
+- 将 GitHub access token 保存在扩展本地存储，用于验证申请人；可在设置页退出并删除
+- 从当前 x.com 会话识别你自己的公开 handle
+- 向 `https://x.zuoluo.tv/v1/whitelist/apply` 提交该 handle、可选附言和 GitHub bearer token
+- 服务端验证 GitHub 账号年龄，只保存加盐 HMAC 身份指纹、公开 X handle、账号年龄、附言和审核状态；不保存 GitHub token
 
 ---
 
@@ -96,4 +110,4 @@ Firefox 版在 manifest 里声明了 `data_collection_permissions: "none"`，这
 ---
 
 不放心？读源码：https://github.com/foru17/make-x-great-again 全部 AGPL-3.0。
-扩展的 manifest（`extension/wxt.config.ts`）默认权限清单只有 `storage`；x.com / twitter.com 是 `optional_host_permissions`（Firefox 为 `optional_permissions`），只有你在设置里开启 X 静音 / 拉黑时才在运行时申请。代码里（`extension/entrypoints/`、`extension/lib/`）只有两类 `fetch`：默认模式读取扩展包内自带的 `blacklist-data.json`；以及 `extension/lib/x-action.ts` 里那个**只**发往 x.com 的静音 / 拉黑请求。任何人都可以审计验证，没有任何 `fetch` 指向我们的服务器。
+扩展的 manifest（`extension/wxt.config.ts`）默认权限为 `storage`、`alarms`、`unlimitedStorage`；x.com / twitter.com 与 github.com 是运行时申请的可选 host 权限。Firefox 还把白名单流程声明为可选的 `authenticationInfo` 与 `personallyIdentifyingInfo` 数据传输，并在流程开始时申请同意。联网代码集中在 `extension/entrypoints/background.ts`、`extension/lib/list-sync.ts`、`extension/lib/x-action.ts` 和白名单申请界面，任何人都可以审计上述数据流。

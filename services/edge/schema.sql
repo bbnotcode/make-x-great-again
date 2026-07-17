@@ -14,6 +14,10 @@ CREATE TABLE IF NOT EXISTS accounts (
   verdict_label TEXT NOT NULL,              -- spam|porn_bot|likely_spam|uncertain|legit
   confidence    REAL NOT NULL,
   reasons       TEXT,                       -- json array
+  category      TEXT,                       -- porn|crypto|gambling|resource|marketing|other
+                                            -- canonical spam category; NULL = uncategorized
+                                            -- (pre-backfill legacy). Drives the client's
+                                            -- per-category action policy.
   model         TEXT,
   status        TEXT NOT NULL DEFAULT 'auto_pending_review',
                                             -- auto_pending_review | human_confirmed | rejected
@@ -27,6 +31,9 @@ CREATE TABLE IF NOT EXISTS accounts (
   first_seen    INTEGER NOT NULL,
   last_scored   INTEGER NOT NULL,
   published_at  INTEGER,
+  published_tier TEXT,                      -- who published a human_confirmed row:
+                                            -- human|ai|rule|mention. Clients may only
+                                            -- auto-act (mute/block) on 'human'.
   removed_at    INTEGER,                   -- set on upheld appeal / removal (SPEC-T1 §3.1)
   -- D1/SQLite allows multiple NULL values in composite keys, so the Worker
   -- write path also does normalized handle-level dedupe for handle-only rows.
@@ -81,6 +88,8 @@ CREATE TABLE IF NOT EXISTS review_log (
   note       TEXT,
   at         INTEGER NOT NULL
 );
+-- /v1/appeal dedupe filters (action, at); without this it full-scans review_log.
+CREATE INDEX IF NOT EXISTS idx_review_log_action_at ON review_log(action, at);
 
 -- Maintainer-curated keyword rules. Matched against incoming Signals at
 -- /v1/classify time BEFORE the LLM call: a hit short-circuits the verdict,
@@ -94,6 +103,8 @@ CREATE TABLE IF NOT EXISTS keyword_rules (
   field         TEXT NOT NULL,                 -- handle|display_name|bio|tweet|any
   action        TEXT NOT NULL DEFAULT 'blacklist', -- blacklist|whitelist|reject
   verdict_label TEXT NOT NULL DEFAULT 'spam',  -- the label written into accounts on hit
+  category      TEXT,                          -- category stamped onto accounts on hit;
+                                               -- NULL = derive from verdict_label/pattern
   enabled       INTEGER NOT NULL DEFAULT 1,
   note          TEXT,                          -- maintainer free-text reminder
   created_at    INTEGER NOT NULL,
@@ -111,6 +122,11 @@ CREATE TABLE IF NOT EXISTS publications (
   json_key      TEXT NOT NULL,              -- R2 object key for shard JSON
   meta_key      TEXT NOT NULL,              -- R2 object key for meta.json
   count         INTEGER NOT NULL,           -- # of human_confirmed accounts
+  pending_count INTEGER,                     -- # of auto_pending_review at publish
+                                             -- time; lets /v1/list/meta skip a
+                                             -- full-partition scan per request
+  lite_key      TEXT,                        -- R2 key of the compact lite artifact
+                                             -- (schema v2: id/handle/label+category)
   published_at  INTEGER NOT NULL            -- epoch ms
 );
 CREATE INDEX IF NOT EXISTS idx_publications_version ON publications(version);
@@ -122,6 +138,28 @@ CREATE TABLE IF NOT EXISTS rate_log (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_rate_log_fp_time ON rate_log(fp, created_at);
+-- The periodic `DELETE FROM rate_log WHERE created_at<?` needs created_at as
+-- the leading column (idx_rate_log_fp_time leads with fp) or it full-scans.
+CREATE INDEX IF NOT EXISTS idx_rate_log_created_at ON rate_log(created_at);
+
+-- Self-service whitelist applications. Extension users apply with their
+-- GitHub identity (same HMAC reporter fingerprint as reports); a maintainer
+-- approves/rejects from the admin console.
+CREATE TABLE IF NOT EXISTS whitelist_requests (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  x_user_id   TEXT,                          -- X numeric id when the applicant supplied it
+  handle      TEXT NOT NULL,                 -- the X handle the applicant wants whitelisted
+  reporter_fp TEXT NOT NULL,                 -- salted HMAC fingerprint, NO PII
+  gh_age_days INTEGER,                       -- GH account age at application time
+  note        TEXT,                          -- applicant free-text (<=200 chars)
+  status      TEXT NOT NULL DEFAULT 'pending', -- pending|approved|rejected
+  created_at  INTEGER NOT NULL,
+  decided_at  INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_whitelist_requests_status
+  ON whitelist_requests(status);
+CREATE INDEX IF NOT EXISTS idx_whitelist_requests_fp_status
+  ON whitelist_requests(reporter_fp, status);
 
 -- Reporter bans: admin-maintained anti-abuse blocklist keyed by the same
 -- HMAC reporter fingerprint used by reports/rate_log. Temporary bans expire

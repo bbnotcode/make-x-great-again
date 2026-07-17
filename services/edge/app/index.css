@@ -1,0 +1,131 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* Dark mode is driven by a `.dark` class on <html> (see ThemeProvider). */
+@custom-variant dark (&:is(.dark *));
+
+/* shadcn/ui design tokens, tuned to the MXGA brand palette (cool-neutral
+   canvas, near-black/near-white primary, sky accent, warm state colors).
+   Light = cream/off-white; dark = warm near-black. */
+:root {
+  --radius: 0.625rem;
+
+  --background: #f6f7f9;
+  --foreground: #09090b;
+  --card: #ffffff;
+  --card-foreground: #09090b;
+  --popover: #ffffff;
+  --popover-foreground: #09090b;
+  --primary: #09090b;
+  --primary-foreground: #f7f8fa;
+  --secondary: #f1f1f4;
+  --secondary-foreground: #18181b;
+  --muted: #f1f1f4;
+  --muted-foreground: #71717a;
+  --accent: #ecedf1;
+  --accent-foreground: #18181b;
+  --destructive: #dc2626;
+  --border: #e4e6ea;
+  --input: #dfe1e6;
+  --ring: #0284c7;
+
+  /* Brand-state colors (verdict labels, success/warn, agent/rule accents). */
+  --success: #15803d;
+  --success-foreground: #ffffff;
+  --warning: #b45309;
+  --info: #0284c7;
+  --violet: #7e22ce;
+
+  --chart-1: #0284c7;
+  --chart-2: #7e22ce;
+  --chart-3: #15803d;
+  --chart-4: #b45309;
+  --chart-5: #dc2626;
+}
+
+.dark {
+  --background: #0a0a0b;
+  --foreground: #fafafa;
+  --card: #101013;
+  --card-foreground: #fafafa;
+  --popover: #141418;
+  --popover-foreground: #fafafa;
+  --primary: #fafafa;
+  --primary-foreground: #0a0a0b;
+  --secondary: #1c1c21;
+  --secondary-foreground: #fafafa;
+  --muted: #17171b;
+  --muted-foreground: #a1a1aa;
+  --accent: #232329;
+  --accent-foreground: #fafafa;
+  --destructive: #ef4444;
+  --border: #29292f;
+  --input: #2b2b32;
+  --ring: #38bdf8;
+
+  --success: #34d399;
+  --success-foreground: #052e16;
+  --warning: #f59e0b;
+  --info: #38bdf8;
+  --violet: #c084fc;
+
+  --chart-1: #38bdf8;
+  --chart-2: #c084fc;
+  --chart-3: #34d399;
+  --chart-4: #f59e0b;
+  --chart-5: #f87171;
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-violet: var(--violet);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --font-serif: "Copernicus", "Source Serif Pro", ui-serif, Georgia, serif;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family:
+      ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+      "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}

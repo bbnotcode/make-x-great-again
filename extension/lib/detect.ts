@@ -149,7 +149,10 @@ export interface FiberUser {
   viewerIsSelf?: true;
 }
 
-function viewerHandle(): string | undefined {
+/** The logged-in viewer's own handle, read from X's nav DOM. Exported so the
+ *  whitelist self-service flow can lock applications to the user's OWN
+ *  account (no free-text handle = no applying for someone else). */
+export function viewerHandle(): string | undefined {
   const profileHref = document
     .querySelector<HTMLAnchorElement>('[data-testid="AppTabBar_Profile_Link"]')
     ?.getAttribute("href");
@@ -424,6 +427,22 @@ function isPromoted(article: HTMLElement): boolean {
   return false;
 }
 
+// X auto-translate detection. When X renders a machine translation it swaps
+// the tweet body for the translated text and adds an attribution line
+// ("Translated from <lang> by <provider>" / "翻译自…" with a Show-original
+// toggle) — the original text is NOT in the DOM. We can only flag it:
+// downstream consumers (server keyword rules / LLM) treat flagged text as a
+// translation instead of the author's own words. The regex matches the
+// attribution wording, not the "Translate post" button (which means the text
+// IS original). textContent (no layout) keeps this cheap per scan tick.
+const TRANSLATION_MARKER_RE =
+  /translated from|show original|翻译自|显示原文|翻譯自|顯示原文|由\s*\S{1,12}\s*(?:翻译|翻譯)|原文を表示|から翻訳|번역함|원본 보기/i;
+
+function articleShowsTranslation(article: HTMLElement, tweetEl: HTMLElement | null): boolean {
+  if (!tweetEl) return false;
+  return TRANSLATION_MARKER_RE.test(article.textContent ?? "");
+}
+
 export function extractFromArticle(article: HTMLElement): Signals | null {
   if (isPromoted(article)) return null; // official X ad → not spam
   const { hasDefaultAvatar, avatarUrl } = avatarInfo(article);
@@ -444,6 +463,7 @@ export function extractFromArticle(article: HTMLElement): Signals | null {
   if (!handle) return null;
   const tweetEl = article.querySelector<HTMLElement>('[data-testid="tweetText"]');
   const tweetText = tweetEl ? tweetEl.innerText.trim() : "";
+  const tweetsTranslated = articleShowsTranslation(article, tweetEl);
   // Prefer identities from X's own GraphQL responses; fall back to React
   // fiber when the network cache has not seen this author yet.
   const networkUser = readGraphqlUser(handle);
@@ -468,6 +488,7 @@ export function extractFromArticle(article: HTMLElement): Signals | null {
     ...(networkUser.avatarUrl ?? avatarUrl ? { avatarUrl: networkUser.avatarUrl ?? avatarUrl } : {}),
     ...(fu.userId ? { userId: fu.userId } : {}),
     ...(tweetText ? { triggeringComment: tweetText } : {}),
+    ...(tweetsTranslated ? { tweetsTranslated: true as const } : {}),
     ...(fu.accountCreatedAt ? { accountCreatedAt: fu.accountCreatedAt } : {}),
     ...(fu.accountAgeDays !== undefined ? { accountAgeDays: fu.accountAgeDays } : {}),
     ...(fu.followersCount !== undefined ? { followersCount: fu.followersCount } : {}),

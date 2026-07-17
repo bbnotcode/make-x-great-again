@@ -1,14 +1,16 @@
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
-import { ANALYTICS_CSP } from "./analytics";
+import { ANALYTICS_CSP, googleAnalyticsHead } from "./analytics";
+import { BRAND } from "./brand";
 import { adminHtml } from "./pages/admin";
 import { landingHtml } from "./pages/landing";
 import { listHtml } from "./pages/list";
 
-interface Env {
-  DB: D1Database;
-  ARTIFACTS: R2Bucket;
+// Runtime bindings are generated from wrangler.toml in
+// worker-configuration.d.ts. Only secrets (which intentionally do not live in
+// config) are declared by hand here.
+interface Secrets {
   // LLM provider config — ALL three are Worker secrets (NOT in wrangler.toml).
   // The provider URL + model name are treated as sensitive (so the project can
   // be open-sourced without doxxing the inference dependency); the API key
@@ -33,26 +35,96 @@ interface Env {
   // no-op (the public /v1/whitelist endpoint still works).
   WHITELIST_SYNC_TOKEN?: string;
   WHITELIST_SYNC_REPO?: string; // "owner/repo", defaults to foru17/make-x-great-again
+  // Optional override for the global hourly LLM-call ceiling (see
+  // LLM_GLOBAL_MAX_PER_WINDOW below).
+  LLM_GLOBAL_MAX_PER_WINDOW?: string;
 }
 
-type Ctx = Context<{ Bindings: Env }>;
+type Bindings = Env & Secrets;
+type Ctx = Context<{ Bindings: Bindings }>;
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function logError(event: string, error: unknown, details: Record<string, unknown> = {}): void {
+  console.error(JSON.stringify({ event, error: errorMessage(error), ...details }));
+}
+
+function logWarn(event: string, details: Record<string, unknown> = {}): void {
+  console.warn(JSON.stringify({ event, ...details }));
+}
+
+function logInfo(event: string, details: Record<string, unknown> = {}): void {
+  console.log(JSON.stringify({ event, ...details }));
+}
 
 const AUTO_CONF = 0.9; // AI confidence floor for auto-publish
 const AUTO_REPORTERS = 3; // distinct GitHub reporters required for auto-publish
+// Confidence floor for AI-only auto-publish on the /v1/classify path (no
+// reporter corroboration needed). Validated 2026-06-12 against 100 random
+// pending candidates: fresh-classify spam/porn_bot verdicts were ~93% precise
+// with zero clear false positives at conf>=0.9; the bar is set at 0.95 for
+// extra public-list safety. Lower to 0.9 to widen coverage. This path is the
+// mirror of the auto_legit fast-accept and is DELIBERATELY separate from the
+// report path, whose inherited verdicts are the noisy ones (kept manual-only).
+const AUTO_AI_PUBLISH_CONF = 0.95;
 // GH accounts younger than this don't count toward the auto-publish
 // reporter threshold. Their reports are still stored (audit /
 // future re-evaluation), but a fresh throwaway account can't help flip
 // status to human_confirmed. 90d is a common drive-by abuse cutoff.
 const REPORTER_MIN_AGE_DAYS = 90;
+// Max handles a single keyword-rule hit may auto-promote from a post's
+// @-mentions. Caps the blast radius of a forged tweet that lists many victims;
+// mention-promotion is also gated on an aged reporter identity at the call site.
+const MENTION_PROMOTE_MAX = 3;
 const REPORT_WINDOW_MS = 60 * 60_000;
 const REPORT_MAX_PER_WINDOW = 10;
-// /v1/classify is the cost endpoint (paid LLM call + D1 writes) — cap it per
-// reporter fingerprint (or per IP when anonymous). /v1/appeal is fully
-// unauthenticated, so it gets a tighter per-IP cap.
-const CLASSIFY_MAX_PER_WINDOW = 20;
+// /v1/classify is the cost endpoint — cap it per reporter fingerprint (or per
+// IP when anonymous). The cap gates ONLY the LLM path: cache/TTL reuse and
+// keyword-rule hits short-circuit before the throttle (see the handler), so a
+// browser extension scanning a timeline burns budget only on genuinely-novel
+// accounts. Sized for that — 60 fresh classifications/hour/identity is ample
+// headroom for real discovery while still bounding worst-case LLM spend.
+// /v1/appeal is fully unauthenticated, so it gets a tighter per-IP cap.
+const CLASSIFY_MAX_PER_WINDOW = 60;
+// Keyword-rule hits skip the LLM but are still a WRITE path: a hit can mint a
+// brand-new public-list row (tier 'rule') from nothing but a client-supplied
+// payload, and the patterns ship in the public lite artifact — so an attacker
+// can craft guaranteed hits. Without its own cap this branch is an unmetered
+// anonymous publish/write channel (the LLM throttle never sees it). Legit
+// clients only land here for genuinely-new accounts (repeats return via the
+// cache/TTL reuse first), so a generous per-identity cap is invisible to real
+// browsing while bounding forged-payload floods.
+const RULE_WRITE_MAX_PER_WINDOW = 30;
+// Global (cross-identity) LLM calls per hour — the hard spend ceiling behind
+// the per-identity classify cap (which an anonymous caller can reset by
+// rotating IPs). Override with the LLM_GLOBAL_MAX_PER_WINDOW env var.
+const LLM_GLOBAL_MAX_PER_WINDOW = 2000;
 const APPEAL_MAX_PER_WINDOW = 5;
 const BLOOM_SIZE = 65_536; // 8 KB bit array
 const BLOOM_HASHES = 7;
+// Per-status freshness TTL gating LLM re-classification on /v1/classify.
+// The cache key (signals_hash) includes recentTweets, so it busts on every
+// new tweet — and the same spam account is seen by many viewers with slightly
+// different timelines. Without a TTL one account gets re-classified dozens of
+// times. An account that already has a verdict is reused (no LLM) until its
+// status' TTL lapses. Terminal/settled statuses (human/agent decisions) are
+// never re-scored: writeAccount preserves them anyway, so re-running the LLM
+// only burns tokens. An exact signals_hash match still returns cached for ANY
+// status regardless of these TTLs.
+const NEVER_RESCORE = Number.POSITIVE_INFINITY;
+const RESCORE_TTL_MS: Record<string, number> = {
+  human_confirmed: NEVER_RESCORE,
+  rejected: NEVER_RESCORE,
+  removed: NEVER_RESCORE,
+  whitelisted: NEVER_RESCORE, // also short-circuited earlier; here for safety
+  agent_whitelist: NEVER_RESCORE,
+  agent_blacklist: NEVER_RESCORE,
+  auto_legit: 30 * 86_400_000, // legit rarely flips; re-check monthly at most
+  auto_pending_review: 24 * 3_600_000, // still ambiguous — allow a daily re-look
+  agent_pending: 7 * 86_400_000,
+};
 const BLOOM_SHARD_SIZE = 500; // accounts per logical shard in the JSON artifact
 
 interface PublishedShardEntry {
@@ -61,6 +133,9 @@ interface PublishedShardEntry {
   label: string;
   confidence: number;
   published_at: number;
+  /** 'human' = maintainer-reviewed; 'auto' = AI/rule/mention auto-publish.
+   *  Clients must only auto-act (mute/block) on 'human' entries. */
+  tier: "human" | "auto";
 }
 
 interface Reporter {
@@ -104,7 +179,7 @@ async function requireReporter(c: Ctx): Promise<Reporter | null> {
   return c.env.REQUIRE_AUTH === "1" ? null : { id: "anon", ageDays: 0 };
 }
 
-async function reporterFingerprint(env: Env, reporterId: string): Promise<string | null> {
+async function reporterFingerprint(env: Bindings, reporterId: string): Promise<string | null> {
   const salt = env.REPORT_SALT?.trim();
   if (!salt) return null;
   const key = await crypto.subtle.importKey(
@@ -143,11 +218,14 @@ const Signals = z.object({
     .string()
     .trim()
     .regex(/^@?[A-Za-z0-9_]{1,15}$/, "handle must be a valid X handle"),
-  displayName: z.string().default(""),
-  bio: z.string().default(""),
-  recentTweets: z.array(z.string()).max(20).default([]),
-  triggeringComment: z.string().optional(),
-  threadTopic: z.string().optional(),
+  // Free-text fields are TRUNCATED (not rejected) so a legit client sending a
+  // long premium tweet still classifies, while a hostile/broken client can't
+  // pad the LLM prompt to burn input tokens. Bounds total prompt to a few KB.
+  displayName: z.string().transform((s) => s.slice(0, 200)).default(""),
+  bio: z.string().transform((s) => s.slice(0, 500)).default(""),
+  recentTweets: z.array(z.string().transform((s) => s.slice(0, 500))).max(20).default([]),
+  triggeringComment: z.string().transform((s) => s.slice(0, 1000)).optional(),
+  threadTopic: z.string().transform((s) => s.slice(0, 500)).optional(),
   accountCreatedAt: z.string().max(80).optional(),
   accountAgeDays: z.number().optional(),
   followersCount: z.number().optional(),
@@ -159,13 +237,65 @@ const Signals = z.object({
   viewerMuting: z.boolean().optional(),
   viewerFollowRequestSent: z.boolean().optional(),
   viewerIsSelf: z.boolean().optional(),
+  // Client-side hint: the tweet texts in this payload were machine-translated
+  // by X's auto-translate before the client scraped them (the DOM shows the
+  // translation, the original is not available). When set, keyword rules must
+  // not match CJK patterns against the tweet text and the LLM is told the
+  // text is a translation. Optional — legacy clients never send it.
+  tweetsTranslated: z.boolean().optional(),
 });
 type Signals = z.infer<typeof Signals>;
+
+// Canonical spam category taxonomy. Stored in accounts.category, published in
+// the lite artifact, and used by the extension's per-category action policy
+// (e.g. auto-block porn bots but only badge marketing accounts).
+const SPAM_CATEGORIES = ["porn", "crypto", "gambling", "resource", "marketing", "other"] as const;
+type SpamCategory = (typeof SPAM_CATEGORIES)[number];
+
+// Single-char codes used in the lite artifact to keep entries tiny.
+const CATEGORY_CODE: Record<SpamCategory, string> = {
+  porn: "p",
+  crypto: "c",
+  gambling: "g",
+  resource: "r",
+  marketing: "m",
+  other: "o",
+};
+
+const CJK_RE = /[㐀-鿿豈-﫿]/;
+function hasCJK(s: string | null | undefined): boolean {
+  return !!s && CJK_RE.test(s);
+}
+
+// Category resolution is LLM-first by design: the classifier outputs an
+// explicit category, and keyword-rule hits use the category the maintainer
+// set on the rule (human curation). There is deliberately NO keyword-based
+// category guessing here — pattern matching on free text misclassifies, so
+// anything without an authoritative category stays NULL and is later filled
+// by the LLM backfill sweep (backfillCategories in the cron).
+//
+// The only non-LLM mapping kept is label-level: porn_bot IS the porn
+// category by definition of the label.
+function categoryForLabel(label: string): SpamCategory | null {
+  return label === "porn_bot" ? "porn" : null;
+}
+
+// Category for a keyword-rule hit: the maintainer's explicit rule.category,
+// else the label-level mapping, else NULL (LLM backfill picks it up).
+function categoryForRule(rule: KeywordRule): SpamCategory | null {
+  if (rule.category && (SPAM_CATEGORIES as readonly string[]).includes(rule.category)) {
+    return rule.category as SpamCategory;
+  }
+  return categoryForLabel(rule.verdict_label);
+}
 
 const Verdict = z.object({
   label: z.enum(["spam", "porn_bot", "likely_spam", "uncertain", "legit"]),
   confidence: z.number().min(0).max(1),
   reasons: z.array(z.string()).min(1).max(6),
+  // Optional so old cached conversations / lenient models still parse; the
+  // classify path falls back to inferCategory when absent.
+  category: z.enum(SPAM_CATEGORIES).optional(),
 });
 type Verdict = z.infer<typeof Verdict>;
 
@@ -184,7 +314,18 @@ const SYSTEM = `You classify X (Twitter) accounts ONLY for spam / porn-advertisi
   Repetition of the same template or same @target across replies corroborates.
 - When genuinely unsure prefer "uncertain" over a false accusation — but the
   linkless-redirect-bait pattern above is NOT "unsure", it is spam.
-Return ONLY JSON: {"label":"spam|porn_bot|likely_spam|uncertain|legit","confidence":<0..1>,"reasons":[1-6 short strings]}`;
+- TRANSLATION TRAP: X auto-translates tweets, so tweet text may be a machine
+  translation of the account's real language (the payload flags this when the
+  client knows: "note: tweet texts are machine-translated"). A Chinese-looking
+  tweet from an account whose bio/display name are clearly another language is
+  probably translated — judge the CONTENT, and never treat the mere presence of
+  Chinese wording as a spam signal in that case.
+- category (required when label is spam/porn_bot/likely_spam): the dominant
+  spam business — "porn" (sexual solicitation/porn bots), "crypto" (coins,
+  trading, airdrops, stocks), "gambling" (casino/betting), "resource" (netdisk
+  / pirated-resource bait), "marketing" (ads, follower-farming, promo matrix,
+  redirect bait for generic promotion), "other" (none of the above).
+Return ONLY JSON: {"label":"spam|porn_bot|likely_spam|uncertain|legit","confidence":<0..1>,"reasons":[1-6 short strings],"category":"porn|crypto|gambling|resource|marketing|other"}`;
 
 function hash(s: string): string {
   let h = 5381;
@@ -243,32 +384,119 @@ function userPrompt(s: Signals): string {
   return `handle: @${s.handle}
 displayName: ${s.displayName || "(empty)"}
 bio: ${s.bio || "(empty)"}
-${meta ? `signals: ${meta}\n` : ""}threadTopic: ${s.threadTopic ?? "(none)"}
+${meta ? `signals: ${meta}\n` : ""}${s.tweetsTranslated ? "note: tweet texts are machine-translated by X auto-translate; the original language text was not available\n" : ""}threadTopic: ${s.threadTopic ?? "(none)"}
 triggeringComment: ${s.triggeringComment ?? "(none)"}
 recentTweets:
 ${s.recentTweets.map((t, i) => `  ${i + 1}. ${t}`).join("\n") || "  (none)"}`;
 }
 
-async function classify(env: Env, s: Signals): Promise<Verdict> {
-  const res = await fetch(`${env.LLM_API_BASE}/chat/completions`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${env.LLM_API_KEY}`, "content-type": "application/json" },
-    body: JSON.stringify({
-      model: env.LLM_API_MODEL,
-      temperature: 0,
-      max_tokens: 600,
-      messages: [
-        { role: "system", content: SYSTEM },
-        { role: "user", content: userPrompt(s) },
-      ],
-    }),
-  });
-  if (!res.ok) throw new Error(`LLM ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const j = (await res.json()) as { choices: { message: { content: string } }[] };
-  const txt = j.choices[0]?.message?.content ?? "";
-  const m = txt.match(/\{[\s\S]*\}/);
-  if (!m) throw new Error("no JSON from model");
-  return Verdict.parse(JSON.parse(m[0]));
+/**
+ * Pull the verdict object out of a raw completion. Reasoning models (minimax,
+ * deepseek, …) wrap the answer in ```json fences, prepend chain-of-thought
+ * prose that itself contains braces ("the account {@handle} looks off"), or
+ * emit an echo object before the real one — a greedy first-`{`…last-`}` match
+ * mis-parses all of these. Instead scan for every string-aware brace-balanced
+ * {...} span and return the first that parses AND carries a "label" key, so
+ * stray braces in prose/strings can't derail it.
+ */
+function extractVerdictJson(txt: string): unknown {
+  const objs: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < txt.length; i++) {
+    const ch = txt[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') {
+      inStr = true;
+    } else if (ch === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === "}" && depth > 0) {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        objs.push(txt.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+  for (const c of objs) {
+    try {
+      const o = JSON.parse(c);
+      if (o && typeof o === "object" && "label" in o) return o;
+    } catch {
+      // not valid JSON (prose with braces) — keep scanning
+    }
+  }
+  for (let i = objs.length - 1; i >= 0; i--) {
+    try {
+      return JSON.parse(objs[i]);
+    } catch {
+      // ignore
+    }
+  }
+  throw new Error(`no JSON object in model output: ${txt.slice(0, 200)}`);
+}
+
+interface ChatChoice {
+  message: { content?: string | null; reasoning_content?: string | null };
+  finish_reason?: string;
+}
+
+async function classify(env: Bindings, s: Signals): Promise<Verdict> {
+  const messages: { role: string; content: string }[] = [
+    { role: "system", content: SYSTEM },
+    { role: "user", content: userPrompt(s) },
+  ];
+
+  let lastErr: unknown;
+  // Two attempts: a single self-correcting retry recovers from a malformed or
+  // truncated first answer (re-asking concisely also dodges runaway reasoning).
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetch(`${env.LLM_API_BASE}/chat/completions`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${env.LLM_API_KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        model: env.LLM_API_MODEL,
+        temperature: 0,
+        // Reasoning models (e.g. deepseek-v4-pro, minimax-m3) spend tokens on
+        // hidden reasoning that counts toward max_tokens; give ample headroom
+        // so the JSON answer is never truncated under high reasoning effort.
+        max_tokens: 4096,
+        thinking: { type: "enabled" },
+        reasoning_effort: "high",
+        messages,
+      }),
+    });
+    if (!res.ok) throw new Error(`LLM ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const j = (await res.json()) as { choices: ChatChoice[] };
+    const choice = j.choices[0];
+    // Some reasoning models leave `content` empty and put the answer (or just
+    // the JSON) in `reasoning_content` — fall back to it before giving up.
+    const txt = (choice?.message?.content || choice?.message?.reasoning_content || "").trim();
+    try {
+      return Verdict.parse(extractVerdictJson(txt));
+    } catch (err) {
+      lastErr = err;
+      const truncated = choice?.finish_reason === "length";
+      messages.push(
+        { role: "assistant", content: txt.slice(0, 2000) },
+        {
+          role: "user",
+          content: truncated
+            ? "Your reply was cut off. Reply with ONLY the compact JSON verdict object, no reasoning, no markdown fences."
+            : "That was not valid. Reply with ONLY the JSON verdict object in the exact required shape, no prose, no markdown fences.",
+        },
+      );
+    }
+  }
+  throw new Error(`LLM did not return a valid verdict: ${String(lastErr)}`);
 }
 
 function normalizeHandle(handle: string): string {
@@ -294,7 +522,7 @@ function reportEvidence(s: Signals): string {
 // gracefully (count 0) when the rate_log table hasn't been migrated yet — a
 // partially-migrated DB must not 500 the public endpoints.
 async function rateLogCount(
-  env: Env,
+  env: Bindings,
   keys: [string, string],
   windowStart: number,
 ): Promise<number> {
@@ -304,14 +532,14 @@ async function rateLogCount(
     .bind(keys[0], keys[1], windowStart)
     .first<{ n: number }>()
     .catch((err) => {
-      console.error("rate_log lookup failed (treating as empty):", err);
+      logError("rate_log.lookup_failed", err, { fallback: "empty" });
       return null;
     });
   return row?.n ?? 0;
 }
 
 async function reportRate(
-  env: Env,
+  env: Bindings,
   aliases: [string, string],
   now: number,
 ): Promise<{ ok: boolean; remaining: number }> {
@@ -322,19 +550,19 @@ async function reportRate(
   };
 }
 
-async function recordReportRate(env: Env, fp: string, now: number): Promise<void> {
+async function recordReportRate(env: Bindings, fp: string, now: number): Promise<void> {
   await env.DB.batch([
     env.DB.prepare("INSERT INTO rate_log (fp, created_at) VALUES (?,?)").bind(fp, now),
     env.DB.prepare("DELETE FROM rate_log WHERE created_at<?").bind(now - REPORT_WINDOW_MS * 2),
   ]).catch((err) => {
     // Same degrade-gracefully contract as rateLogCount — losing one rate
     // sample beats 500ing the public write path on a partially-migrated DB.
-    console.error("rate_log write failed (ignored):", err);
+    logError("rate_log.write_failed", err, { fallback: "ignored" });
   });
 }
 
 async function activeReporterBan(
-  env: Env,
+  env: Bindings,
   aliases: [string, string],
   now: number,
 ): Promise<{ id: number; reporter_fp: string; reason: string | null } | null> {
@@ -352,7 +580,7 @@ async function activeReporterBan(
       .catch((err) => {
         // reporter_bans arrived in a later migration — treat "table missing"
         // as "no ban" instead of 500ing the public report path.
-        console.error("reporter_bans lookup failed (treating as no ban):", err);
+        logError("reporter_bans.lookup_failed", err, { fallback: "not_banned" });
         return null;
       })) ?? null
   );
@@ -362,11 +590,11 @@ async function activeReporterBan(
  *  Always salted (same fail-closed REPORT_SALT contract as reports): the
  *  caller must 503 when this returns null rather than fall back to storing
  *  a raw identity/IP in rate_log. */
-async function throttleFingerprint(env: Env, scope: string, id: string): Promise<string | null> {
+async function throttleFingerprint(env: Bindings, scope: string, id: string): Promise<string | null> {
   return reporterFingerprint(env, `${scope}|${id}`);
 }
 
-async function throttleOk(env: Env, fp: string, now: number, max: number): Promise<boolean> {
+async function throttleOk(env: Bindings, fp: string, now: number, max: number): Promise<boolean> {
   return (await rateLogCount(env, [fp, fp], now - REPORT_WINDOW_MS)) < max;
 }
 
@@ -415,6 +643,9 @@ interface AccountRow {
   model: string | null;
   signals_hash: string | null;
   status: string;
+  // Last time this row was (re)scored — used to gate LLM re-classification
+  // by a per-status freshness TTL (see RESCORE_TTL_MS).
+  last_scored: number;
   // Included so the write path can tell the caller "I matched by uid even
   // though your handle is new" (used by the rename-detection log line).
   handle: string;
@@ -422,7 +653,7 @@ interface AccountRow {
 }
 
 async function findAccount(
-  env: Env,
+  env: Bindings,
   handle: string,
   uid: string | null,
 ): Promise<AccountRow | null> {
@@ -435,7 +666,7 @@ async function findAccount(
   if (uid) {
     const byUid =
       (await env.DB.prepare(
-        `SELECT rowid, verdict_label, confidence, reasons, model, signals_hash, status, handle, x_user_id
+        `SELECT rowid, verdict_label, confidence, reasons, model, signals_hash, status, last_scored, handle, x_user_id
            FROM accounts
           WHERE x_user_id=?
           ORDER BY CASE WHEN status='whitelisted' THEN 0 ELSE 1 END,
@@ -455,7 +686,7 @@ async function findAccount(
   // Whitelisted wins; among the rest, matching uid wins over handle-only.
   return (
     (await env.DB.prepare(
-      `SELECT rowid, verdict_label, confidence, reasons, model, signals_hash, status, handle, x_user_id
+      `SELECT rowid, verdict_label, confidence, reasons, model, signals_hash, status, last_scored, handle, x_user_id
          FROM accounts
         WHERE lower(handle)=?
           AND (? IS NULL OR x_user_id IS NULL OR x_user_id=?)
@@ -484,6 +715,7 @@ interface AccountWrite {
   verdictLabel: string;
   confidence: number;
   reasons: string;
+  category?: string | null;
   model?: string | null;
   status: string;
   source: string;
@@ -491,13 +723,35 @@ interface AccountWrite {
   evidenceText?: string | null;
   now: number;
   publishedAt?: number | null;
+  /** Provenance of a human_confirmed publish: 'human' | 'ai' | 'rule' |
+   *  'mention'. Only meaningful when status='human_confirmed'; the artifact
+   *  and /v1/check read it to keep unreviewed auto-publishes out of clients'
+   *  auto-block paths. */
+  publishedTier?: string | null;
   accountCreatedAt?: string | null;
   accountAgeDays?: number | null;
   followersCount?: number | null;
   followingCount?: number | null;
 }
 
-async function writeAccount(env: Env, w: AccountWrite): Promise<AccountRow | null> {
+// Tolerant parse for the `reasons` JSON column. A single malformed value
+// (legacy import, manual SQL edit) must not 500 the classify cache path or
+// silently break the 6h GitHub mirror — degrade to a single-element array.
+function safeReasons(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? v : [String(v)];
+  } catch {
+    return [raw];
+  }
+}
+
+async function writeAccount(
+  env: Bindings,
+  w: AccountWrite,
+  retried = false,
+): Promise<AccountRow | null> {
   const prev = await findAccount(env, w.handle, w.uid);
   if (prev) {
     await env.DB.prepare(
@@ -513,6 +767,7 @@ async function writeAccount(env: Env, w: AccountWrite): Promise<AccountRow | nul
          verdict_label=?,
          confidence=?,
          reasons=?,
+         category=COALESCE(?, category),
          model=COALESCE(?, model),
          source=CASE
                   WHEN status IN ('human_confirmed','rejected','removed','whitelisted')
@@ -531,7 +786,12 @@ async function writeAccount(env: Env, w: AccountWrite): Promise<AccountRow | nul
                         WHEN status IN ('human_confirmed','rejected','removed','whitelisted')
                           THEN published_at
                         ELSE ?
-                      END
+                      END,
+         published_tier=CASE
+                          WHEN status IN ('human_confirmed','rejected','removed','whitelisted')
+                            THEN published_tier
+                          ELSE ?
+                        END
        WHERE rowid=?`,
     )
       .bind(
@@ -546,6 +806,7 @@ async function writeAccount(env: Env, w: AccountWrite): Promise<AccountRow | nul
         w.verdictLabel,
         w.confidence,
         w.reasons,
+        w.category ?? null,
         w.model ?? null,
         w.source,
         w.signalsHash ?? null,
@@ -553,6 +814,7 @@ async function writeAccount(env: Env, w: AccountWrite): Promise<AccountRow | nul
         w.now,
         w.status,
         w.publishedAt ?? null,
+        w.publishedTier ?? null,
         prev.rowid,
       )
       .run();
@@ -567,35 +829,46 @@ async function writeAccount(env: Env, w: AccountWrite): Promise<AccountRow | nul
     return findAccount(env, w.handle, w.uid);
   }
 
-  await env.DB.prepare(
-    `INSERT INTO accounts
-       (x_user_id,handle,display_name,avatar_url,account_created_at,account_age_days,
-        followers_count,following_count,verdict_label,confidence,reasons,model,
-        status,source,signals_hash,evidence_text,first_seen,last_scored,published_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-  )
-    .bind(
-      w.uid,
-      w.handle,
-      w.displayName,
-      w.avatarUrl ?? null,
-      w.accountCreatedAt ?? null,
-      w.accountAgeDays ?? null,
-      w.followersCount ?? null,
-      w.followingCount ?? null,
-      w.verdictLabel,
-      w.confidence,
-      w.reasons,
-      w.model ?? null,
-      w.status,
-      w.source,
-      w.signalsHash ?? null,
-      w.evidenceText ?? null,
-      w.now,
-      w.now,
-      w.publishedAt ?? null,
+  try {
+    await env.DB.prepare(
+      `INSERT INTO accounts
+         (x_user_id,handle,display_name,avatar_url,account_created_at,account_age_days,
+          followers_count,following_count,verdict_label,confidence,reasons,category,model,
+          status,source,signals_hash,evidence_text,first_seen,last_scored,published_at,published_tier)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
-    .run();
+      .bind(
+        w.uid,
+        w.handle,
+        w.displayName,
+        w.avatarUrl ?? null,
+        w.accountCreatedAt ?? null,
+        w.accountAgeDays ?? null,
+        w.followersCount ?? null,
+        w.followingCount ?? null,
+        w.verdictLabel,
+        w.confidence,
+        w.reasons,
+        w.category ?? null,
+        w.model ?? null,
+        w.status,
+        w.source,
+        w.signalsHash ?? null,
+        w.evidenceText ?? null,
+        w.now,
+        w.now,
+        w.publishedAt ?? null,
+        w.publishedTier ?? null,
+      )
+      .run();
+  } catch (err) {
+    // A concurrent classify of the same account (common: many viewers see the
+    // same spam reply at once) can insert the canonical uid row between our
+    // findAccount miss and this INSERT, tripping idx_accounts_uid_uq. Re-resolve
+    // and take the UPDATE path once, rather than 500-ing after the LLM was paid.
+    if (!retried) return writeAccount(env, w, true);
+    throw err;
+  }
   // Fresh INSERT — only call cleanup when we just created a uid-bearing row.
   // (Race protection: if another writer added a handle-only sibling between
   // findAccount and INSERT, this collapses it.) For pure null-uid INSERTs
@@ -609,7 +882,7 @@ async function writeAccount(env: Env, w: AccountWrite): Promise<AccountRow | nul
 }
 
 async function updateAccountSignalSnapshot(
-  env: Env,
+  env: Bindings,
   rowid: number,
   snapshot: AccountSignalSnapshot,
 ): Promise<void> {
@@ -652,7 +925,7 @@ async function updateAccountSignalSnapshot(
 //
 // Idempotent: re-running on already-cleaned state writes nothing.
 async function cleanupHandleOnlyAccountDuplicates(
-  env: Env,
+  env: Bindings,
   handle: string,
   keepRowid: number,
 ): Promise<void> {
@@ -682,7 +955,12 @@ async function cleanupHandleOnlyAccountDuplicates(
   await env.DB.prepare(
     `UPDATE accounts
         SET status='human_confirmed',
-            published_at=?
+            published_at=?,
+            published_tier=(SELECT s.published_tier FROM accounts s
+                             WHERE s.x_user_id IS NULL
+                               AND s.status='human_confirmed'
+                               AND lower(s.handle)=?
+                             LIMIT 1)
       WHERE rowid=?
         AND status IN ('auto_pending_review','auto_legit')
         AND EXISTS (SELECT 1 FROM accounts s
@@ -690,7 +968,7 @@ async function cleanupHandleOnlyAccountDuplicates(
                        AND s.status='human_confirmed'
                        AND lower(s.handle)=?)`,
   )
-    .bind(Date.now(), keepRowid, handle)
+    .bind(Date.now(), handle, keepRowid, handle)
     .run();
 
   // 2. Collapse: mark all null-uid siblings as removed, preserve payload.
@@ -710,7 +988,7 @@ async function cleanupHandleOnlyAccountDuplicates(
 }
 
 async function insertReportIfNew(
-  env: Env,
+  env: Bindings,
   s: Signals,
   handle: string,
   uid: string | null,
@@ -768,6 +1046,7 @@ interface KeywordRule {
   field: string; // 'handle'|'display_name'|'bio'|'tweet'|'any'
   action: string; // 'blacklist'|'whitelist'|'reject'
   verdict_label: string; // 'spam'|'porn_bot'|'likely_spam'|'uncertain'|'legit'
+  category: string | null; // SpamCategory stamped onto accounts on hit; NULL = infer
   enabled: number; // SQLite stores as INTEGER
   note: string | null;
   created_at: number;
@@ -778,7 +1057,7 @@ interface KeywordRule {
 const RULE_CACHE_TTL_MS = 30_000;
 let ruleCache: { at: number; rules: KeywordRule[] } | null = null;
 
-async function getKeywordRules(env: Env): Promise<KeywordRule[]> {
+async function getKeywordRules(env: Bindings): Promise<KeywordRule[]> {
   const now = Date.now();
   if (ruleCache && now - ruleCache.at < RULE_CACHE_TTL_MS) return ruleCache.rules;
   const rows = await env.DB.prepare(
@@ -794,10 +1073,30 @@ function invalidateRuleCache() {
   ruleCache = null;
 }
 
+// X auto-translate guard for CJK rules matched against TWEET TEXT. X renders
+// machine translations in place of the original tweet body, so a legit
+// non-Chinese account's tweet can arrive here as fluent Chinese and collide
+// with a curated CJK pattern ("主页", "约" …). Two independent tells:
+//   - a new-style client flags the payload (tweetsTranslated), or
+//   - the pattern is CJK but the account's own profile (display name + bio +
+//     handle) contains no CJK at all — a Chinese spam account essentially
+//     always self-describes in Chinese, so a CJK tweet on a CJK-free profile
+//     is far more likely X's translator than a Chinese bot.
+// Suppressed hits fall through to the LLM (which is told about translation),
+// so the account is still classified — just not insta-blacklisted by keyword.
+function tweetTextTrusted(pattern: string, s: Signals): boolean {
+  if (!hasCJK(pattern)) return true; // ascii patterns (urls…) survive translation
+  if (s.tweetsTranslated) return false;
+  return hasCJK(s.displayName) || hasCJK(s.bio) || hasCJK(s.handle);
+}
+
 function ruleMatchesText(rule: KeywordRule, s: Signals): boolean {
   const p = rule.pattern.toLowerCase();
   if (!p) return false;
   const has = (v: string | undefined | null) => !!v && v.toLowerCase().includes(p);
+  const tweetHit = () =>
+    tweetTextTrusted(rule.pattern, s) &&
+    (s.recentTweets.some((t) => has(t)) || has(s.triggeringComment));
   switch (rule.field) {
     case "handle":
       return has(s.handle);
@@ -806,15 +1105,9 @@ function ruleMatchesText(rule: KeywordRule, s: Signals): boolean {
     case "bio":
       return has(s.bio);
     case "tweet":
-      return s.recentTweets.some((t) => has(t)) || has(s.triggeringComment);
+      return tweetHit();
     case "any":
-      return (
-        has(s.handle) ||
-        has(s.displayName) ||
-        has(s.bio) ||
-        s.recentTweets.some((t) => has(t)) ||
-        has(s.triggeringComment)
-      );
+      return has(s.handle) || has(s.displayName) || has(s.bio) || tweetHit();
     default:
       // Unknown field — do NOT silently widen to match every field. A typo'd
       // or future field name must not turn into an everything-matcher.
@@ -822,7 +1115,7 @@ function ruleMatchesText(rule: KeywordRule, s: Signals): boolean {
   }
 }
 
-async function matchKeywordRules(env: Env, s: Signals): Promise<KeywordRule | null> {
+async function matchKeywordRules(env: Bindings, s: Signals): Promise<KeywordRule | null> {
   const rules = await getKeywordRules(env);
   for (const rule of rules) {
     if (ruleMatchesText(rule, s)) return rule;
@@ -843,7 +1136,108 @@ function statusForRuleAction(action: string): "human_confirmed" | "whitelisted" 
   return "human_confirmed"; // 'blacklist' default
 }
 
-const app = new Hono<{ Bindings: Env }>();
+// Mention-promotion allowlist — handles that must NEVER be auto-blacklisted via
+// the @-mention path below, even if a spam tweet @-mentions them. These are
+// official/utility accounts a spam post might legitimately tag (e.g. asking
+// @grok to "summarize", or @-ing @x support). Lowercased, no leading '@'.
+const MENTION_BLACKLIST_SKIP = new Set([
+  "grok",
+  "gork", // common misspelling that still resolves to the assistant
+  "x",
+  "elonmusk",
+  "support",
+  "safety",
+  "premium",
+  "verified",
+  "twitter",
+  "twittersupport",
+]);
+
+// Pull unique, normalized @mentions out of a post body. We scan only the tweet
+// text (recentTweets + triggeringComment) — the "正文" where promoted handles
+// appear — not bio/display-name, to keep this conservative. X handles are
+// [A-Za-z0-9_]{1,15}; the '@' must not be preceded by a word char (so email
+// locals like "foo@bar" don't match) and must be followed by a boundary (so a
+// 16+ char run — not a real handle — is skipped rather than truncated).
+function extractMentions(s: Signals): string[] {
+  const text = [s.triggeringComment ?? "", ...s.recentTweets].join("\n");
+  const out = new Set<string>();
+  const re = /(?:^|[^A-Za-z0-9_@])@([A-Za-z0-9_]{1,15})\b/g;
+  let match = re.exec(text);
+  while (match !== null) {
+    out.add(match[1].toLowerCase());
+    match = re.exec(text);
+  }
+  return [...out];
+}
+
+// When a 'blacklist' keyword rule fires, any account @-mentioned in the post
+// body is almost always the spam target being promoted — the matched account is
+// frequently a throwaway whose only job is to point at the "main" handle. So we
+// auto-blacklist those mentions too, minus:
+//   - the matched account's own handle,
+//   - the curated MENTION_BLACKLIST_SKIP allowlist (official/utility accounts),
+//   - any handle a human has already ruled on (whitelisted/rejected/removed) or
+//     that's already on the public list (human_confirmed) — nothing to do.
+// Each promotion is a handle-only row (we have no uid for a bare @mention) and
+// is logged with actor='rule:<id>' so it is traceable and reversible, exactly
+// like the primary rule hit. Returns the list of newly-promoted handles.
+async function autoBlacklistMentions(
+  env: Bindings,
+  rule: KeywordRule,
+  s: Signals,
+  now: number,
+): Promise<string[]> {
+  const own = normalizeHandle(s.handle);
+  const promoted: string[] = [];
+  for (const handle of extractMentions(s)) {
+    if (promoted.length >= MENTION_PROMOTE_MAX) break;
+    if (handle === own) continue;
+    if (MENTION_BLACKLIST_SKIP.has(handle)) continue;
+    const prev = await findAccount(env, handle, null);
+    // Only auto-promote when there's nothing to step on: a brand-new handle, or
+    // one still in an auto_* limbo. Any human decision or an existing public
+    // listing is left untouched.
+    if (prev && prev.status !== "auto_pending_review" && prev.status !== "auto_legit") {
+      continue;
+    }
+    const reasons = [
+      `auto-blacklisted: @-mentioned by spam account @${own} which matched keyword rule "${rule.pattern}"`,
+    ];
+    await writeAccount(env, {
+      uid: null,
+      handle,
+      displayName: "",
+      verdictLabel: rule.verdict_label,
+      confidence: 1.0,
+      reasons: JSON.stringify(reasons),
+      category: categoryForRule(rule),
+      model: null,
+      status: "human_confirmed",
+      source: "auto_keyword_mention",
+      evidenceText: evidenceText(s),
+      now,
+      publishedAt: now,
+      publishedTier: "mention",
+    });
+    await env.DB.prepare(
+      "INSERT INTO review_log (x_user_id, handle, action, actor, note, at) VALUES (?,?,?,?,?,?)",
+    )
+      .bind(
+        null,
+        handle,
+        "keyword_mention_blacklist",
+        `rule:${rule.id}`,
+        `promoted from @${own} (matched "${rule.pattern}" on ${rule.field})`,
+        now,
+      )
+      .run();
+    promoted.push(handle);
+  }
+  return promoted;
+}
+
+const app = new Hono<{ Bindings: Bindings }>();
 
 // CORS is scoped to the public read/report surface only. The admin and agent
 // routes are same-origin (the /admin panel) or server-to-server, and must NOT
@@ -857,6 +1251,8 @@ for (const route of [
   "/v1/report",
   "/v1/appeal",
   "/v1/whitelist",
+  "/v1/whitelist/apply",
+  "/v1/whitelist/apply/status",
   "/v1/list",
   "/v1/list/*",
   "/v1/artifacts/*",
@@ -868,10 +1264,17 @@ const HOUR_MS = 3600_000;
 const DAY_MS = 24 * HOUR_MS;
 
 app.get("/v1/health", async (c) => {
+  // Read the published count from the 24-row publications ledger instead of
+  // `count(*)` over the ~97K human_confirmed partition — /v1/health is public,
+  // uncached, and often polled by uptime monitors, so the full-partition scan
+  // was a standing D1 rows-read cost (~100K rows/call). The published count is
+  // ≤10 min stale (cron cadence), which is fine for a liveness probe.
   const r = await c.env.DB.prepare(
-    "SELECT count(*) n FROM accounts WHERE status='human_confirmed'",
-  ).first<{ n: number }>();
-  return c.json({ ok: true, published: r?.n ?? 0 });
+    "SELECT count FROM publications ORDER BY published_at DESC LIMIT 1",
+  )
+    .first<{ count: number }>()
+    .catch(() => null);
+  return c.json({ ok: true, published: r?.count ?? 0 });
 });
 
 // Public membership check — only human_confirmed (the public list).
@@ -890,9 +1293,21 @@ app.get("/v1/check", async (c) => {
   if (cached) return cached;
 
   const ph = ids.map(() => "?").join(",");
+  // `+status` (the SQLite no-op unary plus) deliberately disqualifies the
+  // composite status indexes so the planner drives off idx_accounts_uid via
+  // the `x_user_id IN (...)` list. Without it the planner picked
+  // idx_accounts_status_confidence and SCANNED EVERY human_confirmed row
+  // (~97K) on every call — this batch lookup is the extension's hottest
+  // endpoint, so that was the dominant source of D1 rows-read. Measured:
+  // 96,763 rows/call → 4 rows/call. Status is still filtered, just not via index.
+  // published_tier='human' — /v1/check has always meant "human-confirmed
+  // public list", and deployed v0.4 clients auto-BLOCK on any hit returned
+  // here. AI/rule/mention auto-publishes stay out of this endpoint (they
+  // still ship in the lite artifact, tier-tagged, for badge display).
   const rows = await c.env.DB.prepare(
     `SELECT x_user_id, verdict_label, confidence FROM accounts
-     WHERE status='human_confirmed' AND x_user_id IN (${ph})`,
+     WHERE x_user_id IN (${ph}) AND +status='human_confirmed'
+       AND published_tier='human'`,
   )
     .bind(...ids)
     .all<{ x_user_id: string; verdict_label: string; confidence: number }>();
@@ -917,20 +1332,12 @@ app.post("/v1/classify", async (c) => {
   } catch (err) {
     return c.json({ error: "bad_request", detail: (err as Error).message }, 400);
   }
-  // Throttle — this is the paid-LLM + D1-write path, so it must never be
-  // unlimited. Keyed by a salted fingerprint of the GitHub identity (or the
-  // connecting IP when anonymous); fails closed when REPORT_SALT is unset so
-  // raw identities never land in rate_log.
-  const rateId = who.id === "anon" ? `ip:${c.req.header("cf-connecting-ip") ?? "unknown"}` : who.id;
-  const rateFp = await throttleFingerprint(c.env, "classify", rateId);
-  if (!rateFp) {
-    return c.json({ error: "report_salt_required", detail: "REPORT_SALT not configured" }, 503);
-  }
-  const rateNow = Date.now();
-  if (!(await throttleOk(c.env, rateFp, rateNow, CLASSIFY_MAX_PER_WINDOW))) {
-    return c.json({ error: "rate_limited", retryAfterMs: REPORT_WINDOW_MS }, 429);
-  }
-  await recordReportRate(c.env, rateFp, rateNow);
+  // NOTE: the per-identity throttle is enforced later, immediately before the
+  // LLM call — NOT here. Every short-circuit below (viewer-ignore, whitelist,
+  // signals_hash/TTL reuse, keyword rules) returns without spending an LLM
+  // call, so they must stay free: a browser extension classifies every account
+  // in the timeline and is almost entirely cache hits, which would otherwise
+  // exhaust the window on free lookups and 429 the genuinely-new accounts.
   const s: Signals = { ...parsed, handle: normalizeHandle(parsed.handle) };
   if (viewerScopedIgnore(s)) {
     return c.json({
@@ -957,19 +1364,28 @@ app.post("/v1/classify", async (c) => {
       },
     });
   }
-  if (prev && prev.signals_hash === h) {
-    await updateAccountSignalSnapshot(c.env, prev.rowid, signalSnapshot(s));
-    return c.json({
-      cached: true,
-      record: {
-        verdict: {
-          label: prev.verdict_label,
-          confidence: prev.confidence,
-          reasons: JSON.parse(prev.reasons || "[]"),
+  // Reuse the existing verdict (no LLM) when either the signals are byte-for-byte
+  // unchanged, OR the account already has a verdict that's still fresh per its
+  // status TTL. The latter collapses the recentTweets-drift re-classification
+  // storm (same account, many viewers/times) that dominated LLM spend.
+  if (prev) {
+    const exact = prev.signals_hash === h;
+    const ttl = RESCORE_TTL_MS[prev.status];
+    const fresh = ttl !== undefined && Date.now() - prev.last_scored < ttl;
+    if (exact || fresh) {
+      await updateAccountSignalSnapshot(c.env, prev.rowid, signalSnapshot(s));
+      return c.json({
+        cached: true,
+        record: {
+          verdict: {
+            label: prev.verdict_label,
+            confidence: prev.confidence,
+            reasons: safeReasons(prev.reasons),
+          },
+          status: prev.status,
         },
-        status: prev.status,
-      },
-    });
+      });
+    }
   }
   // Fast-path: keyword rules. Match before spending an LLM call. A hit routes
   // the account straight to the rule's destination status (default 'blacklist'
@@ -978,6 +1394,18 @@ app.post("/v1/classify", async (c) => {
   const ruleHit = await matchKeywordRules(c.env, s);
   if (ruleHit) {
     const now = Date.now();
+    // See RULE_WRITE_MAX_PER_WINDOW: this branch writes (and can publish), so
+    // it gets its own throttle even though it never spends an LLM call.
+    const ruleRateId =
+      who.id === "anon" ? `ip:${c.req.header("cf-connecting-ip") ?? "unknown"}` : who.id;
+    const ruleFp = await throttleFingerprint(c.env, "classify-rule", ruleRateId);
+    if (!ruleFp) {
+      return c.json({ error: "report_salt_required", detail: "REPORT_SALT not configured" }, 503);
+    }
+    if (!(await throttleOk(c.env, ruleFp, now, RULE_WRITE_MAX_PER_WINDOW))) {
+      return c.json({ error: "rate_limited", retryAfterMs: REPORT_WINDOW_MS }, 429);
+    }
+    await recordReportRate(c.env, ruleFp, now);
     const status = statusForRuleAction(ruleHit.action);
     const reasons = [`matched keyword rule "${ruleHit.pattern}" on ${ruleHit.field}`];
     const verdict = {
@@ -993,6 +1421,7 @@ app.post("/v1/classify", async (c) => {
       verdictLabel: ruleHit.verdict_label,
       confidence: 1.0,
       reasons: JSON.stringify(reasons),
+      category: statusForRuleAction(ruleHit.action) === "human_confirmed" ? categoryForRule(ruleHit) : null,
       model: null,
       status,
       source: "auto_keyword",
@@ -1000,6 +1429,7 @@ app.post("/v1/classify", async (c) => {
       evidenceText: evidenceText(s),
       now,
       publishedAt: status === "human_confirmed" ? now : null,
+      publishedTier: status === "human_confirmed" ? "rule" : null,
       ...signalSnapshot(s),
     });
     await c.env.DB.batch([
@@ -1017,23 +1447,99 @@ app.post("/v1/classify", async (c) => {
         now,
       ),
     ]);
+    // Propagation: a 'blacklist' rule hit promotes any account the spam post
+    // @-mentions in its body — the promoted "main" handle these throwaways point
+    // at — to the public list as well. Whitelist/reject rules don't propagate.
+    // Mention-promotion is the highest-abuse surface (it publishes handles the
+    // caller merely typed into a tweet body). Gate it on an aged GitHub identity
+    // so a throwaway/anon caller can't weaponize it, and cap the count below.
+    const promotedMentions =
+      ruleHit.action === "blacklist" && who.ageDays >= REPORTER_MIN_AGE_DAYS
+        ? await autoBlacklistMentions(c.env, ruleHit, s, now)
+        : [];
     return c.json({
       cached: false,
       record: { verdict, status },
       matchedRule: { id: ruleHit.id, pattern: ruleHit.pattern, field: ruleHit.field },
+      ...(promotedMentions.length ? { promotedMentions } : {}),
     });
   }
-  const verdict = await classify(c.env, s);
+  // Throttle the EXPENSIVE path only. We reached here past every cache/rule
+  // short-circuit, so this request WILL spend an LLM call — the cost the cap
+  // exists to bound. Keyed by a salted fingerprint of the GitHub identity (or
+  // the connecting IP when anonymous); fails closed when REPORT_SALT is unset
+  // so raw identities never land in rate_log.
   const now = Date.now();
+  const rateId = who.id === "anon" ? `ip:${c.req.header("cf-connecting-ip") ?? "unknown"}` : who.id;
+  const rateFp = await throttleFingerprint(c.env, "classify", rateId);
+  if (!rateFp) {
+    return c.json({ error: "report_salt_required", detail: "REPORT_SALT not configured" }, 503);
+  }
+  if (!(await throttleOk(c.env, rateFp, now, CLASSIFY_MAX_PER_WINDOW))) {
+    return c.json({ error: "rate_limited", retryAfterMs: REPORT_WINDOW_MS }, 429);
+  }
+  // Global (cross-identity) circuit breaker on top of the per-identity cap:
+  // the per-identity key is the connecting IP for anonymous legacy clients,
+  // so an IP-rotating attacker gets a fresh 60-call window per address and
+  // total LLM spend is otherwise unbounded. Sized far above organic
+  // fresh-classify volume (post-TTL that's a fraction of this) — it only
+  // trips under attack, and turns "unbounded bill" into "bounded hour".
+  const globalFp = await throttleFingerprint(c.env, "classify-global", "all");
+  const globalMax = Number(c.env.LLM_GLOBAL_MAX_PER_WINDOW ?? "") || LLM_GLOBAL_MAX_PER_WINDOW;
+  if (!globalFp || !(await throttleOk(c.env, globalFp, now, globalMax))) {
+    if (globalFp === null) {
+      return c.json({ error: "report_salt_required", detail: "REPORT_SALT not configured" }, 503);
+    }
+    logError("classify.global_llm_cap_tripped", new Error("global LLM cap reached"), {
+      max: globalMax,
+    });
+    return c.json({ error: "rate_limited", retryAfterMs: REPORT_WINDOW_MS }, 429);
+  }
+  await recordReportRate(c.env, rateFp, now);
+  await recordReportRate(c.env, globalFp, now);
+  const verdict = await classify(c.env, s);
+  // Auto-publish high-confidence AI spam straight to the public list — the
+  // mirror image of the auto_legit fast-accept below. Only the classify path
+  // does this; the report path stays manual-confirm-only (its inherited
+  // verdicts are the noisy ones). writeAccount still preserves any prior human
+  // decision (human_confirmed/rejected/removed/whitelisted), so this can never
+  // override a maintainer, and /v1/appeal remains the fallback.
+  // Corroboration gate: classify signals are entirely client-supplied and are
+  // never verified against the real X account, so a fabricated payload could
+  // otherwise publish an arbitrary victim to the public list. Require BOTH a
+  // numeric uid (a bare handle is trivial to target; a uid is the account's
+  // immutable id, far harder to weaponize against a chosen victim) AND an aged
+  // GitHub identity. When the gate fails the verdict still lands in the
+  // maintainer review queue (writeStatus below) instead of auto-publishing.
+  // porn_bot ONLY: that's the template-flood class where the AI is reliably
+  // precise. Generic "spam" verdicts (marketing/procurement/crypto chatter)
+  // produced real false positives on normal accounts (e.g. @Jackywine, a
+  // normal AI-content account auto-published off one GPU-procurement post),
+  // so they always queue for human review now.
+  const aiAutoPublish =
+    verdict.label === "porn_bot" &&
+    verdict.confidence >= AUTO_AI_PUBLISH_CONF &&
+    uid !== null &&
+    who.ageDays >= REPORTER_MIN_AGE_DAYS;
   // High-confidence legit verdicts are cached but kept out of the maintainer
   // queue. /admin/queue still only selects status='auto_pending_review', so
   // auto_legit rows are invisible there but the next /v1/classify hit still
   // gets a free cache return.
-  const writeStatus =
-    verdict.label === "legit" && verdict.confidence >= 0.85 ? "auto_legit" : "auto_pending_review";
+  const writeStatus = aiAutoPublish
+    ? "human_confirmed"
+    : verdict.label === "legit" && verdict.confidence >= 0.85
+      ? "auto_legit"
+      : "auto_pending_review";
   // Pick the most-relevant public X snippet that triggered this verdict so
   // the public list can be audited without retaining unrelated context.
-  await writeAccount(c.env, {
+  // Category: the LLM's explicit pick, else the label-level mapping
+  // (porn_bot → porn). Anything else stays NULL for the backfill sweep —
+  // no keyword guessing. legit/uncertain rows stay uncategorized.
+  const spammyVerdict = ["spam", "porn_bot", "likely_spam"].includes(verdict.label);
+  const verdictCategory = spammyVerdict
+    ? (verdict.category ?? categoryForLabel(verdict.label))
+    : null;
+  const written = await writeAccount(c.env, {
     uid,
     handle: s.handle,
     displayName: s.displayName,
@@ -1041,14 +1547,37 @@ app.post("/v1/classify", async (c) => {
     verdictLabel: verdict.label,
     confidence: verdict.confidence,
     reasons: JSON.stringify(verdict.reasons),
+    category: verdictCategory,
     model: c.env.LLM_API_MODEL,
     status: writeStatus,
     source: "auto_scan",
     signalsHash: h,
     evidenceText: evidenceText(s),
     now,
+    publishedAt: aiAutoPublish ? now : null,
+    // Honest provenance: an AI auto-publish is NOT a human confirmation.
+    // Clients gate auto mute/block on tier 'human'; 'ai' rows badge only.
+    publishedTier: aiAutoPublish ? "ai" : null,
     ...signalSnapshot(s),
   });
+  // Audit every AI auto-publish (mirrors the keyword-rule actor='rule:<id>'
+  // trail). Skip rows that were already on the public list — writeAccount
+  // preserves an existing human_confirmed status, so re-scanning a published
+  // account would otherwise log a spurious publish.
+  if (aiAutoPublish && written?.status === "human_confirmed" && prev?.status !== "human_confirmed") {
+    await c.env.DB.prepare(
+      "INSERT INTO review_log (x_user_id,handle,action,actor,note,at) VALUES (?,?,?,?,?,?)",
+    )
+      .bind(
+        uid ?? null,
+        s.handle,
+        "ai_blacklist",
+        "ai:auto",
+        `auto-published ${verdict.label} @ ${verdict.confidence}`,
+        now,
+      )
+      .run();
+  }
   return c.json({ cached: false, record: { verdict, status: writeStatus } });
 });
 
@@ -1129,6 +1658,9 @@ async function submitReport(c: Ctx, source: string) {
   const prev = await findAccount(c.env, s.handle, uid);
   let vLabel: string;
   let vConf: number;
+  // Fresh-classify rows get the LLM's category; for prev rows pass null so
+  // writeAccount's COALESCE keeps whatever category the row already carries.
+  let vCategory: string | null = null;
   if (prev) {
     vLabel = prev.verdict_label;
     vConf = prev.confidence;
@@ -1136,6 +1668,9 @@ async function submitReport(c: Ctx, source: string) {
     const cl = await classify(c.env, s);
     vLabel = cl.label;
     vConf = cl.confidence;
+    if (["spam", "porn_bot", "likely_spam"].includes(cl.label)) {
+      vCategory = cl.category ?? categoryForLabel(cl.label);
+    }
   }
 
   // 2026-05-25 — auto-publish path disabled while the project is still alpha.
@@ -1157,6 +1692,7 @@ async function submitReport(c: Ctx, source: string) {
     verdictLabel: vLabel,
     confidence: vConf,
     reasons: '["reported"]',
+    category: vCategory,
     model: prev ? null : c.env.LLM_API_MODEL,
     status,
     source,
@@ -1251,6 +1787,104 @@ app.post("/v1/appeal", async (c) => {
   return c.json({ ok: true, status: "appeal_queued" }, 202);
 });
 
+// ---- Whitelist self-service applications ----
+// An extension user asks the maintainer to whitelist their own X account.
+// Same identity + anti-abuse stack as /v1/report: GitHub auth, HMAC reporter
+// fingerprint (fail-closed on missing salt), reporter bans, rate_log throttle,
+// plus a hard GH-account-age floor so throwaway accounts can't apply at all.
+const WhitelistApplyBody = z.object({
+  handle: z
+    .string()
+    .trim()
+    .regex(/^@?[A-Za-z0-9_]{1,15}$/, "handle must be a valid X handle"),
+  userId: z.string().regex(/^\d+$/).optional(),
+  note: z.string().max(200).optional(),
+});
+
+app.post("/v1/whitelist/apply", async (c) => {
+  const who = await requireReporter(c);
+  if (!who) return c.json({ error: "github_login_required" }, 401);
+  let body: z.infer<typeof WhitelistApplyBody>;
+  try {
+    body = WhitelistApplyBody.parse(await c.req.json());
+  } catch (err) {
+    return c.json({ error: "bad_request", detail: (err as Error).message }, 400);
+  }
+  // Hard age floor — unlike reports (stored but not counted), an underage
+  // application is rejected outright: the whole point of the whitelist is
+  // trust, and a fresh GH account carries none.
+  if (who.ageDays < REPORTER_MIN_AGE_DAYS) {
+    return c.json({ error: "gh_account_too_young", minAgeDays: REPORTER_MIN_AGE_DAYS }, 403);
+  }
+  const fp = await reporterFingerprint(c.env, who.id);
+  // Fail closed like the report path: never store a raw gh:<id>.
+  if (!fp) {
+    return c.json({ error: "report_salt_required", detail: "REPORT_SALT not configured" }, 503);
+  }
+  const now = Date.now();
+  const aliases = reporterAliases(fp, who.id);
+  const ban = await activeReporterBan(c.env, aliases, now);
+  if (ban) {
+    return c.json({ error: "reporter_banned", reason: ban.reason ?? "banned" }, 403);
+  }
+  if (!(await throttleOk(c.env, fp, now, REPORT_MAX_PER_WINDOW))) {
+    return c.json({ error: "rate_limited", retryAfterMs: REPORT_WINDOW_MS }, 429);
+  }
+
+  const handle = normalizeHandle(body.handle);
+  const uid = body.userId ?? null;
+
+  // Already whitelisted → nothing to apply for.
+  const cur = await findAccount(c.env, handle, uid);
+  if (cur?.status === "whitelisted") {
+    return c.json({ ok: true, status: "already_whitelisted" });
+  }
+
+  // One pending application per fingerprint AND per target handle.
+  const dup = await c.env.DB.prepare(
+    `SELECT id FROM whitelist_requests
+      WHERE status='pending' AND (reporter_fp=? OR lower(handle)=?)
+      LIMIT 1`,
+  )
+    .bind(fp, handle)
+    .first<{ id: number }>();
+  if (dup) return c.json({ error: "already_pending" }, 409);
+
+  await c.env.DB.prepare(
+    `INSERT INTO whitelist_requests
+       (x_user_id, handle, reporter_fp, gh_age_days, note, status, created_at)
+     VALUES (?,?,?,?,?,'pending',?)`,
+  )
+    .bind(uid, handle, fp, who.ageDays, body.note?.trim() || null, now)
+    .run();
+  await c.env.DB.prepare(
+    "INSERT INTO review_log (x_user_id,handle,action,actor,note,at) VALUES (?,?,?,?,?,?)",
+  )
+    .bind(uid, handle, "whitelist_apply", reporterActor(fp), `age=${who.ageDays}d`, now)
+    .run();
+  await recordReportRate(c.env, fp, now);
+  return c.json({ ok: true, status: "pending" });
+});
+
+// Latest application status for the calling identity — the extension's
+// options page polls this to show pending/approved/rejected.
+app.get("/v1/whitelist/apply/status", async (c) => {
+  const who = await requireReporter(c);
+  if (!who) return c.json({ error: "github_login_required" }, 401);
+  const fp = await reporterFingerprint(c.env, who.id);
+  if (!fp) {
+    return c.json({ error: "report_salt_required", detail: "REPORT_SALT not configured" }, 503);
+  }
+  const row = await c.env.DB.prepare(
+    `SELECT status, handle, created_at FROM whitelist_requests
+      WHERE reporter_fp=? ORDER BY id DESC LIMIT 1`,
+  )
+    .bind(fp)
+    .first<{ status: string; handle: string; created_at: number }>();
+  if (!row) return c.json({ status: "none" });
+  return c.json({ status: row.status, handle: row.handle, created_at: row.created_at });
+});
+
 // ---- Admin (守门员) ----
 // Constant-time string comparison: hash both sides so length and content
 // differences can't be probed via timing. SHA-256 digests are fixed-width,
@@ -1286,7 +1920,7 @@ const ReporterBanBody = z
   });
 
 async function reporterFpForAdmin(
-  env: Env,
+  env: Bindings,
   body: z.infer<typeof ReporterBanBody>,
 ): Promise<string | null> {
   if (body.reporterFp) return body.reporterFp.trim();
@@ -1714,7 +2348,7 @@ function statusForAction(action: DecideAction): string {
 // cleanup), 1 when handle-only. The last statement appended by the caller
 // is always the review_log INSERT.
 function buildDecideStatements(
-  env: Env,
+  env: Bindings,
   handle: string,
   xUserId: string | undefined,
   action: DecideAction,
@@ -1741,8 +2375,14 @@ function buildDecideStatements(
     } else {
       stmts.push(
         env.DB.prepare(
-          "UPDATE accounts SET status=?, published_at=? WHERE lower(handle)=? AND x_user_id=?",
-        ).bind(status, action === "approve" ? now : null, handle, xUserId),
+          "UPDATE accounts SET status=?, published_at=?, published_tier=? WHERE lower(handle)=? AND x_user_id=?",
+        ).bind(
+          status,
+          action === "approve" ? now : null,
+          action === "approve" ? "human" : null,
+          handle,
+          xUserId,
+        ),
       );
     }
     // Sibling cleanup: when a uid-bearing row was just promoted/demoted, also
@@ -1772,8 +2412,13 @@ function buildDecideStatements(
     } else {
       stmts.push(
         env.DB.prepare(
-          "UPDATE accounts SET status=?, published_at=? WHERE lower(handle)=? AND x_user_id IS NULL",
-        ).bind(status, action === "approve" ? now : null, handle),
+          "UPDATE accounts SET status=?, published_at=?, published_tier=? WHERE lower(handle)=? AND x_user_id IS NULL",
+        ).bind(
+          status,
+          action === "approve" ? now : null,
+          action === "approve" ? "human" : null,
+          handle,
+        ),
       );
     }
   }
@@ -1781,7 +2426,7 @@ function buildDecideStatements(
 }
 
 function reviewLogStmt(
-  env: Env,
+  env: Bindings,
   xUserId: string | null,
   handle: string,
   action: string,
@@ -1793,9 +2438,18 @@ function reviewLogStmt(
   ).bind(xUserId, handle, action, "admin", note, now);
 }
 
+// An optional numeric id (x_user_id / github id). Tolerates an explicit JSON
+// null — clients commonly spread a possibly-null id field — by normalizing it
+// to undefined so the rest of the pipeline sees `string | undefined`.
+const optionalNumericId = z
+  .string()
+  .regex(/^\d+$/)
+  .nullish()
+  .transform((v) => v ?? undefined);
+
 const DecideBody = z.object({
   handle: z.string().min(1),
-  xUserId: z.string().regex(/^\d+$/).optional(),
+  xUserId: optionalNumericId,
   // Unknown actions used to silently map to "rejected" via statusForAction —
   // they are an explicit 400 now.
   action: z.enum(["approve", "reject", "remove", "whitelist"]),
@@ -1833,7 +2487,7 @@ const DecideBatchBody = z.object({
     .array(
       z.object({
         handle: z.string().min(1),
-        xUserId: z.string().regex(/^\d+$/).optional(),
+        xUserId: optionalNumericId,
       }),
     )
     .min(1)
@@ -1870,7 +2524,7 @@ const WhitelistBatchBody = z.object({
     .array(
       z.object({
         handle: z.string().min(1),
-        xUserId: z.string().regex(/^\d+$/).optional(),
+        xUserId: optionalNumericId,
       }),
     )
     .min(1)
@@ -1934,11 +2588,14 @@ const KeywordRuleField = z.enum(["handle", "display_name", "bio", "tweet", "any"
 const KeywordRuleAction = z.enum(["blacklist", "whitelist", "reject"]);
 const KeywordVerdictLabel = z.enum(["spam", "porn_bot", "likely_spam", "uncertain", "legit"]);
 
+const KeywordRuleCategory = z.enum(SPAM_CATEGORIES);
+
 const KeywordRuleCreate = z.object({
   pattern: z.string().min(1).max(200),
   field: KeywordRuleField,
   action: KeywordRuleAction.default("blacklist"),
   verdict_label: KeywordVerdictLabel.default("spam"),
+  category: KeywordRuleCategory.optional(),
   note: z.string().max(400).optional(),
 });
 
@@ -1947,6 +2604,7 @@ const KeywordRulePatch = z.object({
   field: KeywordRuleField.optional(),
   action: KeywordRuleAction.optional(),
   verdict_label: KeywordVerdictLabel.optional(),
+  category: KeywordRuleCategory.nullable().optional(),
   enabled: z.boolean().optional(),
   note: z.string().max(400).optional(),
 });
@@ -1970,10 +2628,18 @@ app.post("/v1/admin/keyword-rules", async (c) => {
   const now = Date.now();
   const r = await c.env.DB.prepare(
     `INSERT INTO keyword_rules
-       (pattern, field, action, verdict_label, enabled, note, created_at, hit_count)
-     VALUES (?, ?, ?, ?, 1, ?, ?, 0)`,
+       (pattern, field, action, verdict_label, category, enabled, note, created_at, hit_count)
+     VALUES (?, ?, ?, ?, ?, 1, ?, ?, 0)`,
   )
-    .bind(body.pattern, body.field, body.action, body.verdict_label, body.note ?? null, now)
+    .bind(
+      body.pattern,
+      body.field,
+      body.action,
+      body.verdict_label,
+      body.category ?? null,
+      body.note ?? null,
+      now,
+    )
     .run();
   invalidateRuleCache();
   const id = r.meta.last_row_id;
@@ -2200,11 +2866,95 @@ app.post("/v1/admin/keyword-rules/apply-to-queue", async (c) => {
 //     so it stays out of the published list but the audit is preserved)
 const WhitelistAdd = z.object({
   handle: z.string().min(1).max(64),
-  xUserId: z.string().regex(/^\d+$/).optional(),
+  xUserId: optionalNumericId,
   displayName: z.string().max(120).default(""),
   avatarUrl: z.string().url().optional(),
   note: z.string().max(200).default(""),
 });
+
+// Upsert an account as whitelisted. If a row already exists
+// (auto_pending_review, auto_legit, rejected, removed, even human_confirmed)
+// the admin's explicit action wins. Shared by POST /v1/admin/whitelist and
+// the whitelist-request approve endpoint so the SQL can't drift.
+async function whitelistUpsert(
+  env: Bindings,
+  uid: string | null,
+  handle: string,
+  displayName: string,
+  avatarUrl: string | null,
+  reasons: string,
+  now: number,
+): Promise<void> {
+  // Canonical-row-by-uid pass first (same contract as writeAccount): when a
+  // row already holds this uid under a DIFFERENT handle — the "blacklisted,
+  // then renamed" appeal case — a plain INSERT would trip the partial
+  // idx_accounts_uid_uq index, which the ON CONFLICT(x_user_id,handle)
+  // clause below does not cover, and the whole upsert would throw.
+  let updatedByUid = false;
+  if (uid) {
+    const byUid = await env.DB.prepare(
+      `UPDATE accounts SET
+         handle=?,
+         status='whitelisted',
+         source='admin_whitelist',
+         verdict_label='legit',
+         confidence=1.0,
+         reasons=?,
+         published_at=NULL,
+         published_tier=NULL,
+         last_scored=?,
+         display_name=COALESCE(?, display_name),
+         avatar_url=COALESCE(?, avatar_url)
+       WHERE x_user_id=?`,
+    )
+      .bind(handle, reasons, now, displayName || null, avatarUrl, uid)
+      .run();
+    updatedByUid = (byUid.meta.changes ?? 0) > 0;
+  }
+  if (!updatedByUid) {
+    await env.DB.prepare(
+      `INSERT INTO accounts
+         (x_user_id,handle,display_name,avatar_url,verdict_label,confidence,reasons,
+          status,source,signals_hash,first_seen,last_scored,published_at)
+       VALUES (?,?,?,?,'legit',1.0,?, 'whitelisted','admin_whitelist', NULL, ?, ?, NULL)
+       ON CONFLICT(x_user_id,handle) DO UPDATE SET
+         status='whitelisted',
+         source='admin_whitelist',
+         verdict_label='legit',
+         confidence=1.0,
+         reasons=excluded.reasons,
+         published_at=NULL,
+         last_scored=excluded.last_scored,
+         display_name=COALESCE(excluded.display_name, accounts.display_name),
+         avatar_url=COALESCE(excluded.avatar_url, accounts.avatar_url)`,
+    )
+      .bind(uid, handle, displayName, avatarUrl, reasons, now, now)
+      .run();
+  }
+  // Whitelisting is a handle-level decision: demote EVERY other row for the
+  // same handle out of the publishable/queue states. Without this, a
+  // handle-only whitelist add left a uid-bearing human_confirmed sibling on
+  // the public list (real case: @bailyLU stayed blacklisted in the artifact
+  // and /v1/check after the admin whitelisted the handle). rejected/removed
+  // rows are left as-is — they're unpublished audit history.
+  await env.DB.prepare(
+    `UPDATE accounts
+        SET status='whitelisted',
+            source='admin_whitelist',
+            verdict_label='legit',
+            confidence=1.0,
+            reasons=?,
+            signals_hash=NULL,
+            published_at=NULL,
+            published_tier=NULL,
+            last_scored=?
+      WHERE lower(handle)=lower(?)
+        AND status IN ('human_confirmed','auto_pending_review','auto_legit',
+                       'agent_blacklist','agent_whitelist','agent_pending')`,
+  )
+    .bind(reasons, now, handle)
+    .run();
+}
 
 app.post("/v1/admin/whitelist", async (c) => {
   if (!(await admin(c))) return c.json({ error: "forbidden" }, 403);
@@ -2217,27 +2967,7 @@ app.post("/v1/admin/whitelist", async (c) => {
   const uid = body.xUserId ?? null;
   const now = Date.now();
   const reasons = JSON.stringify(["whitelisted by admin", body.note].filter(Boolean));
-  // Upsert as whitelisted. If a row already exists (auto_pending_review,
-  // auto_legit, rejected, removed, even human_confirmed) the admin's
-  // explicit action wins.
-  await c.env.DB.prepare(
-    `INSERT INTO accounts
-       (x_user_id,handle,display_name,avatar_url,verdict_label,confidence,reasons,
-        status,source,signals_hash,first_seen,last_scored,published_at)
-     VALUES (?,?,?,?,'legit',1.0,?, 'whitelisted','admin_whitelist', NULL, ?, ?, NULL)
-     ON CONFLICT(x_user_id,handle) DO UPDATE SET
-       status='whitelisted',
-       source='admin_whitelist',
-       verdict_label='legit',
-       confidence=1.0,
-       reasons=excluded.reasons,
-       published_at=NULL,
-       last_scored=excluded.last_scored,
-       display_name=COALESCE(excluded.display_name, accounts.display_name),
-       avatar_url=COALESCE(excluded.avatar_url, accounts.avatar_url)`,
-  )
-    .bind(uid, body.handle, body.displayName, body.avatarUrl ?? null, reasons, now, now)
-    .run();
+  await whitelistUpsert(c.env, uid, body.handle, body.displayName, body.avatarUrl ?? null, reasons, now);
   await c.env.DB.prepare(
     "INSERT INTO review_log (x_user_id,handle,action,actor,note,at) VALUES (?,?,?,?,?,?)",
   )
@@ -2257,9 +2987,9 @@ app.delete("/v1/admin/whitelist", async (c) => {
   // public list if it gets re-reported.
   const r = await c.env.DB.prepare(
     `UPDATE accounts SET status='rejected', source='admin_whitelist', last_scored=?
-      WHERE lower(handle)=? AND (x_user_id IS ? OR x_user_id=?) AND status='whitelisted'`,
+      WHERE lower(handle)=lower(?) AND status='whitelisted'`,
   )
-    .bind(now, handle, xUserId, xUserId)
+    .bind(now, handle)
     .run();
   await c.env.DB.prepare(
     "INSERT INTO review_log (x_user_id,handle,action,actor,note,at) VALUES (?,?,?,?,?,?)",
@@ -2325,6 +3055,154 @@ app.get("/v1/admin/whitelist", async (c) => {
     nextBefore: rawList.length === limit && last ? encodeSortCursor(last, last.last_scored) : null,
     appliedFilters: { q, sort },
   });
+});
+
+// ---- Whitelist request moderation ----
+// List self-service applications. Each row is JOINed with the applicant
+// handle/uid's CURRENT accounts row so the panel can flag "this account is
+// already on the public blacklist" before the maintainer approves.
+app.get("/v1/admin/whitelist-requests", async (c) => {
+  if (!(await admin(c))) return c.json({ error: "forbidden" }, 403);
+  const status = (c.req.query("status") || "pending").trim();
+  const limit = Math.min(500, Math.max(1, Number(c.req.query("limit")) || 200));
+  // Plain fetch first, enrich second. The original single query correlated
+  // the outer `wr` alias inside a subquery ORDER BY — D1's SQLite rejects
+  // that ("no such column: wr.x_user_id"), which 500'd this endpoint on
+  // every load (the admin page's 加载失败). MockDB tests never caught it.
+  const rows = await c.env.DB.prepare(
+    `SELECT id, x_user_id, handle, gh_age_days, note, status, created_at, decided_at
+       FROM whitelist_requests
+      WHERE (? = 'all' OR status = ?)
+      ORDER BY id DESC
+      LIMIT ?`,
+  )
+    .bind(status, status, limit)
+    .all<{
+      id: number;
+      x_user_id: string | null;
+      handle: string;
+      gh_age_days: number | null;
+      note: string | null;
+      status: string;
+      created_at: number;
+      decided_at: number | null;
+    }>();
+  const reqs = rows.results ?? [];
+  // One bounded lookup over the requested handles (idx_accounts_handle_norm);
+  // prefer the uid-matching account row, else the freshest same-handle row.
+  const accountByReq = new Map<
+    number,
+    { status: string; verdict_label: string; category: string | null }
+  >();
+  if (reqs.length) {
+    const ph = reqs.map(() => "?").join(",");
+    const accs = await c.env.DB.prepare(
+      `SELECT x_user_id, lower(handle) AS h, status, verdict_label, category, last_scored
+         FROM accounts WHERE lower(handle) IN (${ph})`,
+    )
+      .bind(...reqs.map((r) => r.handle.toLowerCase()))
+      .all<{
+        x_user_id: string | null;
+        h: string;
+        status: string;
+        verdict_label: string;
+        category: string | null;
+        last_scored: number;
+      }>();
+    const byHandle = new Map<string, typeof accs.results>();
+    for (const a of accs.results ?? []) {
+      const arr = byHandle.get(a.h) ?? [];
+      arr.push(a);
+      byHandle.set(a.h, arr);
+    }
+    for (const r of reqs) {
+      const cands = byHandle.get(r.handle.toLowerCase()) ?? [];
+      const best =
+        (r.x_user_id && cands.find((a) => a.x_user_id === r.x_user_id)) ||
+        [...cands].sort((x, y) => y.last_scored - x.last_scored)[0];
+      if (best) {
+        accountByReq.set(r.id, {
+          status: best.status,
+          verdict_label: best.verdict_label,
+          category: best.category,
+        });
+      }
+    }
+  }
+  return c.json({
+    list: reqs.map((r) => ({
+      ...r,
+      account_status: accountByReq.get(r.id)?.status ?? null,
+      account_verdict_label: accountByReq.get(r.id)?.verdict_label ?? null,
+      account_category: accountByReq.get(r.id)?.category ?? null,
+    })),
+  });
+});
+
+async function pendingWhitelistRequest(
+  env: Bindings,
+  id: number,
+): Promise<
+  | { row: { id: number; x_user_id: string | null; handle: string; note: string | null; status: string } }
+  | { error: Response }
+> {
+  const row = await env.DB.prepare(
+    "SELECT id, x_user_id, handle, note, status FROM whitelist_requests WHERE id=?",
+  )
+    .bind(id)
+    .first<{ id: number; x_user_id: string | null; handle: string; note: string | null; status: string }>();
+  if (!row) return { error: Response.json({ error: "not_found" }, { status: 404 }) };
+  if (row.status !== "pending") {
+    return { error: Response.json({ error: "not_pending", status: row.status }, { status: 409 }) };
+  }
+  return { row };
+}
+
+app.post("/v1/admin/whitelist-requests/:id/approve", async (c) => {
+  if (!(await admin(c))) return c.json({ error: "forbidden" }, 403);
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: "bad_request" }, 400);
+  const got = await pendingWhitelistRequest(c.env, id);
+  if ("error" in got) return got.error;
+  const { row } = got;
+  const now = Date.now();
+  const handle = normalizeHandle(row.handle);
+  const reasons = JSON.stringify(
+    ["whitelisted by admin", `self-service request #${row.id}`, row.note ?? ""].filter(Boolean),
+  );
+  await whitelistUpsert(c.env, row.x_user_id, handle, "", null, reasons, now);
+  await c.env.DB.prepare(
+    "UPDATE whitelist_requests SET status='approved', decided_at=? WHERE id=?",
+  )
+    .bind(now, id)
+    .run();
+  await c.env.DB.prepare(
+    "INSERT INTO review_log (x_user_id,handle,action,actor,note,at) VALUES (?,?,?,?,?,?)",
+  )
+    .bind(row.x_user_id, handle, "whitelist_request_approve", "admin", `request #${id}`, now)
+    .run();
+  return c.json({ ok: true, status: "approved" });
+});
+
+app.post("/v1/admin/whitelist-requests/:id/reject", async (c) => {
+  if (!(await admin(c))) return c.json({ error: "forbidden" }, 403);
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: "bad_request" }, 400);
+  const got = await pendingWhitelistRequest(c.env, id);
+  if ("error" in got) return got.error;
+  const { row } = got;
+  const now = Date.now();
+  await c.env.DB.prepare(
+    "UPDATE whitelist_requests SET status='rejected', decided_at=? WHERE id=?",
+  )
+    .bind(now, id)
+    .run();
+  await c.env.DB.prepare(
+    "INSERT INTO review_log (x_user_id,handle,action,actor,note,at) VALUES (?,?,?,?,?,?)",
+  )
+    .bind(row.x_user_id, normalizeHandle(row.handle), "whitelist_request_reject", "admin", `request #${id}`, now)
+    .run();
+  return c.json({ ok: true, status: "rejected" });
 });
 
 // Maintainer view of the public blacklist (status='human_confirmed'). Like
@@ -2445,49 +3323,65 @@ app.get("/v1/list/meta", async (c) => {
   if (cached) return cached;
 
   const now = Date.now();
+  // `count` and `pending` come from the 24-row publications ledger (snapshotted
+  // by the 10-min publish cron) instead of full-partition COUNTs — this endpoint
+  // used to scan ~185K rows per cache miss, the same failure class as the D1
+  // rows-read incident. `day`/`week`/`latest` still need live values but ride
+  // idx_accounts_status_published_at: the range is bounded to the last 7 days
+  // (a few thousand rows) and `latest` is a single-row index seek.
   const r = await c.env.DB.prepare(
-    `SELECT count(*) n,
-            max(published_at) latest,
-            sum(CASE WHEN published_at >= ? THEN 1 ELSE 0 END) AS day,
-            sum(CASE WHEN published_at >= ? THEN 1 ELSE 0 END) AS week,
-            (SELECT count(*) FROM accounts WHERE status='auto_pending_review') AS pending
-       FROM accounts WHERE status='human_confirmed'`,
+    `SELECT
+       (SELECT published_at FROM accounts
+          WHERE status='human_confirmed' AND published_at IS NOT NULL
+          ORDER BY published_at DESC LIMIT 1) AS latest,
+       count(*) AS week,
+       sum(CASE WHEN published_at >= ? THEN 1 ELSE 0 END) AS day
+     FROM accounts
+    WHERE status='human_confirmed' AND published_at >= ?`,
   )
     .bind(now - DAY_MS, now - 7 * DAY_MS)
-    .first<{ n: number; latest: number | null; day: number; week: number; pending: number }>();
+    .first<{ latest: number | null; week: number; day: number }>();
 
   // The publication row is OPTIONAL — the payload already degrades to
   // `artifacts: null` when there isn't one. Treat any failure here (e.g. a
   // freshly-migrated DB that is missing the table) as "no publication yet"
   // rather than letting it 500 the whole public endpoint.
   const pub = await c.env.DB.prepare(
-    "SELECT version, bloom_key, json_key, meta_key, count, published_at FROM publications ORDER BY published_at DESC LIMIT 1",
+    "SELECT version, bloom_key, json_key, meta_key, lite_key, count, pending_count, published_at FROM publications ORDER BY published_at DESC LIMIT 1",
   )
     .first<{
       version: string;
       bloom_key: string;
       json_key: string;
       meta_key: string;
+      lite_key: string | null;
       count: number;
+      pending_count: number | null;
       published_at: number;
     }>()
     .catch((err) => {
-      console.error("list/meta: publications lookup failed:", err);
+      logError("list_meta.publications_lookup_failed", err);
       return null;
     });
 
   const payload = {
-    count: r?.n ?? 0,
+    count: pub?.count ?? 0,
     day: r?.day ?? 0,
     week: r?.week ?? 0,
-    pending: r?.pending ?? 0,
+    pending: pub?.pending_count ?? 0,
+    // `generatedAt` is the artifact sync time (landing's "刚刚同步"); `latestAt`
+    // is the newest confirmed entry, which is what the list's "最近一条" reflects
+    // and what `/v1/list` sorts by. They diverge when accounts are confirmed
+    // after the last publication artifact was regenerated.
     generatedAt: pub?.published_at ?? r?.latest ?? null,
-    version: pub?.version ?? `d1-${r?.n ?? 0}`,
+    latestAt: r?.latest ?? null,
+    version: pub?.version ?? `d1-${pub?.count ?? 0}`,
     artifacts: pub
       ? {
           bloom: `/v1/artifacts/${pub.bloom_key}`,
           shards: `/v1/artifacts/${pub.json_key}`,
           meta: `/v1/artifacts/${pub.meta_key}`,
+          ...(pub.lite_key ? { lite: `/v1/artifacts/${pub.lite_key}` } : {}),
         }
       : null,
   };
@@ -2603,18 +3497,22 @@ app.get("/v1/list", async (c) => {
     return cached;
   }
 
+  // reporters via a correlated subquery (NOT a CTE + LEFT JOIN). The old
+  // `WITH rep AS (... GROUP BY ...)` materialized the full reports table and
+  // nested-loop-joined it against the page, reading ~200K rows to return 100
+  // — at the live data sizes that single query was responsible for billions
+  // of D1 rows-read/week. The correlated form rides idx_reports_unique's
+  // leading `handle` column and reads ~the page size (matches the indexed
+  // pattern already used by /v1/admin/blacklist and /v1/admin/queue).
   const rows = await c.env.DB.prepare(
-    `WITH rep AS (
-       SELECT handle, x_user_id, count(DISTINCT reporter_fp) AS n
-         FROM reports WHERE reporter_fp IS NOT NULL
-        GROUP BY handle, x_user_id
-     )
-     SELECT a.x_user_id, a.handle, a.display_name, a.avatar_url,
-            a.verdict_label, a.confidence, a.reasons, a.evidence_text, a.published_at,
-            coalesce(rep.n, 0) AS reporters
+    `SELECT a.x_user_id, a.handle, a.display_name, a.avatar_url,
+            a.verdict_label, a.confidence, a.category, a.reasons, a.evidence_text, a.published_at,
+            (SELECT count(DISTINCT r.reporter_fp)
+               FROM reports r
+              WHERE r.handle = a.handle
+                AND ifnull(r.x_user_id,'') = ifnull(a.x_user_id,'')
+                AND r.reporter_fp IS NOT NULL) AS reporters
        FROM accounts a
-       LEFT JOIN rep ON rep.handle = a.handle
-                    AND ifnull(rep.x_user_id,'') = ifnull(a.x_user_id,'')
       WHERE a.status='human_confirmed'
         AND a.published_at IS NOT NULL
         AND (?1 IS NULL OR a.published_at < ?1)
@@ -2630,6 +3528,7 @@ app.get("/v1/list", async (c) => {
       avatar_url: string | null;
       verdict_label: string;
       confidence: number;
+      category: string | null;
       reasons: string | null;
       evidence_text: string | null;
       published_at: number;
@@ -2663,24 +3562,59 @@ function pageHeaders(c: Ctx, cacheSeconds: number): void {
   c.header("Cache-Control", `public, max-age=${cacheSeconds}, s-maxage=${cacheSeconds * 2}`);
 }
 
-// Product landing — dark-glass marketing page, no PII, no external deps.
-app.get("/", (c) => {
+// All three pages are now the React/shadcn SPA (services/edge/app, built to
+// static/app/*). The Worker fetches the shell from the ASSETS binding and
+// injects a per-route <head> (title + crawler meta + analytics) before
+// returning it — crawlers see real OG tags even though the body is client
+// rendered. The legacy string renderers stay at *.legacy as a rollback.
+const OG_BASE = BRAND.edgeBase;
+function landingHead(): string {
+  return (
+    `<title>${BRAND.name} · ${BRAND.tagline}</title><meta name="description" content="MXGA 是开源 X 扩展：标出广告号和色情引流号，拉黑由你确认。Chrome / Firefox 已上架。"><meta property="og:title" content="${BRAND.name} · ${BRAND.tagline}"><meta property="og:description" content="社区共建的公开黑名单，帮你把 X 上的广告号和色情 bot 标出来。"><meta property="og:type" content="website"><meta property="og:url" content="${OG_BASE}/"><meta property="og:image" content="${OG_BASE}/og.png"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="${OG_BASE}/og.png">${googleAnalyticsHead()}`
+  );
+}
+function listHead(): string {
+  return (
+    `<title>公开名单 · ${BRAND.acronym}</title><meta name="robots" content="noindex,follow"><meta name="description" content="MXGA 已确认的垃圾号公开名单 · AI 初筛，维护者复核。">${googleAnalyticsHead()}`
+  );
+}
+
+/** Fetch the built SPA shell and splice a per-route <head> into it. */
+async function serveAppShell(
+  c: Context,
+  opts: { head?: string; robots?: string; cache: string },
+): Promise<Response> {
+  const res = await c.env.ASSETS.fetch(new URL("/app/index.html", c.req.url));
+  let html = await res.text();
+  if (opts.head) html = html.replace("<title>MXGA</title>", opts.head);
+  c.header("Content-Type", "text/html; charset=utf-8");
+  c.header("Cache-Control", opts.cache);
+  if (opts.robots) c.header("X-Robots-Tag", opts.robots);
+  c.header("Referrer-Policy", "no-referrer");
+  c.header("X-Content-Type-Options", "nosniff");
+  return c.body(html);
+}
+
+app.get("/", (c) => serveAppShell(c, { head: landingHead(), cache: "public, max-age=60, s-maxage=120" }));
+app.get("/list", (c) =>
+  serveAppShell(c, { head: listHead(), robots: "noindex, follow", cache: "public, max-age=30, s-maxage=60" }),
+);
+app.get("/admin", (c) => serveAppShell(c, { robots: "noindex, nofollow", cache: "no-store" }));
+
+// Legacy string-rendered pages, kept as a rollback during the React rollout.
+// Remove (along with src/pages/*.ts + styles.css) once the SPA is proven.
+app.get("/index.legacy", (c) => {
   pageHeaders(c, 60);
   return c.html(landingHtml());
 });
-
-// Public spam board — latest 100 human_confirmed accounts (polls /v1/list).
-app.get("/list", (c) => {
+app.get("/list.legacy", (c) => {
   pageHeaders(c, 30);
   return c.html(listHtml());
 });
-
-// Standalone admin console (separate from the consumer extension). The
-// ADMIN_TOKEN is entered here by the maintainer and kept in localStorage —
-// it never ships in the public extension. Page is noindex,nofollow.
-app.get("/admin", (c) => {
+app.get("/admin.legacy", (c) => {
   pageHeaders(c, 0);
   c.header("Cache-Control", "no-store");
+  c.header("X-Robots-Tag", "noindex, nofollow");
   return c.html(adminHtml());
 });
 
@@ -2695,11 +3629,15 @@ app.get("/admin", (c) => {
 type MirrorPublishResult = "skipped" | "committed" | "failed" | "disabled";
 
 async function mirrorToGitHub(
-  env: Env,
-): Promise<{ whitelist: MirrorPublishResult; blacklist: MirrorPublishResult }> {
+  env: Bindings,
+): Promise<{
+  whitelist: MirrorPublishResult;
+  blacklist: MirrorPublishResult;
+  lite: MirrorPublishResult;
+}> {
   const token = env.WHITELIST_SYNC_TOKEN;
   // PAT not provided yet — mirror disabled.
-  if (!token) return { whitelist: "disabled", blacklist: "disabled" };
+  if (!token) return { whitelist: "disabled", blacklist: "disabled", lite: "disabled" };
   const repo = env.WHITELIST_SYNC_REPO ?? "foru17/make-x-great-again";
 
   /** UTF-8 safe base64 (btoa() only handles latin-1). Uses TextEncoder rather
@@ -2786,7 +3724,11 @@ async function mirrorToGitHub(
       }),
     });
     if (!put.ok) {
-      console.warn(`mirror ${path} failed`, put.status, (await put.text()).slice(0, 200));
+      logWarn("mirror.put_failed", {
+        path,
+        status: put.status,
+        response: (await put.text()).slice(0, 200),
+      });
       return "failed";
     }
     return "committed";
@@ -2808,17 +3750,14 @@ async function mirrorToGitHub(
   // warn below, which fires before we ever silently truncate again.
   const BL_EXPORT_LIMIT = 50000;
   const bl = await env.DB.prepare(
-    `WITH rep AS (
-       SELECT handle, x_user_id, count(DISTINCT reporter_fp) AS n
-         FROM reports WHERE reporter_fp IS NOT NULL
-        GROUP BY handle, x_user_id
-     )
-     SELECT a.x_user_id, a.handle, a.verdict_label, a.confidence,
-            a.reasons, a.evidence_text, a.published_at,
-            coalesce(rep.n, 0) AS reporters
+    `SELECT a.x_user_id, a.handle, a.verdict_label, a.confidence, a.category,
+            a.reasons, a.evidence_text, a.published_at, a.published_tier,
+            (SELECT count(DISTINCT r.reporter_fp)
+               FROM reports r
+              WHERE r.handle = a.handle
+                AND ifnull(r.x_user_id,'') = ifnull(a.x_user_id,'')
+                AND r.reporter_fp IS NOT NULL) AS reporters
        FROM accounts a
-       LEFT JOIN rep ON rep.handle = a.handle
-                    AND ifnull(rep.x_user_id,'') = ifnull(a.x_user_id,'')
       WHERE a.status='human_confirmed' AND a.published_at IS NOT NULL
       ORDER BY a.published_at DESC LIMIT ${BL_EXPORT_LIMIT}`,
   ).all<{
@@ -2826,10 +3765,31 @@ async function mirrorToGitHub(
     handle: string;
     verdict_label: string;
     confidence: number;
+    category: string | null;
     reasons: string | null;
     evidence_text: string | null;
     published_at: number;
+    published_tier: string | null;
     reporters: number;
+  }>();
+
+  // Lite export (schema v2): the FULL confirmed set (no audit fields, so no
+  // 50K size cap needed) in the same compact row shape as the R2 lite
+  // artifact. This is what the extension build pipeline bundles — small
+  // enough to ship every entry, and it carries the category the client's
+  // per-category action policy needs. v1.json keeps the audit role
+  // (reasons/evidence/reporters) unchanged.
+  const liteRows = await env.DB.prepare(
+    `SELECT x_user_id, handle, verdict_label, category, published_tier
+       FROM accounts
+      WHERE status='human_confirmed' AND published_at IS NOT NULL
+      ORDER BY published_at DESC`,
+  ).all<{
+    x_user_id: string | null;
+    handle: string;
+    verdict_label: string;
+    category: string | null;
+    published_tier: string | null;
   }>();
 
   const now = Date.now();
@@ -2840,9 +3800,7 @@ async function mirrorToGitHub(
     // Don't silently cap: the published `count` would understate reality, which
     // is exactly the bug this guard prevents. Paginate or move to the Git Data
     // API when this fires.
-    console.warn(
-      `mirror: blacklist export hit the ${BL_EXPORT_LIMIT} cap — true total is higher; file is truncated.`,
-    );
+    logWarn("mirror.blacklist_truncated", { limit: BL_EXPORT_LIMIT });
   }
 
   const whitelist = await publish(
@@ -2871,16 +3829,57 @@ async function mirrorToGitHub(
         x_user_id: r.x_user_id,
         verdict_label: r.verdict_label,
         confidence: r.confidence,
-        reasons: r.reasons ? JSON.parse(r.reasons) : [],
+        category: r.category,
+        reasons: safeReasons(r.reasons),
         evidence_text: r.evidence_text,
         reporters: r.reporters,
         published_at: r.published_at,
+        published_tier: r.published_tier === "human" ? "human" : "auto",
       })),
     },
     `data(blacklist): sync · ${blCount} total · ${today}`,
   );
 
-  return { whitelist, blacklist };
+  const liteList = liteRows.results ?? [];
+  const mirrorRuleField: Record<string, string> = {
+    handle: "h",
+    display_name: "d",
+    bio: "b",
+    tweet: "t",
+    any: "a",
+  };
+  const mirrorRules = (await getKeywordRules(env))
+    .filter((r) => r.action === "blacklist")
+    .map((r) => [
+      r.pattern,
+      mirrorRuleField[r.field] ?? "a",
+      (r.verdict_label === "porn_bot" ? "p" : "s") +
+        (CATEGORY_CODE[(categoryForRule(r) ?? "other") as SpamCategory] ?? "o"),
+    ]);
+  const lite = await publish(
+    "data/blacklist/v2-lite.json",
+    {
+      schema: 2,
+      generatedAt: now,
+      count: liteList.length,
+      labels: { p: "porn_bot", s: "spam" },
+      tiers: { h: "human", a: "auto" },
+      categories: Object.fromEntries(
+        (Object.entries(CATEGORY_CODE) as [SpamCategory, string][]).map(([k, v]) => [v, k]),
+      ),
+      rules: mirrorRules,
+      entries: liteList.map((r) => [
+        r.x_user_id ?? "",
+        r.handle,
+        (r.verdict_label === "porn_bot" ? "p" : "s") +
+          (CATEGORY_CODE[(r.category ?? "other") as SpamCategory] ?? "o") +
+          (r.published_tier === "human" ? "h" : "a"),
+      ]),
+    },
+    `data(blacklist): lite sync · ${liteList.length} total · ${today}`,
+  );
+
+  return { whitelist, blacklist, lite };
 }
 
 // =========================================================================
@@ -2954,7 +3953,7 @@ app.get("/v1/agent/queue", async (c) => {
 // We never touch status=human_confirmed or status=whitelisted — stale agent
 // decisions lose the race and return 409 without changing audit state.
 const AgentDecideBody = z.object({
-  x_user_id: z.string().regex(/^\d+$/).optional(),
+  x_user_id: optionalNumericId,
   handle: z.string().min(1).max(64),
   decision: z.enum(["blacklist", "whitelist", "pending", "annotate"]),
   label: z.enum(["spam", "porn_bot", "likely_spam", "uncertain", "legit"]),
@@ -3171,7 +4170,7 @@ app.get("/v1/admin/agent-list", async (c) => {
 // and this promotion path can't drift behaviorally.
 const AgentPromoteBody = z.object({
   handle: z.string().min(1),
-  x_user_id: z.string().regex(/^\d+$/).optional(),
+  x_user_id: optionalNumericId,
   target: z.enum(["blacklist", "whitelist", "reject", "requeue"]),
 });
 const AgentPromoteBatch = z.object({
@@ -3180,7 +4179,7 @@ const AgentPromoteBatch = z.object({
     .array(
       z.object({
         handle: z.string().min(1),
-        x_user_id: z.string().regex(/^\d+$/).optional(),
+        x_user_id: optionalNumericId,
       }),
     )
     .min(1)
@@ -3188,7 +4187,7 @@ const AgentPromoteBatch = z.object({
 });
 
 function agentPromoteStmts(
-  env: Env,
+  env: Bindings,
   handle: string,
   xUserId: string | undefined,
   target: z.infer<typeof AgentPromoteBody>["target"],
@@ -3326,24 +4325,38 @@ app.post("/v1/admin/sync-mirror", async (c) => {
     return c.json({ error: "mirror_disabled", reason: "WHITELIST_SYNC_TOKEN not set" }, 503);
   }
   const results = await mirrorToGitHub(c.env);
-  const failed = results.whitelist === "failed" || results.blacklist === "failed";
+  const failed =
+    results.whitelist === "failed" || results.blacklist === "failed" || results.lite === "failed";
   if (failed) return c.json({ ok: false, error: "mirror_failed", results }, 502);
   return c.json({ ok: true, results });
 });
 
-async function publishArtifacts(env: Env): Promise<void> {
+async function publishArtifacts(env: Bindings): Promise<void> {
   const rows = await env.DB.prepare(
-    "SELECT x_user_id, handle, verdict_label, confidence, published_at FROM accounts WHERE status='human_confirmed' ORDER BY published_at DESC",
+    "SELECT x_user_id, handle, verdict_label, confidence, category, published_at, published_tier FROM accounts WHERE status='human_confirmed' ORDER BY published_at DESC",
   ).all<{
     x_user_id: string | null;
     handle: string;
     verdict_label: string;
     confidence: number;
+    category: string | null;
     published_at: number;
+    published_tier: string | null;
   }>();
 
   const accounts = rows.results ?? [];
+  // NULL tier = written between the migration and this deploy; treat as
+  // 'auto' (fail-safe: never auto-block an entry of unknown provenance).
+  const tierCode = (t: string | null) => (t === "human" ? "h" : "a");
   if (!accounts.length) return;
+
+  // Snapshot the pending-review count here (one bounded scan per 10-min run) so
+  // /v1/list/meta can read it from the ledger instead of scanning the whole
+  // auto_pending_review partition on every request.
+  const pendingRow = await env.DB.prepare(
+    "SELECT count(*) n FROM accounts WHERE status='auto_pending_review'",
+  ).first<{ n: number }>();
+  const pendingCount = pendingRow?.n ?? 0;
 
   const bloomItems = accounts.flatMap((a) =>
     [a.handle, a.x_user_id].filter((v): v is string => !!v),
@@ -3362,6 +4375,7 @@ async function publishArtifacts(env: Env): Promise<void> {
         label: a.verdict_label,
         confidence: a.confidence,
         published_at: a.published_at,
+        tier: a.published_tier === "human" ? "human" : "auto",
       };
       const primaryKey = a.x_user_id ?? `handle:${a.handle.toLowerCase()}`;
       entries[primaryKey] = entry;
@@ -3382,10 +4396,69 @@ async function publishArtifacts(env: Env): Promise<void> {
   const bloomKey = `bloom-${version}.b64`;
   const metaKey = `meta-${version}.json`;
   const jsonKey = `shards-${version}.json`;
+  const liteKey = `lite-${version}.json`;
+
+  // Lite artifact (schema v2): one compact row per account —
+  //   [x_user_id ("" when handle-only), handle, "<label><category><tier>"]
+  // where label is p=porn_bot / s=spam, category is the 1-char code from
+  // CATEGORY_CODE ("o" while the LLM backfill hasn't categorized the row yet),
+  // and tier is h=human-confirmed / a=auto-published (AI/rule/mention). Old
+  // 2-char codes parse fine on clients (missing tier reads as 'auto').
+  // ~50 bytes/entry vs ~300 in the legacy shards JSON (which double-keys every
+  // entry by id AND handle with verbose field names). Consumers derive both
+  // lookup maps from the single row. The legacy shards artifact keeps being
+  // published unchanged for old consumers.
+  const liteEntries = accounts.map((a) => [
+    a.x_user_id ?? "",
+    a.handle,
+    (a.verdict_label === "porn_bot" ? "p" : "s") +
+      (CATEGORY_CODE[(a.category ?? "other") as SpamCategory] ?? "o") +
+      tierCode(a.published_tier),
+  ]);
+  // Ship the enabled blacklist keyword rules with the artifact so clients can
+  // flag first-seen template accounts (brand-new throwaways not yet on the
+  // list) locally, with zero upload. Same maintainer-curated rules the server
+  // uses as its pre-LLM fast path; the client applies the same translation
+  // guard. Compact row: [pattern, fieldCode, labelCode+categoryCode].
+  const RULE_FIELD_CODE: Record<string, string> = {
+    handle: "h",
+    display_name: "d",
+    bio: "b",
+    tweet: "t",
+    any: "a",
+  };
+  const liteRules = (await getKeywordRules(env))
+    .filter((r) => r.action === "blacklist")
+    .map((r) => [
+      r.pattern,
+      RULE_FIELD_CODE[r.field] ?? "a",
+      (r.verdict_label === "porn_bot" ? "p" : "s") +
+        (CATEGORY_CODE[(categoryForRule(r) ?? "other") as SpamCategory] ?? "o"),
+    ]);
+
+  const liteArtifact = {
+    schema: 2,
+    version,
+    generatedAt: now,
+    count: accounts.length,
+    labels: { p: "porn_bot", s: "spam" },
+    tiers: { h: "human", a: "auto" },
+    categories: Object.fromEntries(
+      (Object.entries(CATEGORY_CODE) as [SpamCategory, string][]).map(([k, v]) => [v, k]),
+    ),
+    rules: liteRules,
+    entries: liteEntries,
+  };
 
   await env.ARTIFACTS.put(bloomKey, bloomB64, {
     httpMetadata: {
       contentType: "text/plain",
+      cacheControl: "public, max-age=300, s-maxage=600",
+    },
+  });
+  await env.ARTIFACTS.put(liteKey, JSON.stringify(liteArtifact), {
+    httpMetadata: {
+      contentType: "application/json",
       cacheControl: "public, max-age=300, s-maxage=600",
     },
   });
@@ -3397,6 +4470,7 @@ async function publishArtifacts(env: Env): Promise<void> {
       generatedAt: now,
       bloomKey,
       shardsKey: jsonKey,
+      liteKey,
       shardCount: Object.keys(shards).length,
       bloomSize: BLOOM_SIZE,
       bloomHashes: BLOOM_HASHES,
@@ -3426,24 +4500,231 @@ async function publishArtifacts(env: Env): Promise<void> {
     },
   );
 
+  // ON CONFLICT keeps count/pending_count fresh every run even when the
+  // confirmed set (and thus the version key) is unchanged, without bumping
+  // published_at (so "latest publication" ordering stays stable) or re-writing
+  // R2 objects. That way /v1/list/meta's pending never goes stale between
+  // confirmed-set changes.
   await env.DB.prepare(
-    "INSERT OR IGNORE INTO publications (version, bloom_key, json_key, meta_key, count, published_at) VALUES (?,?,?,?,?,?)",
+    `INSERT INTO publications (version, bloom_key, json_key, meta_key, lite_key, count, pending_count, published_at)
+     VALUES (?,?,?,?,?,?,?,?)
+     ON CONFLICT(version) DO UPDATE SET count=excluded.count, pending_count=excluded.pending_count, lite_key=excluded.lite_key`,
   )
-    .bind(version, bloomKey, jsonKey, metaKey, accounts.length, now)
+    .bind(version, bloomKey, jsonKey, metaKey, liteKey, accounts.length, pendingCount, now)
     .run();
+}
+
+// R2 retention. publishArtifacts writes 3 objects (~23 MB, dominated by the
+// shards JSON) every time the confirmed set changes — up to every 10 min — and
+// historically NEVER deleted the old ones, so the bucket grew without bound
+// (69.9 GB / ~10K objects by 2026-06-30, ~+2.8 GB/day). Clients only ever need
+// the newest version (advertised by /v1/list/meta), so keep a small rollback
+// window and sweep the rest. List-based (not just ledger-based) so it also
+// reclaims pre-ledger orphan objects. Bounded per run so the initial backlog
+// drains over a few cron ticks without risking a long invocation.
+const KEEP_PUBLICATIONS = 24;
+const PRUNE_MAX_DELETE_PER_RUN = 2000;
+
+async function prunePublications(env: Bindings): Promise<void> {
+  // Objects referenced by the newest KEEP_PUBLICATIONS versions — never delete
+  // these (the live version is always among them).
+  const keep = await env.DB.prepare(
+    "SELECT bloom_key, json_key, meta_key, lite_key FROM publications ORDER BY published_at DESC LIMIT ?",
+  )
+    .bind(KEEP_PUBLICATIONS)
+    .all<{ bloom_key: string; json_key: string; meta_key: string; lite_key: string | null }>();
+  const keepSet = new Set<string>();
+  for (const p of keep.results ?? []) {
+    keepSet.add(p.bloom_key);
+    keepSet.add(p.json_key);
+    keepSet.add(p.meta_key);
+    if (p.lite_key) keepSet.add(p.lite_key);
+  }
+  // Safety: if we can't tell what's live, do nothing rather than nuke the bucket.
+  if (!keepSet.size) return;
+
+  const toDelete: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const listed = await env.ARTIFACTS.list({ limit: 1000, cursor });
+    for (const obj of listed.objects) {
+      if (!keepSet.has(obj.key)) toDelete.push(obj.key);
+    }
+    cursor = listed.truncated ? listed.cursor : undefined;
+  } while (cursor && toDelete.length < PRUNE_MAX_DELETE_PER_RUN);
+
+  if (!toDelete.length) return;
+  const batch = toDelete.slice(0, PRUNE_MAX_DELETE_PER_RUN);
+  // R2 batch delete accepts up to 1000 keys per call; DELETE ops are free.
+  for (let i = 0; i < batch.length; i += 1000) {
+    await env.ARTIFACTS.delete(batch.slice(i, i + 1000));
+  }
+  // Keep the ledger bounded too (rows beyond the retention window).
+  await env.DB.prepare(
+    "DELETE FROM publications WHERE id NOT IN (SELECT id FROM publications ORDER BY published_at DESC LIMIT ?)",
+  )
+    .bind(KEEP_PUBLICATIONS)
+    .run();
+  logInfo("artifacts.pruned", { pruned: batch.length, kept: keepSet.size });
+}
+
+// =========================================================================
+// Category backfill — LLM batch sweep over legacy published rows.
+// =========================================================================
+// Historical human_confirmed spam rows predate the category column. Per the
+// project's no-keyword-guessing rule, they are categorized by the LLM from
+// the account's stored context (handle / display name / evidence / reasons),
+// a bounded batch per cron tick. HARD CAPS: ≤BACKFILL_CALLS_PER_TICK LLM
+// calls per 10-min tick (cost ceiling ~288 calls/day), and the sweep is
+// self-extinguishing — once no NULL-category rows remain it selects nothing
+// and never calls the LLM again.
+// 16 rows/call keeps the answer JSON small enough that a reasoning model
+// can't blow through max_tokens (the original 40-row batches deterministically
+// truncated at temperature 0 and stalled the sweep — see ORDER BY RANDOM()
+// note below).
+const BACKFILL_ROWS_PER_CALL = 16;
+const BACKFILL_CALLS_PER_TICK = 3;
+
+const BackfillAnswer = z.object({
+  categories: z
+    .array(z.object({ i: z.number().int().nonnegative(), c: z.enum(SPAM_CATEGORIES) }))
+    .max(BACKFILL_ROWS_PER_CALL * 2),
+});
+
+const BACKFILL_SYSTEM = `You categorize X (Twitter) SPAM accounts (already confirmed spam) into the business category the account is pushing. Use ALL provided context per account (handle, display name, the public post/evidence snippet, prior classifier reasons).
+Categories:
+- "porn": sexual solicitation, escort/hookup ads, porn bots
+- "crypto": coins/tokens, trading, airdrops, stocks/investment shilling
+- "gambling": casino, sports betting, lottery
+- "resource": netdisk / pirated "resource" bait (网盘/资源自取 links)
+- "marketing": generic ads, follower-farming, promo matrix, redirect bait for promotion
+- "other": spam that fits none of the above, or too little context to tell
+Note: the evidence text may be machine-translated by X; judge the substance, not the surface language.
+Return ONLY JSON: {"categories":[{"i":<row number>,"c":"porn|crypto|gambling|resource|marketing|other"}, ...]} covering every row.`;
+
+interface BackfillRow {
+  rowid: number;
+  handle: string;
+  display_name: string | null;
+  evidence_text: string | null;
+  reasons: string | null;
+}
+
+async function backfillCategories(env: Bindings): Promise<void> {
+  if (!env.LLM_API_BASE || !env.LLM_API_KEY) return;
+  // ORDER BY RANDOM(), not rowid: with a deterministic order + temperature 0,
+  // a batch whose content makes the model fail (e.g. runaway reasoning →
+  // truncation) is re-selected and re-fails every tick, freezing the sweep.
+  // Random sampling makes every tick draw a different batch, so no subset of
+  // rows can block the rest.
+  const rows = await env.DB.prepare(
+    `SELECT rowid, handle, display_name, evidence_text, reasons
+       FROM accounts
+      WHERE status='human_confirmed'
+        AND verdict_label IN ('spam','likely_spam')
+        AND category IS NULL
+      ORDER BY RANDOM()
+      LIMIT ?`,
+  )
+    .bind(BACKFILL_ROWS_PER_CALL * BACKFILL_CALLS_PER_TICK)
+    .all<BackfillRow>();
+  const pending = rows.results ?? [];
+  if (!pending.length) return;
+
+  for (let off = 0; off < pending.length; off += BACKFILL_ROWS_PER_CALL) {
+    const batch = pending.slice(off, off + BACKFILL_ROWS_PER_CALL);
+    const lines = batch.map((r, idx) => {
+      const reasons = safeReasons(r.reasons).join("; ").slice(0, 160);
+      const evidence = (r.evidence_text ?? "").slice(0, 200);
+      return `${idx}. @${r.handle} | name: ${r.display_name || "(empty)"} | evidence: ${evidence || "(none)"} | reasons: ${reasons || "(none)"}`;
+    });
+    let answer: z.infer<typeof BackfillAnswer> | null = null;
+    const messages: { role: string; content: string }[] = [
+      { role: "system", content: BACKFILL_SYSTEM },
+      { role: "user", content: lines.join("\n") },
+    ];
+    // Two attempts, mirroring classify(): the retry asks for the compact JSON
+    // only, which recovers from truncated / prose-wrapped first answers.
+    for (let attempt = 0; attempt < 2 && !answer; attempt++) {
+      try {
+        const res = await fetch(`${env.LLM_API_BASE}/chat/completions`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${env.LLM_API_KEY}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            model: env.LLM_API_MODEL,
+            temperature: 0,
+            max_tokens: 8192,
+            messages,
+          }),
+        });
+        if (!res.ok) throw new Error(`LLM ${res.status}`);
+        const j = (await res.json()) as { choices: ChatChoice[] };
+        const choice = j.choices[0];
+        const txt = (choice?.message?.content || choice?.message?.reasoning_content || "").trim();
+        try {
+          answer = BackfillAnswer.parse(extractVerdictJson(txt));
+        } catch (parseErr) {
+          messages.push(
+            { role: "assistant", content: txt.slice(0, 1500) },
+            {
+              role: "user",
+              content:
+                'Reply with ONLY the compact JSON object {"categories":[{"i":<n>,"c":"<category>"}...]} covering every row — no reasoning, no markdown fences.',
+            },
+          );
+          if (attempt === 1) {
+            logWarn("category_backfill.parse_failed", { error: errorMessage(parseErr) });
+          }
+        }
+      } catch (e) {
+        logError("category_backfill.llm_failed", e);
+        break; // network/HTTP failure — skip this batch, try the next one
+      }
+    }
+    // A failed batch no longer aborts the tick: with random sampling the next
+    // batch is a different draw, so one bad batch can't stall the sweep.
+    if (!answer) continue;
+    const updates = answer.categories
+      .filter((a) => a.i >= 0 && a.i < batch.length)
+      .map((a) =>
+        env.DB.prepare(
+          "UPDATE accounts SET category=? WHERE rowid=? AND category IS NULL",
+        ).bind(a.c, batch[a.i]?.rowid),
+      );
+    if (updates.length) await env.DB.batch(updates);
+    logInfo("category_backfill.completed", {
+      labeled: updates.length,
+      batch: batch.length,
+    });
+  }
 }
 
 export default {
   fetch: app.fetch,
-  scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): void {
+  scheduled(event: ScheduledController, env: Bindings, ctx: ExecutionContext): void {
     // Dispatch by trigger (must match wrangler.toml [triggers].crons):
     //   "0 */6 * * *"  → GitHub mirror only. Running it on every trigger was
     //                    why the data repo got a sync commit every 10 minutes.
     //   "*/10 * * * *" → R2 artifact publish (cheap, diff-tolerant).
     if (event.cron === "0 */6 * * *") {
-      ctx.waitUntil(mirrorToGitHub(env).catch((e) => console.warn("mirror error", e)));
+      ctx.waitUntil(mirrorToGitHub(env).catch((e) => logError("mirror.failed", e)));
     } else {
-      ctx.waitUntil(publishArtifacts(env).catch((e) => console.warn("artifact publish error", e)));
+      // Publish, then prune old R2 artifacts regardless of publish outcome so
+      // the retention sweep always runs (and drains the historical backlog).
+      ctx.waitUntil(
+        publishArtifacts(env)
+          .catch((e) => logError("artifact_publish.failed", e))
+          .then(() => prunePublications(env))
+          .catch((e) => logError("artifact_prune.failed", e)),
+      );
+      // Legacy-row category sweep (bounded LLM spend per tick; self-stops
+      // once every published spam row carries a category).
+      ctx.waitUntil(
+        backfillCategories(env).catch((e) => logError("category_backfill.failed", e)),
+      );
     }
   },
-};
+} satisfies ExportedHandler<Bindings>;

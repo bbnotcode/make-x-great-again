@@ -24,7 +24,7 @@ The moderation design protects three high-risk surfaces:
 
 | Tier | Who | Can do |
 |---|---|---|
-| **Anonymous** | website visitors / third-party consumers | **read only**: `/v1/check`, fetch public list/bloom. Cheap, cacheable, no abuse surface. (The installed extension sits below even this tier: it works entirely from its bundled list + local heuristic and makes zero requests.) |
+| **Anonymous** | website visitors / third-party consumers | **read only**: `/v1/check`, fetch public list/bloom. Cheap, cacheable, no abuse surface. (The installed extension periodically downloads shared public artifacts, then performs account checks locally.) |
 | **Verified reporter** | trusted caller with a **GitHub** bearer token | `/v1/report` / `/v1/confirm`. Rate-limited & bannable per HMAC reporter fingerprint. |
 | **Admin (守门员)** | maintainer allowlist | moderation panel: approve / reject / remove. |
 
@@ -95,8 +95,9 @@ All on the existing Cloudflare stack.
 1. **`/v1/classify` = GitHub-authed when `REQUIRE_AUTH=1`** (and rate-limited
    to 20/h per caller). The anonymous read tier — website visitors and
    third-party consumers — gets the read-only public list (`/v1/check`).
-   The installed extension works entirely from its bundled list + local
-   heuristic and makes no requests at all. Server-side AI classification
+   The installed extension periodically downloads shared public artifacts,
+   then works from its local cache + heuristic with no per-account requests.
+   Server-side AI classification
    requires GitHub login via the website / trusted tooling; the server LLM
    key is never an anonymous endpoint. (UX implication: extension users
    only get known-list hits + local heuristic — fresh AI verdicts on
@@ -106,6 +107,24 @@ All on the existing Cloudflare stack.
    Everything else → admin review queue. AI alone never auto-publishes
    (governance red line intact; the 3 real GitHub reporters are the human
    signal). K=3 is a tunable policy knob.
+3. **Publish provenance (`accounts.published_tier`, 2026-07-07).** The
+   classify-path AI auto-publish lane, keyword-rule hits and @-mention
+   promotions all land rows in `status='human_confirmed'` for listing
+   purposes, but they are NOT human confirmations. Every publish now records
+   who put the row on the list — `human` (admin decide / agent-promote),
+   `ai`, `rule`, `mention` — and the tier travels with the data:
+   - lite artifacts carry a 3rd entry-code char (`h`/`a`); `v1.json` and the
+     shard artifacts carry a `tier` field;
+   - `/v1/check` returns **only `published_tier='human'` rows** — deployed
+     v0.4 clients auto-block on any hit from it, so unreviewed rows must
+     never appear there;
+   - the extension (≥0.6) may auto hide/mute/block any PUBLISHED list entry
+     per the user's category policy (scoped to reply sections by default);
+     the tier is surfaced in the badge popover (人工确认 / 自动收录). Local
+     keyword-rule matches and cache verdicts — accounts NOT on the published
+     list — are badge-only, always.
+   An admin approving a queued row (or agent-promote) upgrades it to
+   `human`; auto lanes can never overwrite a human decision.
 
 ---
 
@@ -138,7 +157,8 @@ code on `main`.
   `ADMIN_TOKEN` secret. Every decision writes `review_log`.
 
 ### Extension (consumer, no admin surface)
-- The shipped consumer extension is passive and local-list-only (zero network
+- The shipped consumer extension is passive and cached-list-first (no
+  per-account network
   requests; the list is bundled into the package). Its background script
   returns explicit disabled errors for `gh_start` / `gh_poll`, and there is
   no report/confirm/classify write path in normal content scanning.
@@ -187,7 +207,8 @@ code on `main`.
 3. **`REQUIRE_AUTH` flip.** This is an owner-timed production operation:
    confirm trusted write clients can supply GitHub bearer tokens, then set
    `wrangler secret put REQUIRE_AUTH` to `1`. The consumer extension makes
-   no network requests at all (bundled local list), so it is unaffected.
+   no per-account requests (cached local list), so browsing volume does not
+   multiply service traffic.
 4. **`/v1/appeal` is implemented as a review signal.** Filing an appeal writes
    an `appeal_submitted` audit row and leaves the listing in place until a human
    admin decides `remove`, matching SPEC-T1's anti-delisting-abuse rule.

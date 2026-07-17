@@ -29,10 +29,24 @@ export interface Signals {
   accountAgeDays?: number;
   followersCount?: number;
   followingCount?: number;
+  /** The tweet texts above are X machine-translations, not the author's own
+   *  words (original unavailable in the DOM). Consumers must not treat the
+   *  surface language as an author signal. */
+  tweetsTranslated?: boolean;
 }
 
-/** Background messages — strictly local now (no remote classify/confirm). */
-export type BgRequest = { type: "health" } | { type: "stats" } | { type: "records" };
+/** Background messages. "list-sync" triggers the public blocklist download
+ *  (read-only GET of the official artifact; nothing is uploaded). */
+export type BgRequest =
+  | { type: "health" }
+  | { type: "stats" }
+  | { type: "records" }
+  | { type: "list-sync"; force?: boolean }
+  // GitHub Device Flow (whitelist self-service login). Runs in the
+  // background: github.com's device endpoints don't serve CORS, so the
+  // fetches need the optional github.com host permission granted first.
+  | { type: "gh_start" }
+  | { type: "gh_poll"; deviceCode: string };
 
 export interface BgResponse {
   ok: boolean;

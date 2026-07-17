@@ -4,10 +4,12 @@
 import { removeBlocked } from "./blocklist";
 import type { Verdict } from "./types";
 
+// "manual"    → user clicked 隐藏 on a badge / bubble
+// "auto"      → per-category action policy fired on a public-blacklist hit
 // "list_hit"  → public-blacklist match (step 2 of content.ts)
 // "cache_hit" → local cache says this account is spam (step 1 of content.ts)
 // (Legacy sources from the auto-block era are kept for old stored records.)
-export type BlockSource = "manual" | "block_all" | "list_hit" | "cache_hit";
+export type BlockSource = "manual" | "auto" | "block_all" | "list_hit" | "cache_hit";
 
 export interface BlockRecord {
   id: string; // userId, or h:<handle> fallback
@@ -16,8 +18,22 @@ export interface BlockRecord {
   avatarUrl?: string;
   verdict?: Verdict;
   reason?: string;
+  /** The tweet/reply that triggered the action — audit trail so the user
+   *  can revisit the scene (https://x.com/<handle>/status/<tweetId>).
+   *  Absent when the action happened without a tweet context (profile
+   *  header, cross-page batch after DOM recycling). */
+  tweetId?: string;
+  /** Snapshot of the triggering text — survives tweet deletion. */
+  tweetText?: string;
   source: BlockSource;
   ts: number;
+}
+
+/** Permalink of the triggering tweet, when recorded. */
+export function tweetUrl(r: Pick<BlockRecord, "handle" | "tweetId">): string | null {
+  return r.tweetId
+    ? `https://x.com/${encodeURIComponent(r.handle)}/status/${r.tweetId}`
+    : null;
 }
 
 export interface Stats {
@@ -66,6 +82,18 @@ export async function addBlockRecord(rec: BlockRecord): Promise<void> {
   const list = await getBlocklist();
   if (list.some((r) => r.id === rec.id)) return;
   list.push(rec);
+  await set(K_BLOCK, list);
+}
+
+export async function updateBlockRecord(
+  id: string,
+  patch: Partial<Omit<BlockRecord, "id">>,
+): Promise<void> {
+  const list = await getBlocklist();
+  const i = list.findIndex((r) => r.id === id);
+  const rec = list[i];
+  if (!rec) return;
+  list[i] = { ...rec, ...patch };
   await set(K_BLOCK, list);
 }
 

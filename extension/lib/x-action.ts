@@ -190,8 +190,10 @@ async function rawAction(
     if (!csrf) return { ok: false, retryable: false };
     const screenName = normalizeHandle(handle);
     const body = new URLSearchParams();
-    if (screenName) body.set("screen_name", screenName);
-    else if (userId && /^\d+$/.test(userId)) body.set("user_id", userId);
+    // Prefer the immutable numeric user_id: handles rename, and a wrongly
+    // extracted pseudo-handle 404s silently — the id never lies.
+    if (userId && /^\d+$/.test(userId)) body.set("user_id", userId);
+    else if (screenName) body.set("screen_name", screenName);
     else return { ok: false, retryable: false };
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15_000);

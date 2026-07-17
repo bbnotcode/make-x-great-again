@@ -90,7 +90,7 @@ export function App() {
         <b className="text-[14px] font-semibold tracking-[-.005em]">{BRAND.acronym}</b>
         <span className="text-[10.5px] font-medium uppercase tracking-[0.08em] text-fg-4">{BRAND.name}</span>
         <span
-          aria-label={status === null ? "检查中" : status.ok ? "本地名单已加载" : "名单加载失败"}
+          aria-label={status === null ? "检查中" : status.ok ? "名单已同步" : "名单同步失败"}
           className={`ml-auto inline-flex h-2 w-2 rounded-full ${
             status === null ? "bg-fg-4" : status.ok ? "bg-ok" : "bg-danger"
           }`}
@@ -114,8 +114,8 @@ export function App() {
 
       {/* Per-stat breakdown */}
       <div className="mt-2 grid grid-cols-2 gap-1.5">
-        <Stat label="命中名单" value={stats?.hitPublic ?? 0} hint="本地名单命中，零成本" accent />
-        <Stat label="亲手隐藏" value={stats?.blocked ?? 0} hint="你按的隐藏按钮" />
+        <Stat label="命中名单" value={stats?.hitPublic ?? 0} hint="公共名单命中，本地比对" accent />
+        <Stat label="亲手处理" value={stats?.blocked ?? 0} hint="你手动隐藏 / 静音 / 拉黑的账号" />
       </div>
 
       <div
@@ -128,17 +128,17 @@ export function App() {
         }`}
       >
         {status === null ? (
-          <span>加载本地名单…</span>
+          <span>同步名单…</span>
         ) : status.ok ? (
           <>
-            <span className="text-fg-3">本地名单已加载</span>
+            <span className="text-fg-3">名单已同步</span>
             <span className="font-mono text-[13px] font-semibold tabular-nums tracking-tight">
               {fmt(status.n)}
               <span className="ml-1 font-sans text-[11px] font-normal text-fg-3">条</span>
             </span>
           </>
         ) : (
-          <span>名单加载失败 · 试试重启浏览器</span>
+          <span>名单未同步 · 将自动重试</span>
         )}
       </div>
 
@@ -150,6 +150,16 @@ export function App() {
         className="mt-3 w-full cursor-pointer rounded-md border border-fg bg-fg px-3 py-2.5 text-[13px] font-semibold text-bg transition hover:opacity-90 active:translate-y-px"
       >
         打开管理面板
+      </button>
+
+      <button
+        type="button"
+        onClick={() =>
+          chrome.tabs.create({ url: chrome.runtime.getURL("options.html?tab=whitelist") })
+        }
+        className="mt-1.5 w-full cursor-pointer rounded-md border border-ok/40 bg-ok-soft px-3 py-2 text-[12.5px] font-medium text-ok transition hover:opacity-90 active:translate-y-px"
+      >
+        保护我的账号 · 加入白名单
       </button>
 
       <div className="mt-2 grid grid-cols-2 gap-1.5">

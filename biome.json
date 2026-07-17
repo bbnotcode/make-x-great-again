@@ -4,7 +4,10 @@
   "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
   "linter": {
     "enabled": true,
-    "rules": { "recommended": true }
+    "rules": {
+      "recommended": true,
+      "suspicious": { "noArrayIndexKey": "off" }
+    }
   },
   "files": {
     "ignore": [
@@ -15,7 +18,8 @@
       "extension",
       "data",
       "services/edge/src/_generated-css.ts",
-      "services/edge/src/styles.css"
+      "services/edge/src/styles.css",
+      "services/edge/worker-configuration.d.ts"
     ]
   }
 }

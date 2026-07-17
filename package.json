@@ -12,7 +12,7 @@
     "classify": "tsx src/cli.ts",
     "serve": "tsx src/server.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "biome check .",
+    "lint": "biome lint src test services/edge/src services/edge/app",
     "format": "biome format --write .",
     "test": "tsx --test test/**/*.test.ts"
   },
@@ -22,7 +22,7 @@
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/node": "^22.10.2",
-    "tsx": "^4.19.2",
+    "tsx": "^4.23.0",
     "typescript": "^5.7.2"
   }
 }

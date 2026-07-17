@@ -14,9 +14,11 @@ export const BRAND = {
   repo: "https://github.com/foru17/make-x-great-again",
   /** Latest GitHub Release page (auto-redirects to newest .zip). */
   release: "https://github.com/foru17/make-x-great-again/releases/latest",
-  /** Chrome Web Store listing — the primary install path for normal users. */
+  /** Chrome Web Store listing — the primary install path for Chromium users. */
   chromeWebStore:
     "https://chromewebstore.google.com/detail/make-x-great-again/aeoldnecphbkkckeedfgfcdcekkljdea",
+  /** Mozilla Add-ons (AMO) listing — the install path for Firefox users. */
+  firefoxAddons: "https://addons.mozilla.org/firefox/addon/make-x-great-again/",
   /** Public Worker base URL (custom domain). Extension can override in settings. */
   edgeBase: "https://x.zuoluo.tv",
   /** Governance doc inside the repo. */

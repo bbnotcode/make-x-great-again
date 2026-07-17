@@ -1,0 +1,64 @@
+{
+  "goal": "分级可控拉黑策略 + 黑名单 JSON 瘦身（lite/audit 双轨）+ X 自动翻译误报对策",
+  "created": "2026-07-06",
+  "analysis_facts": {
+    "db_total_accounts": 335000,
+    "d1_size_mb": 545,
+    "published_count": 106770,
+    "porn_bot": 73761,
+    "spam": 30837,
+    "artifact_json_mb": 32,
+    "artifact_bloat": "entries map 28.3MB：10.7万账号按 id+handle 双 key 存 20.9万条，字段名全称",
+    "category_source": "无 category 字段；reasons 混杂（keyword rule 命中文案/reported/LLM英文句子），不可直接分类",
+    "translation": "扩展无 lang/翻译处理；evidence_text 仅 9 条带显式翻译标记（污染不可见）"
+  },
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "服务端 category 体系：accounts.category 列 + keyword_rules.category 列 + classify LLM 输出 category + 迁移 SQL（按用户要求：分类以 LLM 为准，无关键词猜测）",
+      "verify": "migration 可正向/回滚执行；新 classify 写入 category；单测通过",
+      "passes": true,
+      "note": "migration 已应用到远程 D1；27/27 测试过；commit 935fc73"
+    },
+    {
+      "id": "T2",
+      "title": "历史数据 category 回填：porn_bot→porn 直映射 + 规则 provenance 映射 + 剩余行 LLM cron sweep（硬上限 2 调用/tick）",
+      "verify": "porn/规则层回填完成；LLM sweep 部署后逐步清零 NULL；下个 cron tick 观察到 NULL 数下降",
+      "passes": true,
+      "note": "porn 74K + 规则层 12.9K 已回填；sweep 曾因确定性毒批次卡死在 18441（fix 2017818：随机采样+16行批+重试+跳批），修复后单 tick -32，约 3-4 天清零，自动收敛"
+    },
+    {
+      "id": "T3",
+      "title": "发布产物 v2：R2 lite-<version>.json + GitHub v2-lite.json（全量无 cap）+ v1 兼容保留",
+      "verify": "lite 产物体积 ≤6MB；/v1/list/meta 广告 lite URL；旧 shards 继续发布",
+      "passes": true,
+      "note": "verifier 实测：lite 4.76MB / 106,939 条 / schema 2；GitHub v2-lite.json 106,843 条全量；/v1/list 带 category"
+    },
+    {
+      "id": "T4",
+      "title": "扩展端分级策略：6 类 × （仅标记/自动隐藏/自动静音/自动拉黑），默认全部仅标记（=现行为）",
+      "verify": "typecheck + wxt build 通过；options 有分级策略区；content 命中即按策略执行且可撤销",
+      "passes": true,
+      "note": "commit daeaac4；构建产物 3.18MB"
+    },
+    {
+      "id": "T5",
+      "title": "自动翻译对策：服务端 CJK 规则翻译守卫（降级走 LLM）+ Signals.tweetsTranslated + LLM 提示词翻译陷阱说明 + 扩展端 DOM 翻译标记检测",
+      "verify": "翻译场景单测通过（3 个专项用例）",
+      "passes": true,
+      "note": "test/category-translation.test.ts 5/5 过；原文不可得（X 替换 DOM），故策略=标记+降级，非还原原文"
+    },
+    {
+      "id": "T6",
+      "title": "部署 edge + 构建扩展 + goal-verifier 核验",
+      "verify": "wrangler deploy 成功；线上 lite 产物可拉取且含 category；verifier 全 PASS",
+      "passes": true,
+      "note": "两次部署（b63204d0 + sweep fix 390dc36e）；goal-verifier 全项 PASS；扩展已用全量 v2-lite 重建（106,497 条，待人工上架）"
+    }
+  ],
+  "manual_blockers": [
+    "扩展新版需要人工上传 CWS/AMO（.output/chrome-mv3 就绪，366KB；名单已改为运行时从官方源同步，不再打包）",
+    "CWS/AMO 商店文案需同步改口径：'Zero remote requests' → '名单从官方源自动同步（只下载公开数据，零上传）'；docs/CWS_LISTING.md / PRIVACY.md 同理",
+    "admin 面板的关键词规则编辑 UI 尚无 category 字段输入（API 已支持）；新增规则建议顺手在 D1 里补 category"
+  ]
+}

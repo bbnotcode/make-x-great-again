@@ -13,9 +13,8 @@ otherwise.
 - New **处理方式 (action mode)** setting controlling what clicking "隐藏" does
   to a flagged account, with three options:
   - **本地隐藏 (local)** — the default. Pure on-device visual hide
-    (`display:none` + a local hidden-list in `chrome.storage`); zero network,
-    X is never contacted, reversible from the options page. A fresh install
-    behaves exactly like the prior zero-remote build.
+    (`display:none` + a local hidden-list in `chrome.storage`); X is never
+    contacted, and the action is reversible from the options page.
   - **X 静音 (mute)** — opt-in. Calls X's own first-party
     `POST /i/api/1.1/mutes/users/create.json` using the user's existing X
     session (the page's `ct0` CSRF cookie + X's public web bearer). One-way:
@@ -36,13 +35,10 @@ otherwise.
 
 ### Changed
 
-- The extension is now **local-first / zero-remote by default**: the public
-  blacklist (compiled by `scripts/compile-blacklist.js`, ~46k entries) ships
-  inside the package and is read locally; in the default local mode the
-  extension makes **zero network requests** and its only granted permission is
-  `storage` (no `alarms`). Firefox builds declare
-  `data_collection_permissions: "none"`, which stays accurate even in
-  mute/block mode (the user acts on their own X account via X's API).
+- The extension is **local-first**: the public blacklist and whitelist are
+  downloaded from the official service and cached for local matching. The
+  background checks every six hours using `alarms`; list requests upload no
+  page content, account identity, scan result, or action history.
 - The x.com host permission is now **optional** and **runtime-requested**:
   declared as `optional_host_permissions` (Chrome) / `optional_permissions`
   (Firefox) and requested via `chrome.permissions.request` only when the user
@@ -60,9 +56,14 @@ otherwise.
 
 ### Removed
 
-- GitHub Device Flow login and all GitHub OAuth code in the extension.
 - The MAIN-world content script (`x-graphql-main.content.ts`) and all
   fetch/XHR patching.
+
+### Added after the initial 0.5 cut
+
+- GitHub Device Flow was restored solely for self-service whitelist
+  applications. It requests the GitHub host permission at runtime; routine
+  protection remains login-free.
 - Dead settings that never did anything: `replyAuto`, `autoBlockListHits`,
   `autoExpandOnFinding`.
 
