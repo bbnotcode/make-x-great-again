@@ -30,9 +30,6 @@ export interface IndexEntry {
    *                人工确认/自动收录)；being on the published list at all is
    *                what makes an entry auto-actable. */
   tier: "confirmed" | "auto";
-  /** The official rule pattern that produced this entry (rule hits only —
-   *  set by the content script when matchLocalRules fires). */
-  rulePattern?: string;
   source: "curated" | "community";
   updatedAt: string; // ISO date
 }

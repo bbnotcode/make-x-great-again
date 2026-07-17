@@ -449,7 +449,7 @@ export default defineContentScript({
       sig: Signals,
       v: Verdict,
       source: string,
-      meta?: { categoryZh?: string; rule?: string; tweetId?: string },
+      meta?: { categoryZh?: string; tweetId?: string },
     ) {
       if (!["spam", "porn_bot", "likely_spam"].includes(v.label)) return;
       const id = keyOf(sig);
@@ -469,7 +469,6 @@ export default defineContentScript({
         verdict: v,
         source,
         ...(meta?.categoryZh ? { categoryZh: meta.categoryZh } : {}),
-        ...(meta?.rule ? { rule: meta.rule } : {}),
         ...(meta?.tweetId ? { tweetId: meta.tweetId } : {}),
         ...(sig.userId ? { userId: sig.userId } : {}),
         ...(sig.avatarUrl ? { avatarUrl: sig.avatarUrl } : {}),
@@ -558,7 +557,6 @@ export default defineContentScript({
         badgeFor(anchor, key, sig, entry.verdict, undefined, badgeSource);
         pushFinding(sig, entry.verdict, badgeSource === "rule" ? "local-rule" : "local-index", {
         categoryZh: CATEGORY_ZH[entry.category],
-        ...(entry.rulePattern ? { rule: entry.rulePattern } : {}),
         ...(hitTweetId ? { tweetId: hitTweetId } : {}),
       });
         return;
@@ -568,7 +566,6 @@ export default defineContentScript({
       // button is a status chip). Chips + radar pill counts follow.
       pushFinding(sig, entry.verdict, badgeSource === "rule" ? "local-rule" : "local-index", {
         categoryZh: CATEGORY_ZH[entry.category],
-        ...(entry.rulePattern ? { rule: entry.rulePattern } : {}),
         ...(hitTweetId ? { tweetId: hitTweetId } : {}),
       });
       const verb = action === "mute" ? "静音" : action === "block" ? "拉黑" : "隐藏";
@@ -645,12 +642,14 @@ export default defineContentScript({
               handle: sig.handle,
               verdict: {
                 label: ruleHit.label,
+                // The matched pattern never surfaces in the UI: spammers read
+                // their own block screenshots, and a leaked keyword is a
+                // free evasion recipe. Category only.
                 confidence: 0.95,
-                reasons: [`命中官方规则「${ruleHit.pattern}」 · ${CATEGORY_ZH[ruleHit.category]}`],
+                reasons: [`命中官方规则 · ${CATEGORY_ZH[ruleHit.category]}`],
               },
               category: ruleHit.category,
               tier: "auto", // rule hits are auto tier — reply-scope gated
-              rulePattern: ruleHit.pattern,
               source: "community",
               updatedAt: new Date().toISOString(),
             },
