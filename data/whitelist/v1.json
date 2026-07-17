@@ -1,12 +1,427 @@
 {
   "schema": 1,
-  "generatedAt": 1781022045969,
-  "count": 131,
+  "generatedAt": 1784138412202,
+  "count": 227,
   "list": [
+    {
+      "handle": "bryanfrazivanyb",
+      "x_user_id": "1844502146622136320",
+      "last_scored": 1784124868430
+    },
+    {
+      "handle": "BabybusFL",
+      "x_user_id": null,
+      "last_scored": 1783704035308
+    },
+    {
+      "handle": "babybusfl",
+      "x_user_id": "2063073064758157312",
+      "last_scored": 1783704035308
+    },
+    {
+      "handle": "xiaohu",
+      "x_user_id": "1764818331822182400",
+      "last_scored": 1783575859486
+    },
+    {
+      "handle": "jackywine",
+      "x_user_id": "1805875520430915586",
+      "last_scored": 1783409559602
+    },
+    {
+      "handle": "jackywine",
+      "x_user_id": "1404738934043602947",
+      "last_scored": 1783409559602
+    },
+    {
+      "handle": "bailyLU",
+      "x_user_id": null,
+      "last_scored": 1783407272691
+    },
+    {
+      "handle": "shoryupaw",
+      "x_user_id": "157550302",
+      "last_scored": 1783395776270
+    },
+    {
+      "handle": "xicilion",
+      "x_user_id": "364478145",
+      "last_scored": 1783390164077
+    },
+    {
+      "handle": "huoshan007",
+      "x_user_id": "1031670310884573184",
+      "last_scored": 1783314555139
+    },
+    {
+      "handle": "ninthbit_ai",
+      "x_user_id": null,
+      "last_scored": 1783288569541
+    },
+    {
+      "handle": "ryrenz",
+      "x_user_id": "1901372809701400576",
+      "last_scored": 1783221426064
+    },
+    {
+      "handle": "bailylu",
+      "x_user_id": "2279407860",
+      "last_scored": 1783068142079
+    },
+    {
+      "handle": "iamtonyzhu",
+      "x_user_id": "36952268",
+      "last_scored": 1782969982781
+    },
+    {
+      "handle": "flmdongtianfudi",
+      "x_user_id": "1717206292505460736",
+      "last_scored": 1782889612814
+    },
+    {
+      "handle": "newscomauhq",
+      "x_user_id": "15250661",
+      "last_scored": 1782832497309
+    },
+    {
+      "handle": "espnuk",
+      "x_user_id": "89452962",
+      "last_scored": 1782832493000
+    },
+    {
+      "handle": "okxchinese",
+      "x_user_id": "1461224994705649671",
+      "last_scored": 1782832463957
+    },
+    {
+      "handle": "hongkongdoll_cn",
+      "x_user_id": "1587582305169727488",
+      "last_scored": 1782832444813
+    },
+    {
+      "handle": "saika_kawakita",
+      "x_user_id": "1399198882827960321",
+      "last_scored": 1782832426602
+    },
+    {
+      "handle": "pelositracker",
+      "x_user_id": "1540038673810350080",
+      "last_scored": 1782832417559
+    },
+    {
+      "handle": "gyaigyimii",
+      "x_user_id": "1145137598379282432",
+      "last_scored": 1782832410918
+    },
+    {
+      "handle": "piersmorgan",
+      "x_user_id": "216299334",
+      "last_scored": 1782832384919
+    },
+    {
+      "handle": "ign",
+      "x_user_id": "18927441",
+      "last_scored": 1782832377220
+    },
+    {
+      "handle": "ufc",
+      "x_user_id": "6446742",
+      "last_scored": 1782832376432
+    },
+    {
+      "handle": "10ronaldinho",
+      "x_user_id": "29479000",
+      "last_scored": 1782832374731
+    },
+    {
+      "handle": "x",
+      "x_user_id": "783214",
+      "last_scored": 1782832372604
+    },
+    {
+      "handle": "ryrenz",
+      "x_user_id": "2047148133746933760",
+      "last_scored": 1782760989067
+    },
+    {
+      "handle": "aboutstudy",
+      "x_user_id": "39206684",
+      "last_scored": 1782746466307
+    },
+    {
+      "handle": "0xluffy_eth",
+      "x_user_id": "1367360490427453441",
+      "last_scored": 1782722040240
+    },
+    {
+      "handle": "okasupportgroup",
+      "x_user_id": "201545178",
+      "last_scored": 1782621120894
+    },
+    {
+      "handle": "manateelazycat",
+      "x_user_id": "28530405",
+      "last_scored": 1782607649146
+    },
+    {
+      "handle": "cuimao",
+      "x_user_id": "1558317849508122629",
+      "last_scored": 1782607648964
+    },
+    {
+      "handle": "pengchujin",
+      "x_user_id": "3007509396",
+      "last_scored": 1782555914953
+    },
+    {
+      "handle": "snail_9106",
+      "x_user_id": null,
+      "last_scored": 1782530013792
+    },
+    {
+      "handle": "shenaexcel",
+      "x_user_id": null,
+      "last_scored": 1782529969994
+    },
+    {
+      "handle": "enp39s0",
+      "x_user_id": "542497171",
+      "last_scored": 1782529906210
+    },
+    {
+      "handle": "isadora288881",
+      "x_user_id": "1493605098265931777",
+      "last_scored": 1782479467915
+    },
+    {
+      "handle": "teacher_cao",
+      "x_user_id": null,
+      "last_scored": 1782464511405
+    },
+    {
+      "handle": "lifeprohelper",
+      "x_user_id": "1589820654068838402",
+      "last_scored": 1782456191638
+    },
+    {
+      "handle": "xiaomimimodevs",
+      "x_user_id": "2066799363746340864",
+      "last_scored": 1782455969471
+    },
+    {
+      "handle": "zcode_ai",
+      "x_user_id": "1991449975298162688",
+      "last_scored": 1782455896074
+    },
+    {
+      "handle": "_forab",
+      "x_user_id": "4848269835",
+      "last_scored": 1782354911187
+    },
+    {
+      "handle": "wangdefou",
+      "x_user_id": "1637740320829087745",
+      "last_scored": 1782341925768
+    },
+    {
+      "handle": "cyrilxuq",
+      "x_user_id": "1500486837839998976",
+      "last_scored": 1782301373988
+    },
+    {
+      "handle": "teacher_cao",
+      "x_user_id": "2042095951897358338",
+      "last_scored": 1782261864935
+    },
+    {
+      "handle": "passluo",
+      "x_user_id": "282522910",
+      "last_scored": 1782154571027
+    },
+    {
+      "handle": "yangshuibao",
+      "x_user_id": null,
+      "last_scored": 1782127921042
+    },
+    {
+      "handle": "xiaolai",
+      "x_user_id": null,
+      "last_scored": 1782127703586
+    },
+    {
+      "handle": "codeo4",
+      "x_user_id": "39658761",
+      "last_scored": 1782112573996
+    },
+    {
+      "handle": "yucheng",
+      "x_user_id": "1413340227687571456",
+      "last_scored": 1782099983691
+    },
+    {
+      "handle": "dontbesilent",
+      "x_user_id": "1596695231717871616",
+      "last_scored": 1782092259461
+    },
+    {
+      "handle": "abskoop",
+      "x_user_id": "2262723812",
+      "last_scored": 1782008070183
+    },
+    {
+      "handle": "thsottiaux",
+      "x_user_id": "1953337039510003712",
+      "last_scored": 1781845427442
+    },
+    {
+      "handle": "jasonzx",
+      "x_user_id": "10154362",
+      "last_scored": 1781838165054
+    },
+    {
+      "handle": "xuegaogx",
+      "x_user_id": "1710490876487815168",
+      "last_scored": 1781753078925
+    },
+    {
+      "handle": "nicole_yang88",
+      "x_user_id": "1654536386098364418",
+      "last_scored": 1781750398045
+    },
+    {
+      "handle": "lonely__mh",
+      "x_user_id": "2926712868",
+      "last_scored": 1781673595858
+    },
+    {
+      "handle": "yetone",
+      "x_user_id": "147786784",
+      "last_scored": 1781671316135
+    },
+    {
+      "handle": "caizhenghai",
+      "x_user_id": "387147664",
+      "last_scored": 1781671118574
+    },
+    {
+      "handle": "ai_jasonyu",
+      "x_user_id": "756319701861601281",
+      "last_scored": 1781668654779
+    },
+    {
+      "handle": "rocm301",
+      "x_user_id": "2607668312",
+      "last_scored": 1781665775837
+    },
+    {
+      "handle": "yanhua1010",
+      "x_user_id": "1932935705711513600",
+      "last_scored": 1781662462803
+    },
+    {
+      "handle": "aronhouyu",
+      "x_user_id": "1554575293264072705",
+      "last_scored": 1781660501805
+    },
+    {
+      "handle": "caiyue5",
+      "x_user_id": "732437001572474880",
+      "last_scored": 1781660353636
+    },
+    {
+      "handle": "tison1096",
+      "x_user_id": "740784709878288384",
+      "last_scored": 1781582969591
+    },
+    {
+      "handle": "amiaoapp",
+      "x_user_id": "786174501427957761",
+      "last_scored": 1781575390419
+    },
+    {
+      "handle": "hitw93",
+      "x_user_id": "1521688129559613440",
+      "last_scored": 1781540171289
+    },
+    {
+      "handle": "0xfunx",
+      "x_user_id": "1686801573132017664",
+      "last_scored": 1781490575373
+    },
+    {
+      "handle": "nvidia",
+      "x_user_id": "61559439",
+      "last_scored": 1781421237087
+    },
+    {
+      "handle": "gdioiui",
+      "x_user_id": "1882678524596867072",
+      "last_scored": 1781414347152
+    },
+    {
+      "handle": "xdownloaderbot",
+      "x_user_id": "1872675923067043840",
+      "last_scored": 1781414227179
+    },
+    {
+      "handle": "spacex",
+      "x_user_id": "34743251",
+      "last_scored": 1781326858672
+    },
+    {
+      "handle": "hejushang8",
+      "x_user_id": "1794938417656299521",
+      "last_scored": 1781324590667
+    },
+    {
+      "handle": "ninthbit_ai",
+      "x_user_id": "1332862300609339396",
+      "last_scored": 1781321878721
+    },
+    {
+      "handle": "andreaarms60465",
+      "x_user_id": "1656557317029265408",
+      "last_scored": 1781275701307
+    },
+    {
+      "handle": "vista8",
+      "x_user_id": "6690032",
+      "last_scored": 1781249165956
+    },
+    {
+      "handle": "hejushang8",
+      "x_user_id": "1929185407583113216",
+      "last_scored": 1781247122630
+    },
+    {
+      "handle": "xxm459259",
+      "x_user_id": "383503253",
+      "last_scored": 1781206279225
+    },
+    {
+      "handle": "nikmulberry",
+      "x_user_id": "1207500254284673024",
+      "last_scored": 1781202389001
+    },
+    {
+      "handle": "tison1096",
+      "x_user_id": "1071402420301778945",
+      "last_scored": 1781079902582
+    },
     {
       "handle": "eldia_cl",
       "x_user_id": "18047052",
       "last_scored": 1781021844569
+    },
+    {
+      "handle": "ashashash79",
+      "x_user_id": "1871742673662742529",
+      "last_scored": 1780905716265
+    },
+    {
+      "handle": "grok",
+      "x_user_id": "1720665183188922368",
+      "last_scored": 1780896451939
     },
     {
       "handle": "luvletter_moe",
@@ -44,6 +459,16 @@
       "last_scored": 1780559320442
     },
     {
+      "handle": "miantiao_me",
+      "x_user_id": "126880447",
+      "last_scored": 1780543662710
+    },
+    {
+      "handle": "yanbo2004",
+      "x_user_id": "1420205241404772352",
+      "last_scored": 1780537065408
+    },
+    {
       "handle": "cyberkanjousen",
       "x_user_id": "1918274202580467713",
       "last_scored": 1780461267371
@@ -69,9 +494,19 @@
       "last_scored": 1780147761140
     },
     {
+      "handle": "oran_ge",
+      "x_user_id": "6782882",
+      "last_scored": 1780118599189
+    },
+    {
       "handle": "berkeleyhaas",
       "x_user_id": "24714450",
       "last_scored": 1780116312360
+    },
+    {
+      "handle": "clarrycy",
+      "x_user_id": "1799712296375287808",
+      "last_scored": 1780103169380
     },
     {
       "handle": "tychozzz",
@@ -144,6 +579,16 @@
       "last_scored": 1780027352341
     },
     {
+      "handle": "turingou",
+      "x_user_id": "42352056",
+      "last_scored": 1780016988410
+    },
+    {
+      "handle": "li9292",
+      "x_user_id": "1877440800",
+      "last_scored": 1779988743553
+    },
+    {
       "handle": "nicole_yang88",
       "x_user_id": "1758831860954902528",
       "last_scored": 1779983342283
@@ -189,6 +634,11 @@
       "last_scored": 1779895647011
     },
     {
+      "handle": "turingou",
+      "x_user_id": "1870511184761483265",
+      "last_scored": 1779879770622
+    },
+    {
       "handle": "m1ssuo",
       "x_user_id": "1206800829950259202",
       "last_scored": 1779879141648
@@ -197,6 +647,11 @@
       "handle": "ai_xiaomu",
       "x_user_id": "885347162233610242",
       "last_scored": 1779861395248
+    },
+    {
+      "handle": "gosailglobal",
+      "x_user_id": "2002004911635210240",
+      "last_scored": 1779856234030
     },
     {
       "handle": "wangray",
@@ -249,9 +704,24 @@
       "last_scored": 1779831010997
     },
     {
+      "handle": "m1ssuo",
+      "x_user_id": "1589233256175923202",
+      "last_scored": 1779814929993
+    },
+    {
+      "handle": "ai_xiaomu",
+      "x_user_id": "2041273894385164288",
+      "last_scored": 1779802982179
+    },
+    {
       "handle": "daodao166888",
       "x_user_id": "1955108038651809794",
       "last_scored": 1779801909572
+    },
+    {
+      "handle": "chenzeze777",
+      "x_user_id": "2054090500010098688",
+      "last_scored": 1779797341193
     },
     {
       "handle": "iamtonyzhu",
@@ -312,6 +782,11 @@
       "handle": "crypto_qianxun",
       "x_user_id": "1623552966837039112",
       "last_scored": 1779786060946
+    },
+    {
+      "handle": "zstmfhy",
+      "x_user_id": "2001275535725625344",
+      "last_scored": 1779785741683
     },
     {
       "handle": "oran_ge",
@@ -657,6 +1132,11 @@
       "handle": "op7418",
       "x_user_id": "1636981205504786434",
       "last_scored": 1779707927047
+    },
+    {
+      "handle": "MrGafish",
+      "x_user_id": "1888247810040152064",
+      "last_scored": 1779692739302
     }
   ]
 }
