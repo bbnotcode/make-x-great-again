@@ -200,6 +200,26 @@ class MockStmt implements D1PreparedStatement {
       }
       return { meta: { changes: row ? 1 : 0 } };
     }
+    if (this.sql.includes("UPDATE accounts") && this.sql.includes("WHERE x_user_id=?")) {
+      // whitelistUpsert pass 1: canonical-row UPDATE by uid (rename-safe).
+      const [handle, reasons, _now, _dn, _av, uid] = this.args as [
+        string,
+        string,
+        number,
+        string | null,
+        string | null,
+        string,
+      ];
+      const existing = this.db.accounts.find((a) => a.x_user_id === uid);
+      if (existing) {
+        existing.handle = handle;
+        existing.status = "whitelisted";
+        existing.verdict_label = "legit";
+        existing.confidence = 1.0;
+        existing.reasons = reasons;
+      }
+      return { meta: { changes: existing ? 1 : 0 } };
+    }
     if (this.sql.includes("INSERT INTO accounts") && this.sql.includes("ON CONFLICT")) {
       // whitelistUpsert: upsert by (uid, handle) → status='whitelisted'.
       const [uid, handle, _dn, _av, reasons] = this.args as [
@@ -578,6 +598,44 @@ test("admin approve flips the account to whitelisted and settles the request", a
   assert.equal(db.whitelistRequests[0]?.status, "approved");
   assert.ok(db.whitelistRequests[0]?.decided_at);
   assert.equal(db.reviewLog[0]?.action, "whitelist_request_approve");
+});
+
+test("admin approve whitelists the canonical uid row even after a handle rename", async () => {
+  // The classic appeal shape: blacklisted under the old handle, applicant has
+  // since renamed. The uid row must be updated in place — a plain (uid,handle)
+  // INSERT would trip the uid-only partial unique index and 500.
+  const db = new MockDB();
+  db.accounts.push({
+    rowid: 1,
+    handle: "old_name",
+    x_user_id: "900",
+    status: "human_confirmed",
+    verdict_label: "spam",
+    confidence: 0.9,
+  });
+  db.whitelistRequests.push({
+    id: 1,
+    x_user_id: "900",
+    handle: "new_name",
+    reporter_fp: await reporterFp(),
+    gh_age_days: 2000,
+    note: "renamed since",
+    status: "pending",
+    created_at: Date.now(),
+    decided_at: null,
+  });
+  const res = await worker.fetch(
+    new Request("https://x.test/v1/admin/whitelist-requests/1/approve", {
+      method: "POST",
+      headers: { "x-admin-token": "admin" },
+    }),
+    env(db),
+  );
+  assert.equal(res.status, 200);
+  assert.equal(db.accounts.length, 1);
+  assert.equal(db.accounts[0]?.status, "whitelisted");
+  assert.equal(db.accounts[0]?.handle, "new_name");
+  assert.equal(db.whitelistRequests[0]?.status, "approved");
 });
 
 test("admin reject settles the request without touching the account", async () => {

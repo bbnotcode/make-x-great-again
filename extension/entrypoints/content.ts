@@ -1,3 +1,4 @@
+import { autoEligible } from "../lib/auto-policy";
 import { addBlocked, isBlockedSync, warm as warmBlocklist } from "../lib/blocklist";
 import { BRAND } from "../lib/brand";
 import { type Cached, cacheGet, signalsHash } from "../lib/cache";
@@ -20,7 +21,7 @@ import {
   setSetting,
 } from "../lib/settings";
 import { bumpStat } from "../lib/stats";
-import { addBlockRecord, bumpStats } from "../lib/store";
+import { addBlockRecord, bumpStats, updateBlockRecord } from "../lib/store";
 import type { Signals, Verdict } from "../lib/types";
 import { performXAction, retryDelayForAttempt } from "../lib/x-action";
 import {
@@ -357,6 +358,24 @@ export default defineContentScript({
       // animation never gets to play.
       void addBlocked(it.key);
       if (it.sig.userId) void addBlocked(it.sig.userId);
+      // The 处理记录 row too: the id lands in xss:blocked above, and a record
+      // is the only UI path back (恢复显示). Writing it after the paced X
+      // action left a window (tab close mid-queue) that produced permanently
+      // hidden accounts with no recover entry. The X-failure annotation is
+      // patched in later by the drain loop.
+      const tweetText = it.sig.triggeringComment || it.sig.recentTweets[0];
+      void addBlockRecord({
+        id: it.key,
+        handle: it.sig.handle,
+        ...(it.sig.displayName ? { displayName: it.sig.displayName } : {}),
+        ...(it.sig.avatarUrl ? { avatarUrl: it.sig.avatarUrl } : {}),
+        ...(it.tweetId ? { tweetId: it.tweetId } : {}),
+        ...(tweetText ? { tweetText } : {}),
+        verdict: it.verdict,
+        reason: `${it.categoryZh} · 自动${it.verb}`,
+        source: "auto",
+        ts: Date.now(),
+      });
       void bumpStats({ blocks: 1 });
       void bumpStat("blocked");
       articleOf(it.anchor)?.setAttribute("data-xss-key", it.key);
@@ -417,19 +436,13 @@ export default defineContentScript({
           const dwell = AUTO_MIN_ACT_MS - (Date.now() - t0);
           if (dwell > 0) await sleep(dwell);
           collapseTweet(autoTarget(it));
-          const tweetText = it.sig.triggeringComment || it.sig.recentTweets[0];
-          void addBlockRecord({
-            id: it.key,
-            handle: it.sig.handle,
-            ...(it.sig.displayName ? { displayName: it.sig.displayName } : {}),
-            ...(it.sig.avatarUrl ? { avatarUrl: it.sig.avatarUrl } : {}),
-            ...(it.tweetId ? { tweetId: it.tweetId } : {}),
-            ...(tweetText ? { tweetText } : {}),
-            verdict: it.verdict,
-            reason: `${it.categoryZh} · 自动${it.verb}${xOk ? "" : "（X 动作失败，仅本地隐藏）"}`,
-            source: "auto",
-            ts: Date.now(),
-          });
+          // The record itself was written at enqueue time; only the X-action
+          // outcome needs reconciling here.
+          if (!xOk) {
+            void updateBlockRecord(it.key, {
+              reason: `${it.categoryZh} · 自动${it.verb}（X 动作失败，仅本地隐藏）`,
+            });
+          }
           bubbleApi?.markAuto(it.key, xOk ? "done" : "failed", it.verb);
         } catch (e) {
           console.warn(`[MXGA] 自动${it.verb}处理异常`, it.sig.handle, e);
@@ -523,31 +536,24 @@ export default defineContentScript({
       const hitArt = articleOf(anchor);
       const hitTweetId = hitArt ? articleStatusId(hitArt) : null;
       // Auto-action decision chain (each gate independent, no cross-talk):
-      //   1. ELIGIBILITY —
-      //      · published-list entries ("list", any tier): eligible within
-      //        the user's configured autoScope;
-      //      · official keyword-rule hits ("rule": maintainer-curated
-      //        patterns synced with the list — brand-new throwaways not yet
-      //        published): eligible ONLY in reply sections, regardless of
-      //        autoScope. The porn wave is first-seen throwaways, so a
-      //        list-only rule made 自动拉黑 dead in its main scenario;
-      //        replies-only keeps the misfire surface minimal.
-      //      · cache verdicts: never auto-act.
+      //   1. ELIGIBILITY — autoEligible() in lib/auto-policy.ts. The hard
+      //      line lives there: list hits auto-act only when human-confirmed
+      //      (tier "confirmed") — AI/rule/mention auto-published entries are
+      //      badge-only; rule hits are reply-section-only; cache never.
       //      entry.tier (人工确认/自动收录) stays visible in the popover;
-      //      /v1/check keeps the human-tier filter for legacy clients.
+      //      /v1/check keeps the same human-tier filter for legacy clients.
       //   2. SCOPE — settings.autoScope: replies-only by default; "all"
       //      opts feed+profile in (list hits only, see above).
       //   3. MASTER SWITCH — settings.autoProcess (bubble toggle), below.
       //   4. POLICY — per-category action (badge/hide/mute/block).
       // (Auto actions stay reversible from the 处理记录 tab, and mute/block
       // ride the user's own X session like the manual path.)
-      const scopeAllows = settings.autoScope === "all" || ctx === "reply";
-      const eligible =
-        badgeSource === "list"
-          ? scopeAllows
-          : badgeSource === "rule"
-            ? ctx === "reply"
-            : false;
+      const eligible = autoEligible({
+        source: badgeSource,
+        tier: entry.tier,
+        inReply: ctx === "reply",
+        autoScope: settings.autoScope,
+      });
       const action = eligible
         ? (settings.categoryActions[entry.category] ?? "badge")
         : "badge";
@@ -596,7 +602,16 @@ export default defineContentScript({
         //    the visible auto queue is working on (it was recorded up-front)
         //    — its animation owns the hide; OTHER cells by the same account
         //    still vanish instantly.
-        if (isBlockedSync(key) || (sig.userId && isBlockedSync(sig.userId))) {
+        // Check every id form the account may have been recorded under: the
+        // same account can surface with a uid (fiber walk) or handle-only
+        // (profile header), and a hit stored under one form must short-circuit
+        // the other — otherwise it gets auto-processed twice and 恢复显示
+        // (which deletes one id) never actually un-hides it.
+        if (
+          isBlockedSync(key) ||
+          (sig.userId && isBlockedSync(sig.userId)) ||
+          isBlockedSync(`h:${sig.handle}`)
+        ) {
           if (
             autoActing.has(key) &&
             articleOf(anchor)?.getAttribute("data-xss-key") === key

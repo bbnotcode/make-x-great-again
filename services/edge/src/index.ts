@@ -35,6 +35,9 @@ interface Secrets {
   // no-op (the public /v1/whitelist endpoint still works).
   WHITELIST_SYNC_TOKEN?: string;
   WHITELIST_SYNC_REPO?: string; // "owner/repo", defaults to foru17/make-x-great-again
+  // Optional override for the global hourly LLM-call ceiling (see
+  // LLM_GLOBAL_MAX_PER_WINDOW below).
+  LLM_GLOBAL_MAX_PER_WINDOW?: string;
 }
 
 type Bindings = Env & Secrets;
@@ -85,6 +88,19 @@ const REPORT_MAX_PER_WINDOW = 10;
 // headroom for real discovery while still bounding worst-case LLM spend.
 // /v1/appeal is fully unauthenticated, so it gets a tighter per-IP cap.
 const CLASSIFY_MAX_PER_WINDOW = 60;
+// Keyword-rule hits skip the LLM but are still a WRITE path: a hit can mint a
+// brand-new public-list row (tier 'rule') from nothing but a client-supplied
+// payload, and the patterns ship in the public lite artifact — so an attacker
+// can craft guaranteed hits. Without its own cap this branch is an unmetered
+// anonymous publish/write channel (the LLM throttle never sees it). Legit
+// clients only land here for genuinely-new accounts (repeats return via the
+// cache/TTL reuse first), so a generous per-identity cap is invisible to real
+// browsing while bounding forged-payload floods.
+const RULE_WRITE_MAX_PER_WINDOW = 30;
+// Global (cross-identity) LLM calls per hour — the hard spend ceiling behind
+// the per-identity classify cap (which an anonymous caller can reset by
+// rotating IPs). Override with the LLM_GLOBAL_MAX_PER_WINDOW env var.
+const LLM_GLOBAL_MAX_PER_WINDOW = 2000;
 const APPEAL_MAX_PER_WINDOW = 5;
 const BLOOM_SIZE = 65_536; // 8 KB bit array
 const BLOOM_HASHES = 7;
@@ -1378,6 +1394,18 @@ app.post("/v1/classify", async (c) => {
   const ruleHit = await matchKeywordRules(c.env, s);
   if (ruleHit) {
     const now = Date.now();
+    // See RULE_WRITE_MAX_PER_WINDOW: this branch writes (and can publish), so
+    // it gets its own throttle even though it never spends an LLM call.
+    const ruleRateId =
+      who.id === "anon" ? `ip:${c.req.header("cf-connecting-ip") ?? "unknown"}` : who.id;
+    const ruleFp = await throttleFingerprint(c.env, "classify-rule", ruleRateId);
+    if (!ruleFp) {
+      return c.json({ error: "report_salt_required", detail: "REPORT_SALT not configured" }, 503);
+    }
+    if (!(await throttleOk(c.env, ruleFp, now, RULE_WRITE_MAX_PER_WINDOW))) {
+      return c.json({ error: "rate_limited", retryAfterMs: REPORT_WINDOW_MS }, 429);
+    }
+    await recordReportRate(c.env, ruleFp, now);
     const status = statusForRuleAction(ruleHit.action);
     const reasons = [`matched keyword rule "${ruleHit.pattern}" on ${ruleHit.field}`];
     const verdict = {
@@ -1450,7 +1478,25 @@ app.post("/v1/classify", async (c) => {
   if (!(await throttleOk(c.env, rateFp, now, CLASSIFY_MAX_PER_WINDOW))) {
     return c.json({ error: "rate_limited", retryAfterMs: REPORT_WINDOW_MS }, 429);
   }
+  // Global (cross-identity) circuit breaker on top of the per-identity cap:
+  // the per-identity key is the connecting IP for anonymous legacy clients,
+  // so an IP-rotating attacker gets a fresh 60-call window per address and
+  // total LLM spend is otherwise unbounded. Sized far above organic
+  // fresh-classify volume (post-TTL that's a fraction of this) — it only
+  // trips under attack, and turns "unbounded bill" into "bounded hour".
+  const globalFp = await throttleFingerprint(c.env, "classify-global", "all");
+  const globalMax = Number(c.env.LLM_GLOBAL_MAX_PER_WINDOW ?? "") || LLM_GLOBAL_MAX_PER_WINDOW;
+  if (!globalFp || !(await throttleOk(c.env, globalFp, now, globalMax))) {
+    if (globalFp === null) {
+      return c.json({ error: "report_salt_required", detail: "REPORT_SALT not configured" }, 503);
+    }
+    logError("classify.global_llm_cap_tripped", new Error("global LLM cap reached"), {
+      max: globalMax,
+    });
+    return c.json({ error: "rate_limited", retryAfterMs: REPORT_WINDOW_MS }, 429);
+  }
   await recordReportRate(c.env, rateFp, now);
+  await recordReportRate(c.env, globalFp, now);
   const verdict = await classify(c.env, s);
   // Auto-publish high-confidence AI spam straight to the public list — the
   // mirror image of the auto_legit fast-accept below. Only the classify path
@@ -2839,24 +2885,52 @@ async function whitelistUpsert(
   reasons: string,
   now: number,
 ): Promise<void> {
-  await env.DB.prepare(
-    `INSERT INTO accounts
-       (x_user_id,handle,display_name,avatar_url,verdict_label,confidence,reasons,
-        status,source,signals_hash,first_seen,last_scored,published_at)
-     VALUES (?,?,?,?,'legit',1.0,?, 'whitelisted','admin_whitelist', NULL, ?, ?, NULL)
-     ON CONFLICT(x_user_id,handle) DO UPDATE SET
-       status='whitelisted',
-       source='admin_whitelist',
-       verdict_label='legit',
-       confidence=1.0,
-       reasons=excluded.reasons,
-       published_at=NULL,
-       last_scored=excluded.last_scored,
-       display_name=COALESCE(excluded.display_name, accounts.display_name),
-       avatar_url=COALESCE(excluded.avatar_url, accounts.avatar_url)`,
-  )
-    .bind(uid, handle, displayName, avatarUrl, reasons, now, now)
-    .run();
+  // Canonical-row-by-uid pass first (same contract as writeAccount): when a
+  // row already holds this uid under a DIFFERENT handle — the "blacklisted,
+  // then renamed" appeal case — a plain INSERT would trip the partial
+  // idx_accounts_uid_uq index, which the ON CONFLICT(x_user_id,handle)
+  // clause below does not cover, and the whole upsert would throw.
+  let updatedByUid = false;
+  if (uid) {
+    const byUid = await env.DB.prepare(
+      `UPDATE accounts SET
+         handle=?,
+         status='whitelisted',
+         source='admin_whitelist',
+         verdict_label='legit',
+         confidence=1.0,
+         reasons=?,
+         published_at=NULL,
+         published_tier=NULL,
+         last_scored=?,
+         display_name=COALESCE(?, display_name),
+         avatar_url=COALESCE(?, avatar_url)
+       WHERE x_user_id=?`,
+    )
+      .bind(handle, reasons, now, displayName || null, avatarUrl, uid)
+      .run();
+    updatedByUid = (byUid.meta.changes ?? 0) > 0;
+  }
+  if (!updatedByUid) {
+    await env.DB.prepare(
+      `INSERT INTO accounts
+         (x_user_id,handle,display_name,avatar_url,verdict_label,confidence,reasons,
+          status,source,signals_hash,first_seen,last_scored,published_at)
+       VALUES (?,?,?,?,'legit',1.0,?, 'whitelisted','admin_whitelist', NULL, ?, ?, NULL)
+       ON CONFLICT(x_user_id,handle) DO UPDATE SET
+         status='whitelisted',
+         source='admin_whitelist',
+         verdict_label='legit',
+         confidence=1.0,
+         reasons=excluded.reasons,
+         published_at=NULL,
+         last_scored=excluded.last_scored,
+         display_name=COALESCE(excluded.display_name, accounts.display_name),
+         avatar_url=COALESCE(excluded.avatar_url, accounts.avatar_url)`,
+    )
+      .bind(uid, handle, displayName, avatarUrl, reasons, now, now)
+      .run();
+  }
   // Whitelisting is a handle-level decision: demote EVERY other row for the
   // same handle out of the publishable/queue states. Without this, a
   // handle-only whitelist add left a uid-bearing human_confirmed sibling on

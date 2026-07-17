@@ -85,6 +85,18 @@ export async function addBlockRecord(rec: BlockRecord): Promise<void> {
   await set(K_BLOCK, list);
 }
 
+export async function updateBlockRecord(
+  id: string,
+  patch: Partial<Omit<BlockRecord, "id">>,
+): Promise<void> {
+  const list = await getBlocklist();
+  const i = list.findIndex((r) => r.id === id);
+  const rec = list[i];
+  if (!rec) return;
+  list[i] = { ...rec, ...patch };
+  await set(K_BLOCK, list);
+}
+
 export async function removeBlock(id: string): Promise<void> {
   const list = await getBlocklist();
   await set(

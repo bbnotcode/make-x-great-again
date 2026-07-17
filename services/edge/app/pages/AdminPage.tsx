@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { api, AuthError, getToken, type Stats, setToken } from "@/lib/adminApi";
+import { api, AuthError, clearToken, getToken, type Stats, setToken } from "@/lib/adminApi";
 import { fmtN } from "@/lib/format";
 
 function Gate({ onUnlock }: { onUnlock: () => void }) {
@@ -112,7 +112,16 @@ function Console({ onAuth }: { onAuth: () => void }) {
           <span className="inline-flex items-center gap-1.5 text-success">
             <span className="size-1.5 rounded-full bg-success" /> 已认证
           </span>
-          <Button variant="outline" size="sm" onClick={onAuth}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              // 退出 must actually drop the stored credential — without this a
+              // refresh walks straight back into the console.
+              clearToken();
+              onAuth();
+            }}
+          >
             退出
           </Button>
           <ThemeToggle />

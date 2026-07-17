@@ -32,6 +32,8 @@ interface Account {
   reasons?: string | null;
   signals_hash?: string | null;
   last_scored?: number;
+  published_at?: number | null;
+  published_tier?: string | null;
 }
 
 interface Rule {
@@ -103,6 +105,8 @@ class MockStmt {
         status: a[13] as string,
         signals_hash: a[15] as string | null,
         last_scored: a[18] as number,
+        published_at: a[19] as number | null,
+        published_tier: a[20] as string | null,
       });
       return { meta: { changes: 1, last_row_id: this.db.accounts.length } };
     }
@@ -286,4 +290,85 @@ test("LLM verdict without category falls back to label mapping (porn_bot → por
   const acc = db.accounts.find((a) => a.x_user_id === "601");
   assert.ok(acc);
   assert.equal(acc.category, "porn");
+});
+
+// ——— AI auto-publish gate (the PR's core safety line) ———
+// porn_bot AND conf>=0.95 AND uid present AND aged GH identity → publish as
+// tier 'ai'. Everything else queues for human review. These four tests pin
+// each leg of the gate.
+
+test("auto-publish: high-conf porn_bot with uid publishes as tier 'ai'", async () => {
+  llmCalls = 0;
+  llmContent = '{"label":"porn_bot","confidence":0.97,"reasons":["escort template"],"category":"porn"}';
+  const res = await worker.fetch(
+    classify({
+      userId: "700",
+      handle: "autopub_target",
+      displayName: "DM 💕",
+      recentTweets: ["看我主页"],
+    }),
+    env,
+  );
+  assert.equal(res.status, 200);
+  const acc = db.accounts.find((a) => a.x_user_id === "700");
+  assert.ok(acc);
+  assert.equal(acc.status, "human_confirmed");
+  assert.equal(acc.published_tier, "ai");
+  assert.ok(acc.published_at);
+});
+
+test("auto-publish: generic spam NEVER auto-publishes, even at 0.99", async () => {
+  llmCalls = 0;
+  llmContent = '{"label":"spam","confidence":0.99,"reasons":["shill"],"category":"crypto"}';
+  const res = await worker.fetch(
+    classify({
+      userId: "701",
+      handle: "spam_but_queued",
+      displayName: "Moon",
+      recentTweets: ["buy now"],
+    }),
+    env,
+  );
+  assert.equal(res.status, 200);
+  const acc = db.accounts.find((a) => a.x_user_id === "701");
+  assert.ok(acc);
+  assert.equal(acc.status, "auto_pending_review");
+  assert.equal(acc.published_tier ?? null, null);
+});
+
+test("auto-publish: porn_bot below the 0.95 bar queues for review", async () => {
+  llmCalls = 0;
+  llmContent = '{"label":"porn_bot","confidence":0.9,"reasons":["maybe"],"category":"porn"}';
+  const res = await worker.fetch(
+    classify({
+      userId: "702",
+      handle: "lowconf_porn",
+      displayName: "hi",
+      recentTweets: ["hello"],
+    }),
+    env,
+  );
+  assert.equal(res.status, 200);
+  const acc = db.accounts.find((a) => a.x_user_id === "702");
+  assert.ok(acc);
+  assert.equal(acc.status, "auto_pending_review");
+  assert.equal(acc.published_tier ?? null, null);
+});
+
+test("auto-publish: handle-only porn_bot (no uid) queues for review", async () => {
+  llmCalls = 0;
+  llmContent = '{"label":"porn_bot","confidence":0.99,"reasons":["escort template"],"category":"porn"}';
+  const res = await worker.fetch(
+    classify({
+      handle: "no_uid_porn",
+      displayName: "DM 💕",
+      recentTweets: ["看我主页"],
+    }),
+    env,
+  );
+  assert.equal(res.status, 200);
+  const acc = db.accounts.find((a) => a.handle === "no_uid_porn");
+  assert.ok(acc);
+  assert.equal(acc.status, "auto_pending_review");
+  assert.equal(acc.published_tier ?? null, null);
 });

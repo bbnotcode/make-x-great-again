@@ -246,6 +246,14 @@ async function syncWhitelist(base: string): Promise<number | undefined> {
     const validated = validateWhitelist(await readJsonBounded(res, MAX_WHITELIST_BYTES));
     if (!validated.ok) return undefined;
     const entries = validated.value;
+    // Shrink-to-empty guard (the whitelist twin of MIN_SANE_ENTRIES): the
+    // whitelist is the last line of defense against blacklist false
+    // positives, so a server bug returning [] must not wipe a working cache.
+    // An empty response only sticks when we never had entries to begin with.
+    if (entries.length === 0) {
+      const prev = await getStoredWhitelist();
+      if (prev && prev.entries.length > 0) return undefined;
+    }
     const next: StoredWhitelist = { fetchedAt: Date.now(), count: entries.length, entries };
     await chrome.storage.local.set({ [WL_KEY]: next });
     return entries.length;
