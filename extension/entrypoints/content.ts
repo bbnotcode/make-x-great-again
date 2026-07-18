@@ -198,6 +198,7 @@ export default defineContentScript({
       // Keep the bubble's 自动处理 switch + hint in sync (options page or
       // another tab may have flipped it).
       bubbleApi?.setAutoProcess(s.autoProcess, autoCategoryCount(s), s.autoScope === "all");
+      bubbleApi?.setAutoExpand(s.autoExpand);
       if (modeChanged) {
         // Mounted badges rendered the OLD verb into their buttons, but a
         // click executes the CURRENT actionMode — a button reading 隐藏 must
@@ -850,6 +851,7 @@ export default defineContentScript({
           autoProcess: settings.autoProcess,
           autoCategoryCount: autoCategoryCount(settings),
           autoScopeAll: settings.autoScope === "all",
+          autoExpand: settings.autoExpand,
         });
         container.appendChild(bubble.el);
         if (!settings.bubble) bubble.el.style.display = "none";

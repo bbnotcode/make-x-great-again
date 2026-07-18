@@ -575,6 +575,9 @@ export interface BubbleOpts {
   /** true = auto actions fire everywhere (settings.autoScope === "all");
    *  false = replies-only (default scope). */
   autoScopeAll?: boolean;
+  /** Pop the card open when the auto queue starts (settings.autoExpand).
+   *  false = stay collapsed; the pill's hit-pulse is the only signal. */
+  autoExpand?: boolean;
 }
 
 /** Collapsed pill ⇄ expanded card. Default resting state = pill.
@@ -1299,6 +1302,7 @@ export function createBubble(
   // page (reset on SPA navigation).
   let autoOpened = false;
   let userClosed = false;
+  let autoExpand = opts.autoExpand !== false;
   let collapseTimer: ReturnType<typeof setTimeout> | undefined;
   function collapseByUser() {
     userClosed = true;
@@ -1446,7 +1450,7 @@ export function createBubble(
       rowState.set(key, st);
       bump(key); // every auto transition leads the feed
       clearTimeout(collapseTimer); // fresh activity holds the card open
-      if ((st === "queued" || st === "processing") && !open && !userClosed) {
+      if ((st === "queued" || st === "processing") && autoExpand && !open && !userClosed) {
         // Show the work as it happens — pop the card open the moment the
         // auto queue starts building; it folds back once the batch settles.
         autoOpened = true;
@@ -1472,6 +1476,11 @@ export function createBubble(
       verb = v;
       renderPill();
       if (open) renderCard();
+    },
+    /** Live-sync settings.autoExpand (options page or another tab). Only
+     *  affects future auto-opens; an already-open card is left alone. */
+    setAutoExpand(v: boolean) {
+      autoExpand = v;
     },
   };
 }
