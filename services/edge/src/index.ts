@@ -2,6 +2,7 @@ import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
 import { ANALYTICS_CSP, googleAnalyticsHead } from "./analytics";
+import { isArtifactIdentityValid } from "./artifact-identity";
 import { BRAND } from "./brand";
 import { adminHtml } from "./pages/admin";
 import { landingHtml } from "./pages/landing";
@@ -4344,7 +4345,17 @@ async function publishArtifacts(env: Bindings): Promise<void> {
     published_tier: string | null;
   }>();
 
-  const accounts = rows.results ?? [];
+  const rawAccounts = rows.results ?? [];
+  const accounts = rawAccounts.filter((account) =>
+    isArtifactIdentityValid(account.x_user_id, account.handle),
+  );
+  const droppedInvalidIdentities = rawAccounts.length - accounts.length;
+  if (droppedInvalidIdentities > 0) {
+    logWarn("artifact_invalid_identities_dropped", {
+      dropped: droppedInvalidIdentities,
+      total: rawAccounts.length,
+    });
+  }
   // NULL tier = written between the migration and this deploy; treat as
   // 'auto' (fail-safe: never auto-block an entry of unknown provenance).
   const tierCode = (t: string | null) => (t === "human" ? "h" : "a");
