@@ -33,13 +33,13 @@ export type AutoScope = "replies" | "all";
 /** How PUBLIC-LIST hits that are auto-published (AI/rule/mention lane, not
  *  human-confirmed) may auto-act. Human-confirmed entries always follow the
  *  per-category policy in full; this only governs the auto tier:
- *  - "badge": mark only — the pre-v0.5.0 hard line
+ *  - "full":  run the per-category action incl. mute/block (default — the
+ *             product line is "on the public list = auto-processable";
+ *             precision is enforced at the publish source, where the AI
+ *             lane is confined to the high-precision porn_bot class)
  *  - "hide":  cap at the reversible local hide; X mute/block stays
- *             human-confirmed-only (default — a poisoned/false-positive
- *             entry can at worst hide rows locally, undone in one click)
- *  - "full":  run the per-category action incl. mute/block. Explicit
- *             opt-in: the user accepts that an auto-published false
- *             positive could block with their own account. */
+ *             human-confirmed-only
+ *  - "badge": mark only — the most conservative stance */
 export type AutoTierMode = "badge" | "hide" | "full";
 
 export interface Settings {
@@ -74,7 +74,7 @@ export const DEFAULTS: Settings = {
   categoryActions: { ...DEFAULT_CATEGORY_ACTIONS },
   autoProcess: true,
   autoScope: "replies",
-  autoTierMode: "hide",
+  autoTierMode: "full",
   autoExpand: true,
   edgeBase: "",
 };

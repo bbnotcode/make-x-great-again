@@ -1416,23 +1416,23 @@ function Settings() {
                 {(
                   [
                     {
-                      v: "hide",
-                      label: "自动隐藏（推荐）",
-                      hint: "按分级策略执行，但封顶为本地隐藏——零联网、可在「处理记录」一键恢复；X 静音/拉黑仍只对人工确认条目执行。",
+                      v: "full",
+                      label: "完整执行（默认）",
+                      hint: "上榜即处理：与人工确认条目同权，按分级策略执行包括 X 静音/拉黑。误判可在「处理记录」恢复并申诉。",
                     },
                     {
-                      v: "full",
-                      label: "完整执行",
-                      hint: "与人工确认条目同权，按分级策略执行包括 X 静音/拉黑。自动收录存在误判可能，风险自担。",
+                      v: "hide",
+                      label: "封顶为自动隐藏",
+                      hint: "按分级策略执行，但封顶为本地隐藏——零联网、一键恢复；X 静音/拉黑仍只对人工确认条目执行。",
                     },
                     {
                       v: "badge",
                       label: "仅标记",
-                      hint: "自动收录条目只挂角标、永不自动处理（最保守，v0.4 行为）。",
+                      hint: "自动收录条目只挂角标、永不自动处理（最保守）。",
                     },
                   ] as const
                 ).map((o) => {
-                  const active = (st.autoTierMode ?? "hide") === o.v;
+                  const active = (st.autoTierMode ?? "full") === o.v;
                   return (
                     <button
                       key={o.v}

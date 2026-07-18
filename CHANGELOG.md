@@ -18,11 +18,13 @@ this same section) plus this pre-release hardening pass.
   mention) list hits mark-only — but 90%+ of the live list is auto tier, so
   自动处理 was a no-op against the actual reply wave, and an account got
   WEAKER handling after being listed than the same keyword rule would have
-  applied before. New three-level setting: 仅标记 (old behavior) /
-  自动隐藏 (default — per-category policy capped at the reversible local
-  hide; X mute/block stays human-confirmed-only) / 完整执行 (explicit
-  opt-in, full per-category policy). Bubble rows now carry a
-  人工确认/自动收录 chip so the per-row treatment is legible.
+  applied before. Restores the product line "on the public list =
+  auto-processable" (precision enforced at the publish source: the AI lane
+  only auto-publishes the high-precision porn_bot class). New three-level
+  setting: 完整执行 (default — full per-category policy) / 封顶为自动隐藏
+  (reversible local hide only; X mute/block stays human-confirmed-only) /
+  仅标记 (most conservative). Bubble rows now carry a 人工确认/自动收录
+  chip so the per-row treatment is legible.
 - **自动展开开关**：new setting 自动处理时展开面板 (`autoExpand`, default on =
   previous behavior). When off, auto-processing no longer pops the bubble card
   open — the pill's pulse is the only signal. Recommended off on narrow /

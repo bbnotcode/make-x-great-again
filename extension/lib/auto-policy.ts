@@ -8,16 +8,15 @@ export type AutoSource = "list" | "rule" | "cache" | "fresh";
  * per-category action policy is applied after this gate; ineligible hits
  * degrade to badge-only).
  *
- * HARD LINE, v2: published-list entries that are NOT human-confirmed
- * (AI / rule / mention auto-published) are governed by settings.autoTierMode:
- * "badge" keeps the original mark-only stance, "hide" (default) admits them
- * but `capAutoTierAction` limits them to the reversible local hide, "full"
- * runs the per-category policy as-is (explicit user opt-in). Rationale: 90%+
- * of the live list is auto tier — mark-only made 自动处理 a no-op against the
- * actual reply-wave, while a first-seen account matching the same keyword
- * rule WOULD auto-act; getting listed must not weaken handling.
- * (`/v1/check` still enforces human-tier-only server-side for legacy ≤0.4
- * clients, which have no tier awareness and no cap.)
+ * PRODUCT LINE (2026-07-07, reaffirmed 2026-07-18): on the public list =
+ * auto-processable, regardless of tier — precision is enforced at the
+ * publish source (AI lane confined to porn_bot; rules maintainer-curated).
+ * settings.autoTierMode lets cautious users narrow the auto tier: "full"
+ * (default) runs the per-category policy as-is, "hide" admits them but
+ * `capAutoTierAction` limits them to the reversible local hide, "badge"
+ * keeps the old mark-only stance. Tier gating exists server-side ONLY for
+ * legacy ≤0.4 clients (`/v1/check` human-only), which auto-block with no
+ * tier awareness and no cap.
  *
  * Official keyword-rule hits are maintainer-curated but target first-seen
  * accounts with no human review, so they are confined to reply sections
