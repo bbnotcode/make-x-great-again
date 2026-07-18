@@ -1406,6 +1406,58 @@ function Settings() {
                 })}
               </div>
             </div>
+            <div className="mb-4">
+              <div className="mb-1.5 text-[12px] font-semibold text-fg">自动收录条目</div>
+              <p className="mb-2 text-[12px] leading-relaxed text-fg-3">
+                公榜条目分两级：<b className="text-fg-2">人工确认</b>（维护者复核过，始终按下方分级策略完整执行）和
+                <b className="text-fg-2">自动收录</b>（AI/规则判定自动上榜，占榜单大多数）。这里决定自动收录条目能自动处理到什么程度。
+              </p>
+              <div className="grid grid-cols-1 gap-2">
+                {(
+                  [
+                    {
+                      v: "hide",
+                      label: "自动隐藏（推荐）",
+                      hint: "按分级策略执行，但封顶为本地隐藏——零联网、可在「处理记录」一键恢复；X 静音/拉黑仍只对人工确认条目执行。",
+                    },
+                    {
+                      v: "full",
+                      label: "完整执行",
+                      hint: "与人工确认条目同权，按分级策略执行包括 X 静音/拉黑。自动收录存在误判可能，风险自担。",
+                    },
+                    {
+                      v: "badge",
+                      label: "仅标记",
+                      hint: "自动收录条目只挂角标、永不自动处理（最保守，v0.4 行为）。",
+                    },
+                  ] as const
+                ).map((o) => {
+                  const active = (st.autoTierMode ?? "hide") === o.v;
+                  return (
+                    <button
+                      key={o.v}
+                      type="button"
+                      onClick={() => save("autoTierMode", o.v)}
+                      className={`flex items-start gap-2.5 rounded-lg border p-3 text-left transition ${
+                        active ? "border-fg bg-card-hi" : "border-border-2 hover:border-fg-3"
+                      }`}
+                    >
+                      <span
+                        className={`mt-0.5 flex h-4 w-4 flex-none items-center justify-center rounded-full border ${
+                          active ? "border-fg" : "border-border-2"
+                        }`}
+                      >
+                        {active && <span className="h-2 w-2 rounded-full bg-fg" />}
+                      </span>
+                      <span>
+                        <span className="text-[13px] font-medium text-fg">{o.label}</span>
+                        <span className="block text-[12px] leading-5 text-fg-3">{o.hint}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             <div className="space-y-2">
               {SPAM_CATEGORIES.map((cat) => (
                 <CategoryPolicyRow

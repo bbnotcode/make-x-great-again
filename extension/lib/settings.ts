@@ -30,6 +30,18 @@ export type CategoryActions = Record<SpamCategory, CategoryAction>;
  *  - "all": feed, profile and replies all auto-process. */
 export type AutoScope = "replies" | "all";
 
+/** How PUBLIC-LIST hits that are auto-published (AI/rule/mention lane, not
+ *  human-confirmed) may auto-act. Human-confirmed entries always follow the
+ *  per-category policy in full; this only governs the auto tier:
+ *  - "badge": mark only — the pre-v0.5.0 hard line
+ *  - "hide":  cap at the reversible local hide; X mute/block stays
+ *             human-confirmed-only (default — a poisoned/false-positive
+ *             entry can at worst hide rows locally, undone in one click)
+ *  - "full":  run the per-category action incl. mute/block. Explicit
+ *             opt-in: the user accepts that an auto-published false
+ *             positive could block with their own account. */
+export type AutoTierMode = "badge" | "hide" | "full";
+
 export interface Settings {
   enabled: boolean; // master: passive detection on/off
   bubble: boolean; // show the corner bubble
@@ -38,6 +50,7 @@ export interface Settings {
   categoryActions: CategoryActions; // per-category automatic action on list hits
   autoProcess: boolean; // master kill-switch for categoryActions auto hide/mute/block
   autoScope: AutoScope; // where auto actions may fire (replies-only by default)
+  autoTierMode: AutoTierMode; // how far auto-published (non-human) list hits may auto-act
   autoExpand: boolean; // pop the bubble card open when auto-processing starts (off = pill pulse only; better on narrow/mobile viewports)
   edgeBase: string; // advanced: override the service base URL — list/whitelist sync source, whitelist-apply backend AND outbound links
 }
@@ -61,6 +74,7 @@ export const DEFAULTS: Settings = {
   categoryActions: { ...DEFAULT_CATEGORY_ACTIONS },
   autoProcess: true,
   autoScope: "replies",
+  autoTierMode: "hide",
   autoExpand: true,
   edgeBase: "",
 };

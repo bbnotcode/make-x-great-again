@@ -547,6 +547,9 @@ export interface Finding {
   source?: string;
   /** 中文类别（色情招揽/币圈投放…）— rendered as a chip on the row. */
   categoryZh?: string;
+  /** List-hit provenance chip: 人工确认 (confirmed) vs 自动收录 (auto).
+   *  Explains per-row why treatment differs under the tiered auto policy. */
+  tier?: "confirmed" | "auto";
   /** Status id of the triggering tweet — flows into the 处理记录 audit trail. */
   tweetId?: string;
   verdict: Verdict;
@@ -999,8 +1002,13 @@ export function createBubble(
                   // 需手动 hint for rule hits outside the auto scope. The chip
                   // says 规则, never which one: the spammer sees this row too.
                   const tags: string[] = [];
-                  if (f.source === "local-index") tags.push(`<span class="qtag">公榜</span>`);
-                  else if (f.source === "local-rule") tags.push(`<span class="qtag">规则</span>`);
+                  if (f.source === "local-index") {
+                    tags.push(`<span class="qtag">公榜</span>`);
+                    if (f.tier)
+                      tags.push(
+                        `<span class="qtag">${f.tier === "confirmed" ? "人工确认" : "自动收录"}</span>`,
+                      );
+                  } else if (f.source === "local-rule") tags.push(`<span class="qtag">规则</span>`);
                   else if (f.source === "cache") tags.push(`<span class="qtag">缓存</span>`);
                   if (f.categoryZh) tags.push(`<span class="qtag">${esc(f.categoryZh)}</span>`);
                   if (f.source === "local-rule" && !isAuto)

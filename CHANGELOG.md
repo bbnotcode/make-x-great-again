@@ -13,6 +13,16 @@ this same section) plus this pre-release hardening pass.
 
 ### Pre-release hardening
 
+- **Tiered auto-processing for auto-published list entries**
+  (`autoTierMode`): the 2026-07 hard line made ALL auto-published (AI/rule/
+  mention) list hits mark-only — but 90%+ of the live list is auto tier, so
+  自动处理 was a no-op against the actual reply wave, and an account got
+  WEAKER handling after being listed than the same keyword rule would have
+  applied before. New three-level setting: 仅标记 (old behavior) /
+  自动隐藏 (default — per-category policy capped at the reversible local
+  hide; X mute/block stays human-confirmed-only) / 完整执行 (explicit
+  opt-in, full per-category policy). Bubble rows now carry a
+  人工确认/自动收录 chip so the per-row treatment is legible.
 - **自动展开开关**：new setting 自动处理时展开面板 (`autoExpand`, default on =
   previous behavior). When off, auto-processing no longer pops the bubble card
   open — the pill's pulse is the only signal. Recommended off on narrow /

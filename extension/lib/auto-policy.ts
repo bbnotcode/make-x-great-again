@@ -1,4 +1,4 @@
-import type { Settings } from "./settings";
+import type { CategoryAction, Settings } from "./settings";
 
 /** Where a hit came from, for auto-action eligibility purposes. */
 export type AutoSource = "list" | "rule" | "cache" | "fresh";
@@ -8,12 +8,16 @@ export type AutoSource = "list" | "rule" | "cache" | "fresh";
  * per-category action policy is applied after this gate; ineligible hits
  * degrade to badge-only).
  *
- * HARD LINE: published-list entries may only auto-act when human-confirmed
- * (`tier === "confirmed"`). AI / rule / mention auto-published entries stay
- * badge-only no matter what the per-category policy says — a false positive
- * that slipped through auto-publish must never mute/block/hide by itself.
- * (`/v1/check` enforces the same human-tier filter server-side for legacy
- * clients; this is the client-side half for the synced lite artifact.)
+ * HARD LINE, v2: published-list entries that are NOT human-confirmed
+ * (AI / rule / mention auto-published) are governed by settings.autoTierMode:
+ * "badge" keeps the original mark-only stance, "hide" (default) admits them
+ * but `capAutoTierAction` limits them to the reversible local hide, "full"
+ * runs the per-category policy as-is (explicit user opt-in). Rationale: 90%+
+ * of the live list is auto tier — mark-only made 自动处理 a no-op against the
+ * actual reply-wave, while a first-seen account matching the same keyword
+ * rule WOULD auto-act; getting listed must not weaken handling.
+ * (`/v1/check` still enforces human-tier-only server-side for legacy ≤0.4
+ * clients, which have no tier awareness and no cap.)
  *
  * Official keyword-rule hits are maintainer-curated but target first-seen
  * accounts with no human review, so they are confined to reply sections
@@ -26,11 +30,26 @@ export function autoEligible(opts: {
   tier: "confirmed" | "auto";
   inReply: boolean;
   autoScope: Settings["autoScope"];
+  autoTierMode: Settings["autoTierMode"];
 }): boolean {
   if (opts.source === "list") {
-    if (opts.tier !== "confirmed") return false;
+    if (opts.tier !== "confirmed" && opts.autoTierMode === "badge") return false;
     return opts.autoScope === "all" || opts.inReply;
   }
   if (opts.source === "rule") return opts.inReply;
   return false;
+}
+
+/** Cap the per-category action for an eligible hit by its tier. Irreversible
+ *  X-native mute/block stays human-confirmed-only unless the user explicitly
+ *  opted the auto tier into "full"; under "hide" the action degrades to the
+ *  local (reversible, zero-network) hide. Rule hits pass through unchanged —
+ *  they already carry their own reply-section confinement. */
+export function capAutoTierAction(
+  action: CategoryAction,
+  opts: { source: AutoSource; tier: "confirmed" | "auto"; autoTierMode: Settings["autoTierMode"] },
+): CategoryAction {
+  if (opts.source !== "list" || opts.tier === "confirmed" || opts.autoTierMode === "full")
+    return action;
+  return action === "badge" ? "badge" : "hide";
 }
