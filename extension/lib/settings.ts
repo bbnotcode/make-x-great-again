@@ -38,6 +38,7 @@ export interface Settings {
   categoryActions: CategoryActions; // per-category automatic action on list hits
   autoProcess: boolean; // master kill-switch for categoryActions auto hide/mute/block
   autoScope: AutoScope; // where auto actions may fire (replies-only by default)
+  autoExpand: boolean; // pop the bubble card open when auto-processing starts (off = pill pulse only; better on narrow/mobile viewports)
   edgeBase: string; // advanced: override the public-list site base URL (links only)
 }
 
@@ -60,6 +61,7 @@ export const DEFAULTS: Settings = {
   categoryActions: { ...DEFAULT_CATEGORY_ACTIONS },
   autoProcess: true,
   autoScope: "replies",
+  autoExpand: true,
   edgeBase: "",
 };
 
