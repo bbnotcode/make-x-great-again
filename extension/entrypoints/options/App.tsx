@@ -1304,6 +1304,12 @@ function Settings() {
               label="气泡位置：右上角"
               hint="关 = 右下角"
             />
+            <Toggle
+              on={st.autoExpand}
+              onChange={(v) => save("autoExpand", v)}
+              label="自动处理时展开面板"
+              hint="关闭后仅气泡脉冲提示，不弹出处理卡片（小屏 / 手机端建议关闭）"
+            />
           </section>
         )}
 
