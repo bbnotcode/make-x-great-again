@@ -193,10 +193,23 @@ export default defineContentScript({
     let settings = await getSettings();
     if (!settings.enabled) return; // master off → don't init (applies next load)
     onSettingsChange((s) => {
+      const modeChanged = s.actionMode !== settings.actionMode;
       settings = s;
       // Keep the bubble's 自动处理 switch + hint in sync (options page or
       // another tab may have flipped it).
       bubbleApi?.setAutoProcess(s.autoProcess, autoCategoryCount(s), s.autoScope === "all");
+      if (modeChanged) {
+        // Mounted badges rendered the OLD verb into their buttons, but a
+        // click executes the CURRENT actionMode — a button reading 隐藏 must
+        // never actually 拉黑. Sync the bubble's label and drop every
+        // non-pending badge so the next scan re-renders with the real verb.
+        bubbleApi?.setVerb(actionVerb(s.actionMode));
+        for (const host of document.querySelectorAll<HTMLElement>(".xss-mount")) {
+          if (host.shadowRoot?.querySelector(".xss-badge.pending")) continue;
+          host.remove();
+        }
+        scan();
+      }
     });
 
     // Warm local data structures
@@ -284,7 +297,17 @@ export default defineContentScript({
         ? anchor
         : document.querySelector(`[data-xss-key="${CSS.escape(key)}"]`);
       if (target) hideTweet(target);
-      return applyXAction(mode, sig);
+      // Mirror the auto path: when the native X action fails, the 处理记录
+      // row must say so — the user clicked 拉黑/静音 and only got a local
+      // hide, and the record is the one place that can state it honestly.
+      return applyXAction(mode, sig).then((ok) => {
+        if (!ok) {
+          void updateBlockRecord(key, {
+            reason: `手动${actionVerb(mode)}（X 动作失败，仅本地隐藏）`,
+          });
+        }
+        return ok;
+      });
     }
 
     function badgeForPending(anchor: HTMLElement, sig: Signals, mode?: ActionMode) {
@@ -378,6 +401,7 @@ export default defineContentScript({
       });
       void bumpStats({ blocks: 1 });
       void bumpStat("blocked");
+      anchorByKey.set(it.key, it.anchor);
       articleOf(it.anchor)?.setAttribute("data-xss-key", it.key);
       mountActing(it.anchor, it.verb, true);
       bubbleApi?.markAuto(it.key, "queued", it.verb);
@@ -499,6 +523,12 @@ export default defineContentScript({
       note?: string,
       source: BadgeSource = "fresh",
     ) {
+      // Anchors are kept ONLY for hit accounts (executeHide's fallback and
+      // onReviewEach are the sole consumers, and both operate on findings).
+      // Registering every scanned account used to pin each author's
+      // unmounted article subtree for the whole page lifetime; the neutral
+      // ghost badge's manual flow captures its own anchor via scheduleHide.
+      if (v) anchorByKey.set(key, anchor);
       clearMounts(anchor);
       mountBadge(anchor, () =>
         createBadge(
@@ -596,8 +626,6 @@ export default defineContentScript({
       if (inFlight.has(key)) return; // a concurrent scan is already on it
       inFlight.add(key);
       try {
-        anchorByKey.set(key, anchor);
-
         // 0. Already blocked → hide, never render again. Exception: the cell
         //    the visible auto queue is working on (it was recorded up-front)
         //    — its animation owns the hide; OTHER cells by the same account
@@ -624,8 +652,25 @@ export default defineContentScript({
         // 1. Check pending undo queue — skip if already scheduled.
         if (pendingActions.has(key)) return;
 
-        // 2. Persistent cache (spam reused as-is; legit/uncertain only if signals
-        //    unchanged so new evidence can still re-trigger).
+        // 2. Whitelist wins over EVERYTHING below — lookupLocal excludes
+        //    whitelisted accounts itself, but a v0.4-era cached spam verdict
+        //    would otherwise keep red-badging an appealed account for up to
+        //    30 days.
+        if (isWhitelisted(sig.userId, sig.handle)) return;
+
+        // 3. Local public index lookup (no remote requests, <50ms). Ranked
+        //    ABOVE the legacy cache: a stale "legit" entry from v0.4 must not
+        //    mask a since-human-confirmed list hit, and a stale "spam" entry
+        //    must not demote it to mark-only (cache never auto-acts).
+        const entry = lookupLocal(sig.userId, sig.handle);
+        if (entry) {
+          renderLocalIndex(anchor, key, sig, entry, "list", ctx);
+          return;
+        }
+
+        // 4. v0.4-era persistent cache, read-only since v0.5 (spam reused
+        //    as-is; legit/uncertain only if signals unchanged so new evidence
+        //    can still re-trigger).
         const cached = await cacheGet(key);
         if (cached) {
           const spammy = ["spam", "porn_bot", "likely_spam"].includes(cached.verdict.label);
@@ -636,18 +681,12 @@ export default defineContentScript({
           }
         }
 
-        // 3. Local public index lookup (no remote requests, <50ms).
-        const entry = lookupLocal(sig.userId, sig.handle);
-        if (entry) {
-          renderLocalIndex(anchor, key, sig, entry, "list", ctx);
-          return;
-        }
-
-        // 3.5 Maintainer-curated keyword rules, shipped with the synced list.
+        // 4.5 Maintainer-curated keyword rules, shipped with the synced list.
         // Catches first-seen template accounts (brand-new porn-bot throwaways
-        // not yet on the public list) with zero upload. Whitelist wins.
+        // not yet on the public list) with zero upload. Whitelist already won
+        // at step 2.
         const ruleHit = matchLocalRules(sig);
-        if (ruleHit && !isWhitelisted(sig.userId, sig.handle)) {
+        if (ruleHit) {
           renderLocalIndex(
             anchor,
             key,
@@ -674,7 +713,7 @@ export default defineContentScript({
           return;
         }
 
-        // 4. Local public list did not match. Just show neutral/unhit state.
+        // 5. Local public list did not match. Just show neutral/unhit state.
         badgeFor(anchor, key, sig, null);
       } finally {
         inFlight.delete(key);

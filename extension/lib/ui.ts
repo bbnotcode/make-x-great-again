@@ -1466,6 +1466,13 @@ export function createBubble(
       if (scopeAll !== undefined) autoScopeAll = scopeAll;
       if (open) renderCard();
     },
+    /** settings.actionMode changed: every rendered 隐藏/静音/拉黑 label must
+     *  follow, or the batch button would state one action and run another. */
+    setVerb(v: string) {
+      verb = v;
+      renderPill();
+      if (open) renderCard();
+    },
   };
 }
 
