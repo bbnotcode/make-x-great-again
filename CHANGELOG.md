@@ -6,17 +6,17 @@ This project follows a pragmatic [Keep a Changelog](https://keepachangelog.com/e
 style. Version numbers refer to the browser extension package unless noted
 otherwise.
 
-## [0.5.1] - Unreleased
+## [0.5.0] - 2026-07-18
 
-### Added
+The public store release: the 2026-06-10 v0.5 rewrite (documented below in
+this same section) plus this pre-release hardening pass.
+
+### Pre-release hardening
 
 - **自动展开开关**：new setting 自动处理时展开面板 (`autoExpand`, default on =
   previous behavior). When off, auto-processing no longer pops the bubble card
   open — the pill's pulse is the only signal. Recommended off on narrow /
   mobile viewports where the card covers the timeline.
-
-### Fixed
-
 - **Stale action verb on rendered badges**: changing 手动处理方式 in the
   options page now updates every already-rendered badge and the bubble's
   batch button in open tabs. Previously they kept the old verb (e.g. 隐藏)
@@ -32,15 +32,10 @@ otherwise.
 - Content-script memory: anchors are now kept only for hit accounts instead
   of every scanned author, removing unbounded growth during long
   infinite-scroll sessions.
-
-### Removed
-
-- Dead v0.4 code: the unused local keyword heuristic (`heuristic()`,
+- Removed dead v0.4 code: the unused local keyword heuristic (`heuristic()`,
   vocabulary regexes) and the disconnected GraphQL user-cache module. Neither
   had any caller since the v0.5 rewrite; detection remains list/rule/LLM
   driven with no hardcoded keyword judgments.
-
-## [0.5.0] - 2026-06-10
 
 ### Added
 
