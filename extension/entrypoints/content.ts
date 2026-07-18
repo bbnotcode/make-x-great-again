@@ -655,8 +655,12 @@ export default defineContentScript({
         // 2. Whitelist wins over EVERYTHING below — lookupLocal excludes
         //    whitelisted accounts itself, but a v0.4-era cached spam verdict
         //    would otherwise keep red-badging an appealed account for up to
-        //    30 days.
-        if (isWhitelisted(sig.userId, sig.handle)) return;
+        //    30 days. Still mount the neutral badge: it keeps the manual
+        //    handle available and stops scan() from revisiting the row.
+        if (isWhitelisted(sig.userId, sig.handle)) {
+          badgeFor(anchor, key, sig, null);
+          return;
+        }
 
         // 3. Local public index lookup (no remote requests, <50ms). Ranked
         //    ABOVE the legacy cache: a stale "legit" entry from v0.4 must not
