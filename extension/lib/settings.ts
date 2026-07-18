@@ -39,7 +39,7 @@ export interface Settings {
   autoProcess: boolean; // master kill-switch for categoryActions auto hide/mute/block
   autoScope: AutoScope; // where auto actions may fire (replies-only by default)
   autoExpand: boolean; // pop the bubble card open when auto-processing starts (off = pill pulse only; better on narrow/mobile viewports)
-  edgeBase: string; // advanced: override the public-list site base URL (links only)
+  edgeBase: string; // advanced: override the service base URL — list/whitelist sync source, whitelist-apply backend AND outbound links
 }
 
 export const DEFAULT_CATEGORY_ACTIONS: CategoryActions = {
