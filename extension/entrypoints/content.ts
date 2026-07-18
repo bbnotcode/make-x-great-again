@@ -1,4 +1,4 @@
-import { autoEligible } from "../lib/auto-policy";
+import { autoEligible, capAutoTierAction } from "../lib/auto-policy";
 import { addBlocked, isBlockedSync, warm as warmBlocklist } from "../lib/blocklist";
 import { BRAND } from "../lib/brand";
 import { type Cached, cacheGet, signalsHash } from "../lib/cache";
@@ -487,7 +487,7 @@ export default defineContentScript({
       sig: Signals,
       v: Verdict,
       source: string,
-      meta?: { categoryZh?: string; tweetId?: string },
+      meta?: { categoryZh?: string; tweetId?: string; tier?: "confirmed" | "auto" },
     ) {
       if (!["spam", "porn_bot", "likely_spam"].includes(v.label)) return;
       const id = keyOf(sig);
@@ -508,6 +508,7 @@ export default defineContentScript({
         source,
         ...(meta?.categoryZh ? { categoryZh: meta.categoryZh } : {}),
         ...(meta?.tweetId ? { tweetId: meta.tweetId } : {}),
+        ...(meta?.tier ? { tier: meta.tier } : {}),
         ...(sig.userId ? { userId: sig.userId } : {}),
         ...(sig.avatarUrl ? { avatarUrl: sig.avatarUrl } : {}),
         ...(sig.displayName ? { displayName: sig.displayName } : {}),
@@ -584,18 +585,27 @@ export default defineContentScript({
         tier: entry.tier,
         inReply: ctx === "reply",
         autoScope: settings.autoScope,
+        autoTierMode: settings.autoTierMode,
       });
+      // Auto-published (non-human) list entries are capped by autoTierMode:
+      // under the default "hide" they may auto-hide locally but never fire
+      // the irreversible X mute/block with the user's session.
       const action = eligible
-        ? (settings.categoryActions[entry.category] ?? "badge")
+        ? capAutoTierAction(settings.categoryActions[entry.category] ?? "badge", {
+            source: badgeSource,
+            tier: entry.tier,
+            autoTierMode: settings.autoTierMode,
+          })
         : "badge";
       // 自动处理 master switch off → everything degrades to mark-only,
       // regardless of the per-category policy.
       if (action === "badge" || !settings.autoProcess) {
         badgeFor(anchor, key, sig, entry.verdict, undefined, badgeSource);
         pushFinding(sig, entry.verdict, badgeSource === "rule" ? "local-rule" : "local-index", {
-        categoryZh: CATEGORY_ZH[entry.category],
-        ...(hitTweetId ? { tweetId: hitTweetId } : {}),
-      });
+          categoryZh: CATEGORY_ZH[entry.category],
+          ...(hitTweetId ? { tweetId: hitTweetId } : {}),
+          ...(badgeSource === "list" ? { tier: entry.tier } : {}),
+        });
         return;
       }
       // Auto-processed accounts still show up in the bubble panel — as
@@ -604,6 +614,7 @@ export default defineContentScript({
       pushFinding(sig, entry.verdict, badgeSource === "rule" ? "local-rule" : "local-index", {
         categoryZh: CATEGORY_ZH[entry.category],
         ...(hitTweetId ? { tweetId: hitTweetId } : {}),
+        ...(badgeSource === "list" ? { tier: entry.tier } : {}),
       });
       const verb = action === "mute" ? "静音" : action === "block" ? "拉黑" : "隐藏";
       // The visible queue owns everything from here: records up-front, then
