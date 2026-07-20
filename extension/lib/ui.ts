@@ -833,6 +833,21 @@ export function createBubble(
       });
       return;
     }
+    if (archive.length > 0) {
+      // No live hits on THIS page, but this browsing session (and re-hydrated
+      // recent history) has processed accounts — keep them one click away
+      // instead of resting all the way back to 守护, so navigating off a
+      // page never reads as "the records vanished".
+      pill.innerHTML = progressMarkup({
+        iconName: "shield-check",
+        iconColor: "var(--danger)",
+        title: "已处理",
+        count: String(archive.length),
+        percent: 100,
+        danger: true,
+      });
+      return;
+    }
     // Calm "guarding" state — confirms the extension is working even
     // when nothing suspicious is on the page (no alarm color).
     pill.innerHTML = progressMarkup({
@@ -917,7 +932,7 @@ export function createBubble(
             ? selectableCount || s.running
               ? `本页发现 ${findings.length} 个可疑账号`
               : `本页已处理 ${s.done} 个账号`
-            : `本次浏览已处理 ${doneRows.length} 个账号`
+            : `近期已处理 ${doneRows.length} 个账号`
         }</span>
         <span class="x" data-x>${icon("x", "currentColor", 14)}</span></div>
       ${autoRowMarkup()}
@@ -933,7 +948,7 @@ export function createBubble(
         </span>
         <span class="metric${doneRows.length ? " tab" : ""}${view === "done" ? " on" : ""}"
           data-done-chip ${doneRows.length ? `data-tab-done role="button" tabindex="0" aria-pressed="${view === "done"}"` : ""}
-          title="${s.failed ? `失败 ${s.failed}，` : ""}本次浏览已处理（含之前页面）${doneRows.length ? " · 点击查看明细" : ""}">
+          title="${s.failed ? `失败 ${s.failed}，` : ""}近期已处理（含之前页面与历史记录）${doneRows.length ? " · 点击查看明细" : ""}">
           <i style="background:${s.failed ? "var(--warn)" : "var(--danger)"}"></i><b>${doneRows.length}</b><em>已处理</em>
         </span>
       </div>
@@ -1305,6 +1320,10 @@ export function createBubble(
 
   function expand() {
     open = true;
+    // Opening onto an empty live queue when history exists (e.g. right after
+    // navigating off the page that had the hits) would show a blank panel —
+    // land on the 已处理 record instead so the user finds what they processed.
+    if (!findings.length && archive.length) view = "done";
     card.classList.remove("closing");
     card.classList.add("open");
     renderCard();
@@ -1488,6 +1507,37 @@ export function createBubble(
       if (open) renderCard();
       if (st === "done") scheduleAbsorb(key); // linger, then fly into the chip
       if (autoOpened && open && stats().running === 0) scheduleAutoCollapse();
+    },
+    /** Hydrate the 已处理 record from persisted block records at mount time,
+     *  so the panel keeps a browsing history across SPA navigation AND hard
+     *  reloads (the underlying records already persist in storage; the bubble
+     *  used to forget them). Rows already live on the current page are skipped
+     *  — they render as live findings, not history. */
+    seedArchive(rows: Finding[]) {
+      for (const f of rows) {
+        const k = rowKey(f);
+        if (archivedKeys.has(k) || findings.some((x) => rowKey(x) === k)) continue;
+        archivedKeys.add(k);
+        archive.push(f);
+        rowState.set(k, "done");
+        autoRows.add(k); // history rows are display-only, never re-actionable
+      }
+      renderPill();
+      if (open) renderCard();
+    },
+    /** Manual popover hide of a listed account: drive the live bubble row to
+     *  "done" so it stops showing an actionable 隐藏 button (the tweet is
+     *  already gone) and joins the 已处理 record — matching the auto path.
+     *  No-op if the account isn't a current finding (e.g. a ghost hide). */
+    markManual(key: string, verbLabel: string) {
+      if (!findings.some((f) => rowKey(f) === key)) return;
+      autoVerbs.set(key, verbLabel);
+      rowState.set(key, "done");
+      autoRows.add(key);
+      bump(key);
+      renderPill();
+      if (open) renderCard();
+      scheduleAbsorb(key);
     },
     /** Sync the header switch when settings change elsewhere (options page
      *  or another tab). Optionally refresh the category-count/scope hint. */

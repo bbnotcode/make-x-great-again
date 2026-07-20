@@ -21,7 +21,13 @@ import {
   setSetting,
 } from "../lib/settings";
 import { bumpStat } from "../lib/stats";
-import { addBlockRecord, bumpStats, updateBlockRecord } from "../lib/store";
+import {
+  type BlockRecord,
+  addBlockRecord,
+  bumpStats,
+  getBlocklist,
+  updateBlockRecord,
+} from "../lib/store";
 import type { Signals, Verdict } from "../lib/types";
 import { performXAction, retryDelayForAttempt } from "../lib/x-action";
 import {
@@ -47,6 +53,29 @@ function openAppeal(appeal?: { handle: string; userId?: string }): void {
     url += `&${p.toString()}`;
   }
   window.open(url, "_blank", "noopener");
+}
+
+/** How many recent processed accounts the bubble re-hydrates into its 已处理
+ *  record on mount. The full audit trail lives in the options 处理记录; the
+ *  bubble only needs a recent-history convenience view. */
+const ARCHIVE_HYDRATE_MAX = 30;
+
+/** Persisted block record → bubble Finding, for the 已处理 history view. */
+function recordToFinding(r: BlockRecord): Finding {
+  const verdict: Verdict = r.verdict ?? {
+    label: "spam",
+    confidence: 1,
+    reasons: [r.reason ?? "已处理"],
+  };
+  return {
+    handle: r.handle,
+    verdict,
+    ...(/^\d+$/.test(r.id) ? { userId: r.id } : {}),
+    ...(r.avatarUrl ? { avatarUrl: r.avatarUrl } : {}),
+    ...(r.displayName ? { displayName: r.displayName } : {}),
+    ...(r.tweetId ? { tweetId: r.tweetId } : {}),
+    ...(r.tweetText ? { snippet: r.tweetText } : {}),
+  };
 }
 
 function articleOf(node: Element | null): HTMLElement | null {
@@ -308,6 +337,12 @@ export default defineContentScript({
         ? anchor
         : document.querySelector(`[data-xss-key="${CSS.escape(key)}"]`);
       if (target) hideTweet(target);
+      // If this account is a live bubble finding (a listed hit the user chose
+      // to handle from the badge popover rather than the batch panel), drive
+      // its row to "done" so it stops offering an actionable button and joins
+      // the 已处理 record — otherwise the row stalls at "待处理" forever and is
+      // dropped on the next SPA navigation.
+      bubbleApi?.markManual(key, actionVerb(mode));
       // Mirror the auto path: when the native X action fails, the 处理记录
       // row must say so — the user clicked 拉黑/静音 and only got a local
       // hide, and the record is the one place that can state it honestly.
@@ -882,6 +917,16 @@ export default defineContentScript({
         container.appendChild(bubble.el);
         if (!settings.bubble) bubble.el.style.display = "none";
         bubbleApi = bubble;
+        // Hydrate the 已处理 record from persisted block records so the panel
+        // keeps a browsing history across SPA navigation AND hard reloads —
+        // the records already persist; the bubble just re-reads them.
+        void getBlocklist().then((records) => {
+          const recent = records
+            .sort((a, b) => b.ts - a.ts)
+            .slice(0, ARCHIVE_HYDRATE_MAX)
+            .map(recordToFinding);
+          if (recent.length) bubbleApi?.seedArchive(recent);
+        });
         return bubble;
       },
     });
