@@ -203,26 +203,6 @@ function hideTweet(node: Element | null) {
   if (cell instanceof HTMLElement) cell.style.display = "none";
 }
 
-/** Animated hide for the visible auto queue: quick fade + shrink, then
- *  display:none. Height stays untouched — X's virtualized timeline owns row
- *  geometry, and animating it fights the virtualizer. Falls back to the
- *  instant hide under prefers-reduced-motion. */
-function collapseTweet(node: Element | null) {
-  const cell =
-    node?.closest('[data-testid="cellInnerDiv"]') ?? node?.closest("article");
-  if (!(cell instanceof HTMLElement)) return;
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    cell.style.display = "none";
-    return;
-  }
-  cell.style.transition = "opacity .3s ease, transform .3s ease";
-  cell.style.opacity = "0";
-  cell.style.transform = "scale(.985)";
-  setTimeout(() => {
-    cell.style.display = "none";
-  }, 320);
-}
-
 /** Each inline badge gets its own shadow host so X CSS can't touch it. */
 function mountBadge(anchor: HTMLElement, build: () => HTMLElement) {
   const host = document.createElement("span");
@@ -281,7 +261,7 @@ export default defineContentScript({
     if (!settings.enabled) return; // master off → don't init (applies next load)
     // Build marker — confirms which content-script build is live in this tab
     // (reloading the unpacked extension does NOT refresh already-open tabs).
-    console.info("[MXGA] content script ready · session-scoped 已处理 build 2026-07-21");
+    console.info("[MXGA] content script ready · build 2026-07-21 (instant-hide + bg-report)");
     onSettingsChange((s) => {
       const modeChanged = s.actionMode !== settings.actionMode;
       settings = s;
@@ -575,7 +555,11 @@ export default defineContentScript({
           // Even the instant local-hide mode dwells long enough to be SEEN.
           const dwell = AUTO_MIN_ACT_MS - (Date.now() - t0);
           if (dwell > 0) await sleep(dwell);
-          collapseTweet(autoTarget(it));
+          // Hide the real tweet INSTANTLY — the processing theater (fade /
+          // shrink / fly-into-chip) belongs to the corner bubble; animating
+          // the page's own DOM competes with X's scroll/virtualizer and reads
+          // as jank on the timeline.
+          hideTweet(autoTarget(it));
           // The action has now SETTLED (attempted) — drop its pending marker so
           // it stops being a resume candidate; only items whose queue died
           // before this point stay pending. On X failure, annotate the record.
