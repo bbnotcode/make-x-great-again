@@ -33,10 +33,20 @@ import {
   createBubble,
 } from "../lib/ui";
 
-/** "误判申诉" — opens the GitHub appeal issue template. Zero remote requests
- *  from the extension itself; the user files the appeal on GitHub. */
-function openAppeal(): void {
-  window.open(BRAND.appealNewIssue, "_blank", "noopener");
+/** "误判申诉" — opens the GitHub appeal issue template, PRE-FILLED with the
+ *  account's handle / user id / title so the user only writes the reason and
+ *  submits. Zero remote requests from the extension itself; the appeal is
+ *  filed on GitHub (the template field ids are handle / userid). */
+function openAppeal(appeal?: { handle: string; userId?: string }): void {
+  let url = BRAND.appealNewIssue;
+  if (appeal?.handle) {
+    const p = new URLSearchParams();
+    p.set("handle", `@${appeal.handle}`);
+    if (appeal.userId) p.set("userid", appeal.userId);
+    p.set("title", `[Appeal] @${appeal.handle} wrongly listed`);
+    url += `&${p.toString()}`;
+  }
+  window.open(url, "_blank", "noopener");
 }
 
 function articleOf(node: Element | null): HTMLElement | null {
@@ -536,13 +546,15 @@ export default defineContentScript({
         createBadge(
           v,
           {
-            onHide: () => scheduleHide(key, sig, anchor),
-            onHideLocal: () => scheduleHide(key, sig, anchor, "local"),
-            onAppeal: openAppeal,
+            // The popover exposes the full ladder; the clicked mode overrides
+            // settings.actionMode for this one account (default = configured).
+            onAct: (mode) => scheduleHide(key, sig, anchor, mode),
+            onAppeal: () =>
+              openAppeal({ handle: sig.handle, ...(sig.userId ? { userId: sig.userId } : {}) }),
           },
           note,
           source,
-          actionVerb(settings.actionMode),
+          settings.actionMode,
         ),
       );
     }
@@ -852,6 +864,9 @@ export default defineContentScript({
           },
           onDismiss() {
             dismissed = true;
+          },
+          onAppeal(appeal) {
+            openAppeal(appeal);
           },
           onToggleAuto(v: boolean) {
             // Persist; the onSettingsChange listener updates `settings` (and

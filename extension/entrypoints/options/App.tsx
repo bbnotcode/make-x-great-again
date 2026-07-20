@@ -27,6 +27,16 @@ import type { Label } from "../../lib/types";
 const REPO = BRAND.repo;
 const EDGE_DEFAULT = BRAND.edgeBase;
 
+/** Pre-filled GitHub false-positive appeal for a listed account — matches the
+ *  content-script's openAppeal so both entries land on the same filled form. */
+function appealUrl(handle: string, userId?: string): string {
+  const p = new URLSearchParams();
+  p.set("handle", `@${handle}`);
+  if (userId && /^\d+$/.test(userId)) p.set("userid", userId);
+  p.set("title", `[Appeal] @${handle} wrongly listed`);
+  return `${BRAND.appealNewIssue}&${p.toString()}`;
+}
+
 const when = (ts: number) => new Date(ts).toLocaleString("zh-CN", { hour12: false });
 const idTail = (id: string, h: string) =>
   /^\d+$/.test(id) && id !== h && !/^\d+$/.test(h) ? ` · ${id}` : "";
@@ -633,15 +643,26 @@ function Blocklist() {
                 <td className={`${td} text-fg-3`}>{src[r.source]}</td>
                 <td className={`${td} font-mono text-[12px] text-fg-3`}>{when(r.ts)}</td>
                 <td className={td}>
-                  <Btn
-                    size="sm"
-                    onClick={async () => {
-                      await removeBlock(r.id);
-                      load();
-                    }}
-                  >
-                    恢复显示
-                  </Btn>
+                  <div className="flex items-center gap-2">
+                    <Btn
+                      size="sm"
+                      onClick={async () => {
+                        await removeBlock(r.id);
+                        load();
+                      }}
+                    >
+                      恢复显示
+                    </Btn>
+                    <a
+                      href={appealUrl(r.handle, r.id)}
+                      target="_blank"
+                      rel="noopener"
+                      title="账号被误列？提交申诉（已预填账号信息）"
+                      className="whitespace-nowrap text-[11px] text-fg-3 underline decoration-dotted underline-offset-2 transition hover:text-warn"
+                    >
+                      误判申诉 ↗
+                    </a>
+                  </div>
                 </td>
               </tr>
             ))}

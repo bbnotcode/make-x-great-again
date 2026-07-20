@@ -2,6 +2,7 @@
 // cannot bleed in and ours cannot leak out. Vanilla DOM — no framework
 // weight injected into the page. Tokens per docs/UX.md.
 import { BRAND } from "./brand";
+import type { ActionMode } from "./settings";
 import type { Label, Verdict } from "./types";
 
 export const STYLE = `
@@ -301,6 +302,13 @@ export const STYLE = `
   text-overflow: ellipsis; white-space: nowrap;
 }
 .qmeta { font-size: 11px; }
+/* Per-row 误判 link — quiet until hovered, so it never competes with the
+ * account meta but stays reachable for a wrongly-listed account. */
+.qappeal {
+  margin-left: 6px; color: var(--muted); cursor: pointer;
+  text-decoration: none; font-weight: 600; opacity: .7;
+}
+.qappeal:hover { color: var(--warn); opacity: 1; text-decoration: underline; }
 .qsnip {
   font-size: 11px; color: var(--muted); overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
@@ -567,6 +575,8 @@ export interface BubbleHandlers {
   onProcess: (keys: string[], onProgress: (key: string, ok: boolean) => void) => void;
   onReviewEach: () => void;
   onDismiss: () => void;
+  /** Per-row 误判申诉 — opens the pre-filled GitHub appeal for this account. */
+  onAppeal: (appeal: { handle: string; userId?: string }) => void;
   /** 自动处理 master switch flipped from the card header. */
   onToggleAuto?: (v: boolean) => void;
 }
@@ -996,7 +1006,7 @@ export function createBubble(
               ${av}
               <div class="qbody">
                 <div class="qname">${name}</div>
-                <div class="qmeta" style="color:${col}">@${esc(f.handle)} · ${m.zh} ${(f.verdict.confidence * 100).toFixed(0)}%</div>
+                <div class="qmeta" style="color:${col}">@${esc(f.handle)} · ${m.zh} ${(f.verdict.confidence * 100).toFixed(0)}%<a class="qappeal" data-appeal-h="${esc(f.handle)}"${f.userId ? ` data-appeal-u="${esc(f.userId)}"` : ""} title="误判？提交申诉（已预填账号信息）">误判</a></div>
                 ${(() => {
                   // 命中原因 chips — small tags kept apart from the content
                   // line: source (公榜 / 规则 / 缓存) + category, plus a
@@ -1049,6 +1059,14 @@ export function createBubble(
       root.remove();
     });
     card.querySelector("[data-each]")?.addEventListener("click", h.onReviewEach);
+    for (const a of card.querySelectorAll<HTMLElement>("[data-appeal-h]")) {
+      a.addEventListener("click", () => {
+        const handle = a.dataset.appealH;
+        if (!handle) return;
+        const userId = a.dataset.appealU;
+        h.onAppeal({ handle, ...(userId ? { userId } : {}) });
+      });
+    }
     const doneTab = card.querySelector<HTMLElement>("[data-tab-done]");
     const toggleDone = () => {
       view = view === "done" ? "queue" : "done";
@@ -1508,13 +1526,21 @@ export function createActingBadge(verb: string, queued = false): HTMLElement {
 }
 
 export interface BadgeActions {
-  /** Primary action — executes the user's configured actionMode (拉黑/静音/隐藏). */
-  onHide: () => void;
-  /** Secondary local-only hide (no X call) — v0.4's 隐藏 next to 拉黑.
-   *  Only rendered when the primary verb isn't already 隐藏. */
-  onHideLocal?: () => void;
+  /** Run one action against this account in the given mode. The popover
+   *  exposes the full ladder (隐藏 / 静音 / 拉黑); the caller's configured
+   *  actionMode is only the DEFAULT (rendered as the primary button), so a
+   *  user on 本地隐藏 can still one-off 拉黑 without visiting options. */
+  onAct: (mode: ActionMode) => void;
   onAppeal: () => void;
 }
+
+/** The manual action ladder shown in the popover, weakest → strongest.
+ *  The configured mode is styled as primary; the rest are secondary chips. */
+const ACTION_LADDER: { mode: ActionMode; verb: string }[] = [
+  { mode: "local", verb: "隐藏" },
+  { mode: "mute", verb: "静音" },
+  { mode: "block", verb: "拉黑" },
+];
 
 /** Inline pill on the author row; hover/focus → popover with reasons. */
 /** source: 'fresh' = just classified (rise-in); 'list'/'cache' = already on
@@ -1546,7 +1572,7 @@ export function createBadge(
   a: BadgeActions,
   note?: string,
   source: BadgeSource = "fresh",
-  verb = "隐藏",
+  mode: ActionMode = "local",
 ): HTMLElement {
   const el = document.createElement("span");
   el.tabIndex = 0;
@@ -1620,26 +1646,30 @@ export function createBadge(
     pop = document.createElement("div");
     pop.className = "xss pop card";
     pop.style.display = "block";
+    // Action ladder: 隐藏 / 静音 / 拉黑, the configured mode as primary
+    // (data-b), the rest as secondary chips. A one-off 拉黑 is reachable
+    // here even for a 本地隐藏 user — the block/mute fetch is same-origin
+    // (this script already runs on x.com), so no fresh permission prompt.
+    const ladder = ACTION_LADDER.map(
+      (m) =>
+        `<button data-act="${m.mode}"${m.mode === mode ? " data-b" : ""}>${esc(m.verb)}</button>`,
+    ).join("");
     pop.innerHTML = v
       ? `
       <h4 style="color:${color}">${LABEL[v.label].zh} · ${(v.confidence * 100).toFixed(0)}%</h4>
       <ul>${v.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
       ${note ? `<div style="color:var(--muted)">${esc(note)}</div>` : ""}
       <div class="acts">
-        ${spammy ? `<button data-b>${esc(verb)}</button>` : ""}
-        ${spammy && verb !== "隐藏" && a.onHideLocal ? `<button data-h>隐藏</button>` : ""}
-        <button data-a title="打开 GitHub 提交误判申诉 issue">误判?</button>
+        ${spammy ? ladder : ""}
+        <button data-a title="打开 GitHub 提交误判申诉 issue（已预填账号信息）">误判申诉</button>
       </div>`
       : `
       <h4>手动处理</h4>
       <div style="color:var(--muted);line-height:1.55">
         未命中公共名单与官方规则。确认是垃圾/骚扰账号时，可手动处理（5 秒内可撤销）。</div>
-      <div class="acts">
-        <button data-b>${esc(verb)}</button>
-        ${verb !== "隐藏" && a.onHideLocal ? `<button data-h>隐藏</button>` : ""}
-      </div>`;
-    pop.querySelector("[data-b]")?.addEventListener("click", a.onHide);
-    pop.querySelector("[data-h]")?.addEventListener("click", () => a.onHideLocal?.());
+      <div class="acts">${ladder}</div>`;
+    for (const b of pop.querySelectorAll<HTMLElement>("[data-act]"))
+      b.addEventListener("click", () => a.onAct(b.dataset.act as ActionMode));
     pop.querySelector("[data-a]")?.addEventListener("click", a.onAppeal);
     // Any action click ends the popover's job: the flow continues in the
     // inline ⏳撤销 pending badge (or a new tab, for 误判). Leaving it open
