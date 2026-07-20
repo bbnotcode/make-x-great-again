@@ -311,6 +311,9 @@ export default defineContentScript({
 
     let settings = await getSettings();
     if (!settings.enabled) return; // master off → don't init (applies next load)
+    // Build marker — confirms which content-script build is live in this tab
+    // (reloading the unpacked extension does NOT refresh already-open tabs).
+    console.info("[MXGA] content script ready · queue-resume build 2026-07-20");
     onSettingsChange((s) => {
       const modeChanged = s.actionMode !== settings.actionMode;
       settings = s;
