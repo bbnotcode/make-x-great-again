@@ -1,4 +1,3 @@
-import { getGhToken } from "../lib/auth";
 import { autoEligible, capAutoTierAction } from "../lib/auto-policy";
 import { addBlocked, isBlockedSync, warm as warmBlocklist } from "../lib/blocklist";
 import { BRAND } from "../lib/brand";
@@ -69,44 +68,31 @@ const RESUME_MAX = 50;
  *  bans, and — auto-publish being off — every report just queues for a
  *  maintainer to confirm). The extension only surfaces the outcome; it never
  *  auto-lists anything. Returns a short line for the popover to show inline. */
-async function reportSpam(
-  sig: Signals,
-  edgeBase: string,
-): Promise<{ ok: boolean; message: string }> {
-  const token = await getGhToken();
-  if (!token) {
-    // Reporting requires an identity so the queue isn't anonymously floodable.
-    // Send the user to options to authorize; they can re-report afterward.
-    try {
-      chrome.runtime.sendMessage({ type: "open_options" });
-    } catch {
-      /* best-effort */
-    }
-    return { ok: false, message: "举报需先在设置页用 GitHub 授权（已为你打开设置）" };
-  }
-  const base = (edgeBase || BRAND.edgeBase).replace(/\/+$/, "");
-  let res: Response;
+async function reportSpam(sig: Signals): Promise<{ ok: boolean; message: string }> {
+  // The POST runs in the BACKGROUND (see BgRequest "report"): a content-script
+  // fetch to the edge Worker is bound by x.com's CORS/CSP; the SW shares the
+  // extension origin the whitelist-apply flow already reports from.
+  let resp:
+    | { ok: boolean; error?: string; data?: { status: number; body: ReportBody } }
+    | undefined;
   try {
-    res = await fetch(`${base}/v1/report`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify(sig),
-    });
+    resp = await chrome.runtime.sendMessage({ type: "report", sig });
   } catch {
     return { ok: false, message: "网络错误，举报未提交" };
   }
-  let body: {
-    ok?: boolean;
-    status?: string;
-    duplicate?: boolean;
-    error?: string;
-  } = {};
-  try {
-    body = await res.json();
-  } catch {
-    /* non-JSON error page */
+  if (!resp || !resp.ok) {
+    if (resp?.error === "no_token") {
+      try {
+        chrome.runtime.sendMessage({ type: "open_options" });
+      } catch {
+        /* best-effort */
+      }
+      return { ok: false, message: "举报需先在设置页用 GitHub 授权（已为你打开设置）" };
+    }
+    return { ok: false, message: "网络错误，举报未提交" };
   }
-  if (res.ok && body.ok) {
+  const { status, body } = resp.data ?? { status: 0, body: {} as ReportBody };
+  if (status >= 200 && status < 300 && body.ok) {
     if (body.duplicate) return { ok: true, message: "你已举报过该账号，感谢" };
     if (body.status === "whitelisted")
       return { ok: true, message: "该账号已被官方列入白名单，举报已忽略" };
@@ -114,7 +100,7 @@ async function reportSpam(
       return { ok: true, message: "这是你自己的账号，举报已忽略" };
     return { ok: true, message: "已举报，进入人工审核队列，感谢贡献" };
   }
-  switch (res.status) {
+  switch (status) {
     case 401:
       try {
         chrome.runtime.sendMessage({ type: "open_options" });
@@ -131,6 +117,13 @@ async function reportSpam(
     default:
       return { ok: false, message: "举报失败，请稍后重试" };
   }
+}
+
+interface ReportBody {
+  ok?: boolean;
+  status?: string;
+  duplicate?: boolean;
+  error?: string;
 }
 
 function articleOf(node: Element | null): HTMLElement | null {
@@ -699,7 +692,7 @@ export default defineContentScript({
             onAct: (mode) => scheduleHide(key, sig, anchor, mode),
             onAppeal: () =>
               openAppeal({ handle: sig.handle, ...(sig.userId ? { userId: sig.userId } : {}) }),
-            onReport: () => reportSpam(sig, settings.edgeBase),
+            onReport: () => reportSpam(sig),
           },
           note,
           source,

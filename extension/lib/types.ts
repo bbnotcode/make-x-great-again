@@ -49,7 +49,11 @@ export type BgRequest =
   | { type: "gh_poll"; deviceCode: string }
   // Content script asks the background to open the options page (e.g. a report
   // needs GitHub authorization the user hasn't granted yet).
-  | { type: "open_options" };
+  | { type: "open_options" }
+  // 举报: the authenticated POST to /v1/report MUST run in the background —
+  // a content-script fetch is bound by x.com's CORS/CSP, whereas the SW shares
+  // the extension origin the whitelist-apply flow already reports from.
+  | { type: "report"; sig: Signals };
 
 export interface BgResponse {
   ok: boolean;
