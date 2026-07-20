@@ -36,6 +36,14 @@ const ACTOR_TONE: Record<string, string> = {
   sys: "text-muted-foreground",
 };
 
+// How the row entered the queue. Only USER-driven origins get a chip — an
+// automated AI/rule scan is the unmarked default, so a maintainer can tell at
+// a glance which pending rows were flagged by a real person.
+const SOURCE_CHIP: Record<string, { text: string; title: string }> = {
+  report: { text: "用户举报", title: "由 GitHub 授权用户手动举报为 spam（/v1/report）" },
+  block: { text: "用户屏蔽", title: "由用户在 X 上确认屏蔽后同步（/v1/confirm）" },
+};
+
 export function AccountRow({
   a,
   label,
@@ -59,6 +67,7 @@ export function AccountRow({
 }) {
   const chips = accountChips(a);
   const actor = actorBadge(a.last_decided_by);
+  const sourceChip = a.source ? SOURCE_CHIP[a.source] : undefined;
   const evidence = (a.evidence_text || "").replace(/\s+/g, " ").trim();
   const labelTone =
     label?.tone === "destructive"
@@ -113,6 +122,16 @@ export function AccountRow({
                 </span>
               </TooltipTrigger>
               <TooltipContent>{actor.title}</TooltipContent>
+            </Tooltip>
+          )}
+          {sourceChip && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex items-center gap-1 rounded-full border border-info/30 bg-info/10 px-1.5 py-0.5 text-[11px] font-medium text-info">
+                  {sourceChip.text}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>{sourceChip.title}</TooltipContent>
             </Tooltip>
           )}
         </div>

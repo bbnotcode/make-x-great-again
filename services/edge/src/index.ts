@@ -2247,7 +2247,7 @@ app.get("/v1/admin/queue", async (c) => {
      SELECT a.rid, a.sort_value,
             a.x_user_id, a.handle, a.display_name, a.avatar_url, a.verdict_label, a.confidence,
             a.account_created_at, a.account_age_days, a.followers_count, a.following_count,
-            a.reasons, a.evidence_text, a.last_scored,
+            a.reasons, a.evidence_text, a.last_scored, a.source,
             (SELECT count(DISTINCT reporter_fp) FROM reports r
               WHERE lower(r.handle)=lower(a.handle)
                 AND (a.x_user_id IS NULL OR r.x_user_id IS NULL OR r.x_user_id=a.x_user_id)
