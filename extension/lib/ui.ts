@@ -355,6 +355,7 @@ svg { display: block; }
 /* v0.4 popover: soft 12px radius, deep layered shadow, pop-in scale. */
 .pop {
   position: fixed; z-index: 2147482001; width: 280px; padding: 12px;
+  margin: 0; /* .card's margin-top would shift the measured placement */
   max-width: calc(100vw - 16px);
   font-size: 12px; color: var(--text); border-radius: 12px;
   box-shadow: 0 18px 48px rgba(15,23,42,.22), 0 2px 8px rgba(15,23,42,.10);
@@ -1586,13 +1587,19 @@ export function createBadge(
 
   let pop: HTMLElement | null = null;
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
-  const onScroll = () => {
-    // A fixed popover detaches visually from its anchor the moment the page
-    // scrolls — close it instead of letting it float over unrelated content.
+  let raf = 0;
+  /** Unconditional teardown — bypasses the :hover keep-open rule. */
+  const close = () => {
     clearTimeout(hideTimer);
+    cancelAnimationFrame(raf);
     pop?.remove();
     pop = null;
     window.removeEventListener("scroll", onScroll, true);
+  };
+  const onScroll = () => {
+    // A fixed popover detaches visually from its anchor the moment the page
+    // scrolls — close it instead of letting it float over unrelated content.
+    close();
   };
   const hide = () => {
     if (pop?.matches(":hover")) {
@@ -1600,9 +1607,7 @@ export function createBadge(
       scheduleHide();
       return;
     }
-    pop?.remove();
-    pop = null;
-    window.removeEventListener("scroll", onScroll, true);
+    close();
   };
   const scheduleHide = () => {
     clearTimeout(hideTimer);
@@ -1636,6 +1641,11 @@ export function createBadge(
     pop.querySelector("[data-b]")?.addEventListener("click", a.onHide);
     pop.querySelector("[data-h]")?.addEventListener("click", () => a.onHideLocal?.());
     pop.querySelector("[data-a]")?.addEventListener("click", a.onAppeal);
+    // Any action click ends the popover's job: the flow continues in the
+    // inline ⏳撤销 pending badge (or a new tab, for 误判). Leaving it open
+    // strands a fixed panel over whatever row slides in after the layout
+    // shifts. Registered AFTER the action handlers so those run first.
+    for (const b of pop.querySelectorAll("button")) b.addEventListener("click", close);
     // Keep the popover open while the cursor is over it, so its buttons are
     // actually reachable.
     pop.addEventListener("mouseenter", cancelHide);
@@ -1644,14 +1654,34 @@ export function createBadge(
     // then measure and place: clamp to the viewport's right edge, flip
     // above the badge when there is no room below.
     overlay().appendChild(pop);
-    const r = el.getBoundingClientRect();
-    const W = pop.offsetWidth || 260;
-    const H = pop.offsetHeight || 120;
-    const left = Math.min(Math.max(8, r.left), window.innerWidth - W - 8);
-    const below = r.bottom + 6;
-    const top = below + H > window.innerHeight - 8 ? Math.max(8, r.top - H - 6) : below;
-    pop.style.left = `${left}px`;
-    pop.style.top = `${top}px`;
+    const place = (r: DOMRect) => {
+      if (!pop) return;
+      const W = pop.offsetWidth || 260;
+      const H = pop.offsetHeight || 120;
+      const left = Math.min(Math.max(8, r.left), window.innerWidth - W - 8);
+      const below = r.bottom + 6;
+      const top = below + H > window.innerHeight - 8 ? Math.max(8, r.top - H - 6) : below;
+      pop.style.left = `${left}px`;
+      pop.style.top = `${top}px`;
+    };
+    place(el.getBoundingClientRect());
+    // The page reflows under an open popover without any scroll event —
+    // the auto queue collapses a tweet above, a pending badge changes the
+    // row's width, X re-virtualizes cells. Track the badge every frame
+    // while open: follow it through layout shifts, and die with it the
+    // moment it leaves the DOM (action clicked → badge replaced) or its
+    // container is hidden. Runs only while a popover exists.
+    const track = () => {
+      if (!pop) return;
+      const r = el.getBoundingClientRect();
+      if (!el.isConnected || (!r.width && !r.height)) {
+        close();
+        return;
+      }
+      place(r);
+      raf = requestAnimationFrame(track);
+    };
+    raf = requestAnimationFrame(track);
     window.addEventListener("scroll", onScroll, { capture: true, passive: true });
   };
   el.addEventListener("mouseenter", show);
