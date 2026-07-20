@@ -104,6 +104,9 @@ export default defineBackground(() => {
             sendResponse({ ok: true, data: await ghStart() });
           } else if (msg.type === "gh_poll") {
             sendResponse({ ok: true, data: await ghPoll(msg.deviceCode) });
+          } else if (msg.type === "open_options") {
+            chrome.runtime.openOptionsPage();
+            sendResponse({ ok: true });
           } else {
             sendResponse({ ok: false, error: "unknown message" });
           }

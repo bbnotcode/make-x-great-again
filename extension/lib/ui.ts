@@ -398,7 +398,17 @@ svg { display: block; }
   background: color-mix(in srgb, var(--warn) 9%, transparent);
 }
 .acts button[data-a] { color: var(--muted); border-color: transparent; }
-.acts button:disabled { cursor: default; transform: none; filter: none; }
+.acts button[data-report] {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 46%, var(--border));
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+}
+.acts button:disabled { cursor: default; transform: none; filter: none; opacity: .7; }
+/* 举报 inline result line — text only, colored by outcome. */
+.pop-status { margin-top: 8px; font-size: 11px; line-height: 1.5; }
+.pop-status[data-kind="info"] { color: var(--muted); }
+.pop-status[data-kind="ok"] { color: var(--danger); }
+.pop-status[data-kind="err"] { color: var(--warn); }
 
 /* ---- animated badge states (transform/opacity only) ---- */
 .xss-badge.fresh { animation: xrise .22s ease-out; }
@@ -515,6 +525,14 @@ const esc = (s: string) =>
 /** Only render avatar URLs that are plainly X CDN images. */
 const safeAvatarUrl = (url: string | undefined): string | undefined =>
   url && /^https:\/\/pbs\.twimg\.com\//.test(url) ? url : undefined;
+
+/** Inline status line inside a popover (举报 result). Text-only, no HTML. */
+function setPopStatus(el: HTMLElement | null | undefined, msg: string, kind: "info" | "ok" | "err") {
+  if (!el) return;
+  el.textContent = msg;
+  el.dataset.kind = kind;
+  el.hidden = false;
+}
 
 // Lucide-style 24-viewBox stroke icons. No emoji (per design system).
 const P: Record<string, string> = {
@@ -1582,6 +1600,11 @@ export interface BadgeActions {
    *  user on 本地隐藏 can still one-off 拉黑 without visiting options. */
   onAct: (mode: ActionMode) => void;
   onAppeal: () => void;
+  /** Report this account to the public queue (GitHub-authed contribution).
+   *  Only offered for accounts NOT already on the community list. Resolves to
+   *  a short user-facing result the popover shows inline; the network call,
+   *  GitHub-auth gating and abuse feedback all live in the caller. */
+  onReport?: () => Promise<{ ok: boolean; message: string }>;
 }
 
 /** The manual action ladder shown in the popover, weakest → strongest.
@@ -1704,6 +1727,14 @@ export function createBadge(
       (m) =>
         `<button data-act="${m.mode}"${m.mode === mode ? " data-b" : ""}>${esc(m.verb)}</button>`,
     ).join("");
+    // 举报 = contribute an unlisted account to the public review queue. Only
+    // offered for accounts NOT already on the community list/official rules
+    // (reporting those is a no-op). GitHub-auth gating + abuse feedback are
+    // the caller's job; the popover only shows the inline result.
+    const canReport = !!a.onReport && source !== "list" && source !== "rule";
+    const reportBtn = canReport
+      ? `<button data-report title="举报给公共名单人工审核（需 GitHub 授权）">举报为spam</button>`
+      : "";
     pop.innerHTML = v
       ? `
       <h4 style="color:${color}">${LABEL[v.label].zh} · ${(v.confidence * 100).toFixed(0)}%</h4>
@@ -1711,21 +1742,51 @@ export function createBadge(
       ${note ? `<div style="color:var(--muted)">${esc(note)}</div>` : ""}
       <div class="acts">
         ${spammy ? ladder : ""}
+        ${reportBtn}
         <button data-a title="打开 GitHub 提交误判申诉 issue（已预填账号信息）">误判申诉</button>
-      </div>`
+      </div>
+      <div class="pop-status" data-report-status hidden></div>`
       : `
       <h4>手动处理</h4>
       <div style="color:var(--muted);line-height:1.55">
-        未命中公共名单与官方规则。确认是垃圾/骚扰账号时，可手动处理（5 秒内可撤销）。</div>
-      <div class="acts">${ladder}</div>`;
+        未命中公共名单与官方规则。确认是垃圾/骚扰账号时，可手动处理（5 秒内可撤销），或举报给公共名单。</div>
+      <div class="acts">${ladder}${reportBtn}</div>
+      <div class="pop-status" data-report-status hidden></div>`;
     for (const b of pop.querySelectorAll<HTMLElement>("[data-act]"))
       b.addEventListener("click", () => a.onAct(b.dataset.act as ActionMode));
     pop.querySelector("[data-a]")?.addEventListener("click", a.onAppeal);
-    // Any action click ends the popover's job: the flow continues in the
+    // 举报: stays open to show the inline result, so it is NOT wired to close.
+    const reportEl = pop.querySelector<HTMLButtonElement>("[data-report]");
+    if (reportEl && a.onReport) {
+      const onReport = a.onReport;
+      reportEl.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        cancelHide();
+        const statusEl = pop?.querySelector<HTMLElement>("[data-report-status]");
+        reportEl.disabled = true;
+        reportEl.textContent = "举报中…";
+        setPopStatus(statusEl, "正在提交举报…", "info");
+        let res: { ok: boolean; message: string };
+        try {
+          res = await onReport();
+        } catch {
+          res = { ok: false, message: "举报失败，请稍后重试" };
+        }
+        if (!pop) return; // popover closed while the request was in flight
+        setPopStatus(statusEl, res.message, res.ok ? "ok" : "err");
+        reportEl.textContent = res.ok ? "已举报" : "举报为spam";
+        reportEl.disabled = res.ok;
+        // Let the result read, then fold.
+        clearTimeout(hideTimer);
+        hideTimer = setTimeout(close, res.ok ? 2600 : 3600);
+      });
+    }
+    // Any OTHER action click ends the popover's job: the flow continues in the
     // inline ⏳撤销 pending badge (or a new tab, for 误判). Leaving it open
     // strands a fixed panel over whatever row slides in after the layout
     // shifts. Registered AFTER the action handlers so those run first.
-    for (const b of pop.querySelectorAll("button")) b.addEventListener("click", close);
+    for (const b of pop.querySelectorAll("button:not([data-report])"))
+      b.addEventListener("click", close);
     // Keep the popover open while the cursor is over it, so its buttons are
     // actually reachable.
     pop.addEventListener("mouseenter", cancelHide);

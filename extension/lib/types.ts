@@ -46,7 +46,10 @@ export type BgRequest =
   // background: github.com's device endpoints don't serve CORS, so the
   // fetches need the optional github.com host permission granted first.
   | { type: "gh_start" }
-  | { type: "gh_poll"; deviceCode: string };
+  | { type: "gh_poll"; deviceCode: string }
+  // Content script asks the background to open the options page (e.g. a report
+  // needs GitHub authorization the user hasn't granted yet).
+  | { type: "open_options" };
 
 export interface BgResponse {
   ok: boolean;
