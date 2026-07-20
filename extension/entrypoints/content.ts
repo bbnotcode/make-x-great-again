@@ -24,9 +24,13 @@ import {
 import { bumpStat } from "../lib/stats";
 import {
   type BlockRecord,
+  type PendingXAction,
   addBlockRecord,
+  addPendingAction,
   bumpStats,
+  clearPendingAction,
   getBlocklist,
+  getPendingActions,
   updateBlockRecord,
 } from "../lib/store";
 import type { Signals, Verdict } from "../lib/types";
@@ -60,6 +64,11 @@ function openAppeal(appeal?: { handle: string; userId?: string }): void {
  *  record on mount. The full audit trail lives in the options 处理记录; the
  *  bubble only needs a recent-history convenience view. */
 const ARCHIVE_HYDRATE_MAX = 30;
+
+/** Cap on how many interrupted (queue-died) X-actions we resume per load, so a
+ *  huge backlog can't fire a burst of X calls at once. The global x-action
+ *  lock still paces each one; anything beyond the cap settles on later loads. */
+const RESUME_MAX = 50;
 
 /** Persisted block record → bubble Finding, for the 已处理 history view. */
 function recordToFinding(r: BlockRecord): Finding {
@@ -414,10 +423,17 @@ export default defineContentScript({
       // the 已处理 record — otherwise the row stalls at "待处理" forever and is
       // dropped on the next SPA navigation.
       bubbleApi?.markManual(key, actionVerb(mode));
+      // Track the not-yet-fired X action so a mid-batch navigation/reload can
+      // resume it rather than leave the account locally-hidden-only (same
+      // guarantee as the auto queue). Local mode makes no X call — skip.
+      if (mode === "mute" || mode === "block") {
+        void addPendingAction({ id: key, handle: sig.handle, action: mode, ts: Date.now() });
+      }
       // Mirror the auto path: when the native X action fails, the 处理记录
       // row must say so — the user clicked 拉黑/静音 and only got a local
       // hide, and the record is the one place that can state it honestly.
       return applyXAction(mode, sig).then((ok) => {
+        if (mode === "mute" || mode === "block") void clearPendingAction(key);
         if (!ok) {
           void updateBlockRecord(key, {
             reason: `手动${actionVerb(mode)}（X 动作失败，仅本地隐藏）`,
@@ -516,6 +532,18 @@ export default defineContentScript({
         source: "auto",
         ts: Date.now(),
       });
+      // Track the not-yet-fired X action separately (see PendingXAction): a
+      // mid-queue reload can then tell a queued account apart from a completed
+      // one — resuming it instead of falsely counting it as 已处理. Local-only
+      // hides need no X call, so nothing to track.
+      if (it.action === "mute" || it.action === "block") {
+        void addPendingAction({
+          id: it.key,
+          handle: it.sig.handle,
+          action: it.action,
+          ts: Date.now(),
+        });
+      }
       void bumpStats({ blocks: 1 });
       void bumpStat("blocked");
       anchorByKey.set(it.key, it.anchor);
@@ -577,12 +605,16 @@ export default defineContentScript({
           const dwell = AUTO_MIN_ACT_MS - (Date.now() - t0);
           if (dwell > 0) await sleep(dwell);
           collapseTweet(autoTarget(it));
-          // The record itself was written at enqueue time; only the X-action
-          // outcome needs reconciling here.
-          if (!xOk) {
-            void updateBlockRecord(it.key, {
-              reason: `${it.categoryZh} · 自动${it.verb}（X 动作失败，仅本地隐藏）`,
-            });
+          // The action has now SETTLED (attempted) — drop its pending marker so
+          // it stops being a resume candidate; only items whose queue died
+          // before this point stay pending. On X failure, annotate the record.
+          if (it.action === "mute" || it.action === "block") {
+            void clearPendingAction(it.key);
+            if (!xOk) {
+              void updateBlockRecord(it.key, {
+                reason: `${it.categoryZh} · 自动${it.verb}（X 动作失败，仅本地隐藏）`,
+              });
+            }
           }
           bubbleApi?.markAuto(it.key, xOk ? "done" : "failed", it.verb);
         } catch (e) {
@@ -596,6 +628,38 @@ export default defineContentScript({
           autoActing.delete(it.key);
         }
         await sleep(AUTO_SETTLE_MS);
+      }
+    }
+
+    /** Resume mute/block actions whose paced queue died with a previous page
+     *  (mid-queue navigation / reload / tab close). Their local hide + record
+     *  persisted, but the X-action never fired — re-run it best-effort (the
+     *  x-action lock paces these across tabs), then settle the pending marker
+     *  so it stops being a resume candidate. Runs once per load; each entry is
+     *  attempted at most once, then cleared regardless of outcome. */
+    async function resumeInterrupted(pending: PendingXAction[]) {
+      // The user switched the mode to local (no more X actions) — honor that:
+      // just settle the markers so these move into the normal 已处理 history.
+      if (settings.actionMode === "local") {
+        for (const p of pending) void clearPendingAction(p.id);
+        return;
+      }
+      for (const p of pending.slice(0, RESUME_MAX)) {
+        if (p.action !== "mute" && p.action !== "block") {
+          void clearPendingAction(p.id);
+          continue;
+        }
+        const sig = {
+          handle: p.handle,
+          ...(/^\d+$/.test(p.id) ? { userId: p.id } : {}),
+        } as Signals;
+        const ok = await applyXAction(p.action, sig).catch(() => false);
+        if (!ok) {
+          void updateBlockRecord(p.id, {
+            reason: `自动${p.action === "block" ? "拉黑" : "静音"}（X 动作失败，仅本地隐藏）`,
+          });
+        }
+        void clearPendingAction(p.id);
       }
     }
 
@@ -991,14 +1055,22 @@ export default defineContentScript({
         bubbleApi = bubble;
         // Hydrate the 已处理 record from persisted block records so the panel
         // keeps a browsing history across SPA navigation AND hard reloads —
-        // the records already persist; the bubble just re-reads them.
-        void getBlocklist().then((records) => {
-          const recent = records
-            .sort((a, b) => b.ts - a.ts)
-            .slice(0, ARCHIVE_HYDRATE_MAX)
-            .map(recordToFinding);
-          if (recent.length) bubbleApi?.seedArchive(recent);
-        });
+        // the records already persist; the bubble just re-reads them. Accounts
+        // whose X-action never settled (queue died mid-flight) are tracked in
+        // the pending-actions key: exclude them from the history (they are NOT
+        // done) and resume them instead.
+        void Promise.all([getBlocklist(), getPendingActions()]).then(
+          ([records, pending]) => {
+            const pendingIds = new Set(pending.map((p) => p.id));
+            const recent = records
+              .filter((r) => !pendingIds.has(r.id))
+              .sort((a, b) => b.ts - a.ts)
+              .slice(0, ARCHIVE_HYDRATE_MAX)
+              .map(recordToFinding);
+            if (recent.length) bubbleApi?.seedArchive(recent);
+            if (pending.length) void resumeInterrupted(pending);
+          },
+        );
         return bubble;
       },
     });
