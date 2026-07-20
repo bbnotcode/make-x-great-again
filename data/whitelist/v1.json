@@ -1,8 +1,18 @@
 {
   "schema": 1,
-  "generatedAt": 1784138412202,
-  "count": 227,
+  "generatedAt": 1784570453507,
+  "count": 229,
   "list": [
+    {
+      "handle": "bitget",
+      "x_user_id": null,
+      "last_scored": 1784562612024
+    },
+    {
+      "handle": "futufriends",
+      "x_user_id": "1838470775390769152",
+      "last_scored": 1784562441529
+    },
     {
       "handle": "bryanfrazivanyb",
       "x_user_id": "1844502146622136320",
