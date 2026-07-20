@@ -1526,23 +1526,6 @@ export function createBubble(
       if (st === "done") scheduleAbsorb(key); // linger, then fly into the chip
       if (autoOpened && open && stats().running === 0) scheduleAutoCollapse();
     },
-    /** Hydrate the 已处理 record from persisted block records at mount time,
-     *  so the panel keeps a browsing history across SPA navigation AND hard
-     *  reloads (the underlying records already persist in storage; the bubble
-     *  used to forget them). Rows already live on the current page are skipped
-     *  — they render as live findings, not history. */
-    seedArchive(rows: Finding[]) {
-      for (const f of rows) {
-        const k = rowKey(f);
-        if (archivedKeys.has(k) || findings.some((x) => rowKey(x) === k)) continue;
-        archivedKeys.add(k);
-        archive.push(f);
-        rowState.set(k, "done");
-        autoRows.add(k); // history rows are display-only, never re-actionable
-      }
-      renderPill();
-      if (open) renderCard();
-    },
     /** Manual popover hide of a listed account: drive the live bubble row to
      *  "done" so it stops showing an actionable 隐藏 button (the tweet is
      *  already gone) and joins the 已处理 record — matching the auto path.

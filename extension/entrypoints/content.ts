@@ -23,13 +23,11 @@ import {
 } from "../lib/settings";
 import { bumpStat } from "../lib/stats";
 import {
-  type BlockRecord,
   type PendingXAction,
   addBlockRecord,
   addPendingAction,
   bumpStats,
   clearPendingAction,
-  getBlocklist,
   getPendingActions,
   updateBlockRecord,
 } from "../lib/store";
@@ -60,33 +58,10 @@ function openAppeal(appeal?: { handle: string; userId?: string }): void {
   window.open(url, "_blank", "noopener");
 }
 
-/** How many recent processed accounts the bubble re-hydrates into its 已处理
- *  record on mount. The full audit trail lives in the options 处理记录; the
- *  bubble only needs a recent-history convenience view. */
-const ARCHIVE_HYDRATE_MAX = 30;
-
 /** Cap on how many interrupted (queue-died) X-actions we resume per load, so a
  *  huge backlog can't fire a burst of X calls at once. The global x-action
  *  lock still paces each one; anything beyond the cap settles on later loads. */
 const RESUME_MAX = 50;
-
-/** Persisted block record → bubble Finding, for the 已处理 history view. */
-function recordToFinding(r: BlockRecord): Finding {
-  const verdict: Verdict = r.verdict ?? {
-    label: "spam",
-    confidence: 1,
-    reasons: [r.reason ?? "已处理"],
-  };
-  return {
-    handle: r.handle,
-    verdict,
-    ...(/^\d+$/.test(r.id) ? { userId: r.id } : {}),
-    ...(r.avatarUrl ? { avatarUrl: r.avatarUrl } : {}),
-    ...(r.displayName ? { displayName: r.displayName } : {}),
-    ...(r.tweetId ? { tweetId: r.tweetId } : {}),
-    ...(r.tweetText ? { snippet: r.tweetText } : {}),
-  };
-}
 
 /** Report an unlisted account to the public review queue. GitHub-authed
  *  contribution: the token gates who can report (server enforces a 90-day
@@ -313,7 +288,7 @@ export default defineContentScript({
     if (!settings.enabled) return; // master off → don't init (applies next load)
     // Build marker — confirms which content-script build is live in this tab
     // (reloading the unpacked extension does NOT refresh already-open tabs).
-    console.info("[MXGA] content script ready · queue-resume build 2026-07-20");
+    console.info("[MXGA] content script ready · session-scoped 已处理 build 2026-07-21");
     onSettingsChange((s) => {
       const modeChanged = s.actionMode !== settings.actionMode;
       settings = s;
@@ -1056,24 +1031,19 @@ export default defineContentScript({
         container.appendChild(bubble.el);
         if (!settings.bubble) bubble.el.style.display = "none";
         bubbleApi = bubble;
-        // Hydrate the 已处理 record from persisted block records so the panel
-        // keeps a browsing history across SPA navigation AND hard reloads —
-        // the records already persist; the bubble just re-reads them. Accounts
-        // whose X-action never settled (queue died mid-flight) are tracked in
-        // the pending-actions key: exclude them from the history (they are NOT
-        // done) and resume them instead.
-        void Promise.all([getBlocklist(), getPendingActions()]).then(
-          ([records, pending]) => {
-            const pendingIds = new Set(pending.map((p) => p.id));
-            const recent = records
-              .filter((r) => !pendingIds.has(r.id))
-              .sort((a, b) => b.ts - a.ts)
-              .slice(0, ARCHIVE_HYDRATE_MAX)
-              .map(recordToFinding);
-            if (recent.length) bubbleApi?.seedArchive(recent);
-            if (pending.length) void resumeInterrupted(pending);
-          },
-        );
+        // The bubble's 已处理 list is SESSION-scoped: it persists across SPA
+        // navigation (the content script and its in-memory archive live on),
+        // but a full reload / freshly-opened X must start clean — resurrecting
+        // the whole all-time history here read as "记录没清掉". The permanent
+        // audit trail lives in the options 处理记录 page, not the corner bubble.
+        //
+        // We still read the pending-actions key: an X mute/block whose paced
+        // queue died mid-flight (navigation / reload / tab close) never fired,
+        // so resume it best-effort. This is protection follow-through, NOT
+        // history display — resumed accounts are not seeded into 已处理.
+        void getPendingActions().then((pending) => {
+          if (pending.length) void resumeInterrupted(pending);
+        });
         return bubble;
       },
     });
