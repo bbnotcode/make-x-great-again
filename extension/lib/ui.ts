@@ -1422,17 +1422,30 @@ export function createBubble(
   return {
     el: root,
     update(f: Finding[]) {
-      const grew = f.length > findings.length;
+      // content.ts restarts its findings array on SPA navigation, so this
+      // replace is wholesale — but rows the auto queue owns must survive it:
+      // the paced X-action drain keeps running across navigations, and rows
+      // it finished on a PREVIOUS page (done/failed, absorbed, not yet
+      // archived) are only reachable through `findings` until the next
+      // pageReset() archives them. Untouched (pending) rows still die with
+      // their page as before.
+      const incoming = new Set(f.map(rowKey));
+      const held = findings.filter((x) => {
+        const k = rowKey(x);
+        return !incoming.has(k) && autoRows.has(k) && !archivedKeys.has(k) && rowState.has(k);
+      });
+      const merged = [...f, ...held];
+      const grew = merged.length > findings.length;
       if (grew) view = "queue"; // new hits pull focus back to the live queue
       // Newly discovered rows enter the feed at the top.
-      for (const x of f) {
+      for (const x of merged) {
         const k = rowKey(x);
         if (!activitySeq.has(k)) bump(k);
       }
-      findings = f;
+      findings = merged;
       // Prune state for rows that left the page — but keep everything the
       // session archive still renders (its rows read rowState/autoRows too).
-      const live = new Set([...f.map(rowKey), ...archivedKeys]);
+      const live = new Set([...merged.map(rowKey), ...archivedKeys]);
       for (const k of [...rowState.keys()]) if (!live.has(k)) rowState.delete(k);
       for (const k of [...deselected]) if (!live.has(k)) deselected.delete(k);
       for (const k of [...seenRows]) if (!live.has(k)) seenRows.delete(k);
@@ -1463,30 +1476,41 @@ export function createBubble(
       scanning = Math.max(0, n);
       if (!open) renderPill();
     },
-    /** SPA navigation: collapse the card, move this page's processed rows
-     *  into the session archive (viewable via the 已处理 tab until a hard
-     *  reload), drop everything else with the page. */
+    /** SPA navigation: move this page's SETTLED rows into the session
+     *  archive (viewable via the 已处理 tab until a hard reload) and drop
+     *  the untouched ones with the page. Rows the auto queue still owns
+     *  (queued/processing) are CARRIED OVER instead: the paced X-action
+     *  drain in content.ts survives SPA navigation and keeps firing, so
+     *  dropping its rows here made every surface read 已处理 while blocks
+     *  were still pending — the card only folds once nothing is running. */
     pageReset() {
+      const carriedKeys = new Set<string>();
+      const carried: Finding[] = [];
       for (const f of findings) {
         const k = rowKey(f);
         const st = rowState.get(k);
         if ((st === "done" || st === "failed") && !archivedKeys.has(k)) {
           archivedKeys.add(k);
           archive.push(f);
+        } else if (autoRows.has(k) && (st === "queued" || st === "processing")) {
+          carriedKeys.add(k);
+          carried.push(f);
         }
       }
-      findings = [];
-      for (const k of [...rowState.keys()]) if (!archivedKeys.has(k)) rowState.delete(k);
-      for (const k of [...autoRows]) if (!archivedKeys.has(k)) autoRows.delete(k);
-      for (const k of [...autoVerbs.keys()]) if (!archivedKeys.has(k)) autoVerbs.delete(k);
-      for (const k of [...seenRows]) if (!archivedKeys.has(k)) seenRows.delete(k);
-      for (const k of [...doneSeen]) if (!archivedKeys.has(k)) doneSeen.delete(k);
-      for (const k of [...activitySeq.keys()]) if (!archivedKeys.has(k)) activitySeq.delete(k);
+      findings = carried;
+      const keep = (k: string) => archivedKeys.has(k) || carriedKeys.has(k);
+      for (const k of [...rowState.keys()]) if (!keep(k)) rowState.delete(k);
+      for (const k of [...autoRows]) if (!keep(k)) autoRows.delete(k);
+      for (const k of [...autoVerbs.keys()]) if (!keep(k)) autoVerbs.delete(k);
+      for (const k of [...seenRows]) if (!keep(k)) seenRows.delete(k);
+      for (const k of [...doneSeen]) if (!keep(k)) doneSeen.delete(k);
+      for (const k of [...activitySeq.keys()]) if (!keep(k)) activitySeq.delete(k);
       deselected.clear();
       view = "queue";
       queueScrollTop = 0;
       // Archived rows are served by the 已处理 tab directly — pending
-      // absorb theater dies with the page.
+      // absorb theater dies with the page. (Carried rows are pre-absorb
+      // by definition: queued/processing only.)
       for (const t of absorbTimers.values()) clearTimeout(t);
       absorbTimers.clear();
       absorbed.clear();
@@ -1494,10 +1518,18 @@ export function createBubble(
       flights.length = 0; // ghosts self-remove on animation finish
       // New page = a fresh conversation: auto-open is allowed again even if
       // the user dismissed the card on the previous page.
-      autoOpened = false;
       userClosed = false;
-      clearTimeout(collapseTimer);
-      collapse();
+      if (open && carried.length) {
+        // Mid-batch navigation with the card up: the live queue it shows is
+        // still true — folding it was the "看起来处理完了" lie. Keep it open
+        // (autoOpened survives, so it still folds once the batch settles).
+        clearTimeout(collapseTimer);
+        renderCard();
+      } else {
+        autoOpened = false;
+        clearTimeout(collapseTimer);
+        collapse();
+      }
       renderPill();
     },
     /** AUTO path: content.ts pushed the finding, then drives its row state
