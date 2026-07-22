@@ -1,8 +1,13 @@
 {
   "schema": 1,
-  "generatedAt": 1784570453507,
-  "count": 229,
+  "generatedAt": 1784743213499,
+  "count": 230,
   "list": [
+    {
+      "handle": "xiangyuli",
+      "x_user_id": "1567179325551812609",
+      "last_scored": 1784737187550
+    },
     {
       "handle": "bitget",
       "x_user_id": null,
