@@ -37,7 +37,21 @@ function appealUrl(handle: string, userId?: string): string {
   return `${BRAND.appealNewIssue}&${p.toString()}`;
 }
 
-const when = (ts: number) => new Date(ts).toLocaleString("zh-CN", { hour12: false });
+const whenFull = (ts: number) => new Date(ts).toLocaleString("zh-CN", { hour12: false });
+/** Table-cell timestamp: current-year dates drop the year, no seconds —
+ *  keeps the 时间 column narrow; hover (title=whenFull) has the rest. */
+const when = (ts: number) => {
+  const d = new Date(ts);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleString("zh-CN", {
+    hour12: false,
+    ...(sameYear ? {} : { year: "numeric" }),
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
 const idTail = (id: string, h: string) =>
   /^\d+$/.test(id) && id !== h && !/^\d+$/.test(h) ? ` · ${id}` : "";
 
@@ -270,7 +284,7 @@ const Page = ({
   sub,
   children,
 }: { title: string; sub?: string; children?: React.ReactNode }) => (
-  <main className="max-w-[1100px] flex-1 px-9 py-8">
+  <main className="min-w-0 max-w-[1160px] flex-1 px-5 py-6 md:px-9 md:py-8">
     <h1 className="text-[26px] font-semibold tracking-[-0.015em] text-fg">{title}</h1>
     {sub && <div className="mb-7 mt-1.5 text-[13px] text-fg-3">{sub}</div>}
     {children}
@@ -284,7 +298,7 @@ const SectionH = ({ children }: { children: React.ReactNode }) => (
 );
 
 const td = "border-b border-border px-3 py-2.5 align-middle whitespace-nowrap";
-const th = `${td} text-[10.5px] font-semibold uppercase tracking-[0.06em] text-fg-3`;
+const th = `${td} text-left text-[10.5px] font-semibold uppercase tracking-[0.06em] text-fg-3`;
 const trHover = "transition hover:bg-card-hi";
 
 const CAT_COLOR: Record<string, string> = {
@@ -436,11 +450,11 @@ function Overview() {
     ["o", "other"],
   ];
   return (
-    <Page title="概览" sub="本地统计 · 数据仅存于本机，无 PII">
+    <Page title="概览" sub="本地统计 · 数据仅存于本机，不含个人隐私信息">
       {ls && <ListStatusCard ls={ls} onRefreshed={loadLists} />}
-      <div className="mb-8 grid grid-cols-4 gap-px overflow-hidden rounded-lg border border-border bg-border">
+      <div className="mb-8 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border lg:grid-cols-4">
         <Card n={s.detections} l="AI 检测总数" />
-        <Card n={s.cacheHits} l="缓存命中 · 省下的 LLM 调用" />
+        <Card n={s.cacheHits} l="缓存命中 · 省下的 AI 判定" />
         <Card n={bl} l={autoBl ? `已处理账号 · 其中自动 ${autoBl.toLocaleString("zh-CN")}` : "已处理账号"} />
         <Card n={(d.spam ?? 0) + (d.porn_bot ?? 0)} l="判定为垃圾/色情bot" />
       </div>
@@ -477,7 +491,7 @@ function Overview() {
       {st && (
         <div className="mb-8">
           <div className="flex items-baseline justify-between">
-            <SectionH>分级策略</SectionH>
+            <SectionH>自动处理策略</SectionH>
             <a href="?tab=settings" className="text-[12px] text-fg-3 hover:text-fg">
               调整 →
             </a>
@@ -549,12 +563,17 @@ function Blocklist() {
       ),
     [list, q],
   );
-  const src: Record<string, string> = {
-    manual: "手动",
-    auto: "分级策略",
-    block_all: "一键全部",
-    list_hit: "公榜命中",
-    cache_hit: "缓存命中",
+  // 来源 answers "这条处理是谁触发的" — plain words, config jargon stays in
+  // the tooltip. block_all/list_hit/cache_hit only appear on legacy records.
+  const src: Record<string, { label: string; hint: string }> = {
+    manual: { label: "手动处理", hint: "你在页面上手动点了隐藏 / 静音 / 拉黑" },
+    auto: {
+      label: "自动处理",
+      hint: "命中公共黑名单或官方规则，按「设置 → 自动处理策略」自动执行",
+    },
+    block_all: { label: "一键处理", hint: "在气泡面板一键处理了本页全部命中（旧版记录）" },
+    list_hit: { label: "名单命中", hint: "命中公共黑名单（旧版记录）" },
+    cache_hit: { label: "缓存命中", hint: "命中本地检测缓存（旧版记录）" },
   };
   return (
     <Page
@@ -566,10 +585,11 @@ function Blocklist() {
         value={q}
         onChange={(e) => setQ(e.target.value)}
         placeholder="搜索 @handle / 显示名 / 理由"
-        className="mb-4 w-[320px] rounded-md border border-border-2 bg-transparent px-3 py-2 text-[13px] outline-none transition focus:border-accent"
+        className="mb-4 w-full max-w-[320px] rounded-md border border-border-2 bg-transparent px-3 py-2 text-[13px] outline-none transition focus:border-accent"
       />
-      <div className="overflow-hidden rounded-lg border border-border">
-        <table className="w-full border-collapse text-[13px]">
+      {/* overflow-x-auto（而非 hidden）：窄窗口下表格横向滚动，操作列不再被裁掉 */}
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full min-w-[880px] border-collapse text-[13px]">
           <thead className="bg-card">
             <tr>
               <th className={th}>账号</th>
@@ -627,7 +647,7 @@ function Blocklist() {
                         title={r.tweetText ? `触发内容：${r.tweetText}` : "查看触发这次处理的推文"}
                         className="whitespace-nowrap text-[11px] text-fg-3 underline decoration-dotted underline-offset-2 transition hover:text-accent"
                       >
-                        现场 ↗
+                        查看推文 ↗
                       </a>
                     )}
                   </div>
@@ -640,10 +660,20 @@ function Blocklist() {
                     </div>
                   )}
                 </td>
-                <td className={`${td} text-fg-3`}>{src[r.source]}</td>
-                <td className={`${td} font-mono text-[12px] text-fg-3`}>{when(r.ts)}</td>
+                <td className={`${td} text-fg-3`}>
+                  <span
+                    title={src[r.source]?.hint ?? ""}
+                    className="inline-flex cursor-help items-center rounded-full border border-border-2 bg-card px-2 py-0.5 text-[11px] text-fg-2"
+                  >
+                    {src[r.source]?.label ?? r.source}
+                  </span>
+                </td>
+                <td className={`${td} font-mono text-[12px] text-fg-3`} title={whenFull(r.ts)}>
+                  {when(r.ts)}
+                </td>
                 <td className={td}>
-                  <div className="flex items-center gap-2">
+                  {/* 纵向堆叠：横排两个操作是表格在 1440 视口下溢出的主因 */}
+                  <div className="flex flex-col items-start gap-1">
                     <Btn
                       size="sm"
                       onClick={async () => {
@@ -680,10 +710,10 @@ function Cache() {
   return (
     <Page
       title="检测缓存"
-      sub={`共 ${rows.length} 条 · 同账号再出现直接用缓存，0 次 LLM`}
+      sub={`共 ${rows.length} 条 · 同一账号再次出现时直接复用判定结果，不再调用 AI`}
     >
-      <div className="overflow-hidden rounded-lg border border-border">
-        <table className="w-full border-collapse text-[13px]">
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full min-w-[760px] border-collapse text-[13px]">
           <thead className="bg-card">
             <tr>
               <th className={th}>账号</th>
@@ -732,7 +762,9 @@ function Cache() {
                   <ReasonChip reasons={c.verdict.reasons} />
                 </td>
                 <td className={`${td} font-mono text-[12px] text-fg-3`}>{c.model}</td>
-                <td className={`${td} font-mono text-[12px] text-fg-3`}>{when(c.ts)}</td>
+                <td className={`${td} font-mono text-[12px] text-fg-3`} title={whenFull(c.ts)}>
+                  {when(c.ts)}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -1338,7 +1370,7 @@ function Settings() {
           <section>
             <SectionH>手动处理方式</SectionH>
             <p className="mb-3 text-[12px] text-fg-3">
-              你手动点按钮时执行的动作。X 静音 / 拉黑走你自己的登录态，不经过我们的服务器；与自动分级互相独立。
+              你手动点按钮时执行的动作。X 静音 / 拉黑走你自己的登录态，不经过我们的服务器；与下方的自动处理策略互相独立。
             </p>
             <div className="space-y-2">
               {ACTION_MODES.map((m) => {
@@ -1379,7 +1411,7 @@ function Settings() {
 
         {st && (
           <section>
-            <SectionH>自动分级策略</SectionH>
+            <SectionH>自动处理策略</SectionH>
             <p className="mb-3 text-[12px] leading-relaxed text-fg-3">
               命中<b className="text-fg-2">公共黑名单或官方规则</b>的账号按类别自动处理，其余只挂角标。
               总开关在气泡里；规则命中只在评论区自动执行；白名单账号永不处理；一切可在「处理记录」撤销。
@@ -1430,7 +1462,7 @@ function Settings() {
             <div className="mb-4">
               <div className="mb-1.5 text-[12px] font-semibold text-fg">自动收录条目</div>
               <p className="mb-2 text-[12px] leading-relaxed text-fg-3">
-                公榜条目分两级：<b className="text-fg-2">人工确认</b>（维护者复核过，始终按下方分级策略完整执行）和
+                公榜条目分两级：<b className="text-fg-2">人工确认</b>（维护者复核过，始终按下方各类别的动作完整执行）和
                 <b className="text-fg-2">自动收录</b>（AI/规则判定自动上榜，占榜单大多数）。这里决定自动收录条目能自动处理到什么程度。
               </p>
               <div className="grid grid-cols-1 gap-2">
@@ -1439,12 +1471,12 @@ function Settings() {
                     {
                       v: "full",
                       label: "完整执行（默认）",
-                      hint: "上榜即处理：与人工确认条目同权，按分级策略执行包括 X 静音/拉黑。误判可在「处理记录」恢复并申诉。",
+                      hint: "上榜即处理：与人工确认条目同权，按各类别设定的动作执行（包括 X 静音/拉黑）。误判可在「处理记录」恢复并申诉。",
                     },
                     {
                       v: "hide",
                       label: "封顶为自动隐藏",
-                      hint: "按分级策略执行，但封顶为本地隐藏——零联网、一键恢复；X 静音/拉黑仍只对人工确认条目执行。",
+                      hint: "按各类别设定的动作执行，但封顶为本地隐藏——零联网、一键恢复；X 静音/拉黑仍只对人工确认条目执行。",
                     },
                     {
                       v: "badge",
@@ -1497,7 +1529,7 @@ function Settings() {
         <section>
           <SectionH>数据与隐私</SectionH>
           <p className="mb-3 text-[13px] text-fg-2">
-            检测缓存、处理记录、统计均仅存于本机；除公开 X 数字 ID 外不存 PII。
+            检测缓存、处理记录、统计均仅存于本机；除公开的 X 数字 ID 外不存任何个人信息。
           </p>
           <div className="flex items-center gap-3">
             <Btn tier="danger" onClick={() => setClearOpen(true)}>
@@ -1580,7 +1612,7 @@ const About = () => (
         </div>
       </div>
       <p className="text-[12px] text-fg-3">
-        隐私：除公开的 X 数字 ID 外不存储任何 PII，数据默认仅在本机。AI 判定永不自动公开，须人工或社区共识（≥3 个独立 GitHub 上报人）确认。
+        隐私：除公开的 X 数字 ID 外不存储任何个人信息，数据默认仅在本机。AI 判定永不自动公开，须人工或社区共识（≥3 个独立 GitHub 上报人）确认。
       </p>
     </div>
   </Page>
@@ -1651,8 +1683,10 @@ export function App() {
     setTabUrl(id);
   };
   return (
-    <div className="flex min-h-screen">
-      <aside className="sticky top-0 flex h-screen w-[220px] flex-none flex-col gap-6 border-r border-border px-4 py-6">
+    // 窄屏（手机 / 窄窗口）侧边栏折叠为顶栏 + 横向可换行导航，避免整页
+    // 横向滚动；md 及以上恢复左侧固定栏。
+    <div className="flex min-h-screen flex-col md:flex-row">
+      <aside className="flex w-full flex-none flex-col gap-3 border-b border-border px-4 py-4 md:sticky md:top-0 md:h-screen md:w-[220px] md:gap-6 md:border-b-0 md:border-r md:py-6">
         <div className="flex items-center gap-2.5 px-1 text-[15px] font-semibold tracking-[-0.005em]">
           <Mascot />
           <span className="flex flex-col gap-px leading-tight">
@@ -1660,7 +1694,7 @@ export function App() {
             <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-fg-4">{BRAND.name}</span>
           </span>
         </div>
-        <nav className="flex flex-col gap-0.5" aria-label="管理面板导航">
+        <nav className="flex flex-row flex-wrap gap-0.5 md:flex-col" aria-label="管理面板导航">
           {TABS.map(([id, label]) => (
             <button
               key={id}
@@ -1676,7 +1710,7 @@ export function App() {
             </button>
           ))}
         </nav>
-        <div className="mt-auto space-y-1.5 text-[11px] text-fg-3">
+        <div className="mt-auto hidden space-y-1.5 text-[11px] text-fg-3 md:block">
           <a
             href={`${EDGE_DEFAULT}/list`}
             target="_blank"

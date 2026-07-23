@@ -881,8 +881,8 @@ export function createBubble(
   function autoRowMarkup() {
     const hint = autoOn
       ? autoCats > 0
-        ? `分级策略 · ${autoCats} 类自动 · ${autoScopeAll ? "全局" : "仅评论区"}`
-        : "分级策略 · 全部仅标记"
+        ? `${autoCats} 类自动 · ${autoScopeAll ? "全局" : "仅评论区"}`
+        : "全部仅标记"
       : "已暂停 · 仅标记";
     return `<div class="auto-row">
       <button class="xss-sw" data-auto role="switch" aria-checked="${autoOn}"
