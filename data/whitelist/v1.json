@@ -1,8 +1,73 @@
 {
   "schema": 1,
-  "generatedAt": 1784743213499,
-  "count": 230,
+  "generatedAt": 1784829611418,
+  "count": 243,
   "list": [
+    {
+      "handle": "greg16676935420",
+      "x_user_id": "1356434353623093249",
+      "last_scored": 1784826492499
+    },
+    {
+      "handle": "fastcompany",
+      "x_user_id": "2735591",
+      "last_scored": 1784826486580
+    },
+    {
+      "handle": "mrbankstips",
+      "x_user_id": "1921427474",
+      "last_scored": 1784826484934
+    },
+    {
+      "handle": "laclippers",
+      "x_user_id": "19564719",
+      "last_scored": 1784826481959
+    },
+    {
+      "handle": "dekchaikumkom",
+      "x_user_id": "396414373",
+      "last_scored": 1784826480384
+    },
+    {
+      "handle": "ballondor",
+      "x_user_id": "220998706",
+      "last_scored": 1784826478989
+    },
+    {
+      "handle": "sunpictures",
+      "x_user_id": "361244641",
+      "last_scored": 1784826478133
+    },
+    {
+      "handle": "345__chan",
+      "x_user_id": "2346809580",
+      "last_scored": 1784826475882
+    },
+    {
+      "handle": "etmesolta",
+      "x_user_id": "57022252",
+      "last_scored": 1784826469027
+    },
+    {
+      "handle": "netanyahu",
+      "x_user_id": "17061263",
+      "last_scored": 1784826463475
+    },
+    {
+      "handle": "anirudhofficial",
+      "x_user_id": "216447259",
+      "last_scored": 1784826456446
+    },
+    {
+      "handle": "stray_kids",
+      "x_user_id": "859297966581891072",
+      "last_scored": 1784826448820
+    },
+    {
+      "handle": "gczsmkv",
+      "x_user_id": "1477041667412615168",
+      "last_scored": 1784810559634
+    },
     {
       "handle": "xiangyuli",
       "x_user_id": "1567179325551812609",
