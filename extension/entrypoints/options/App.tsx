@@ -962,6 +962,19 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
   const [statusHandle, setStatusHandle] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  // Already ON the official whitelist (locally-synced copy)? The apply/status
+  // endpoint only knows about APPLICATIONS — an account whitelisted directly
+  // (maintainer add, appeal) has no request row and would read 尚未申请,
+  // prompting a pointless application. The local list answers instantly.
+  const [wlHit, setWlHit] = useState(false);
+  useEffect(() => {
+    if (!ownHandle) return;
+    void getStoredWhitelist().then((wl) => {
+      if (!wl) return;
+      const h = ownHandle.toLowerCase().replace(/^@+/, "");
+      setWlHit(wl.entries.some((e) => String(e[1] ?? "").toLowerCase() === h));
+    });
+  }, [ownHandle]);
 
   const fetchStatus = async (tok: string) => {
     try {
@@ -1165,7 +1178,7 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
         error?: string;
       };
       if (res.ok && j.status === "already_whitelisted") {
-        setMsg({ text: "该账号已在官方白名单中，无需申请。", ok: true });
+        setWlHit(true); // flip straight into the 已在白名单 success panel
       } else if (res.ok && j.ok) {
         setStatus("pending");
         setStatusHandle(h);
@@ -1182,15 +1195,89 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
 
   const input =
     "w-full rounded-md border border-border-2 bg-transparent px-3 py-2 text-[13px] outline-none transition focus:border-accent";
-  const [statusZh, statusCls] = status ? APPLY_STATUS_ZH[status] : ["", ""];
+
+  const identityLine = login && (
+    <p className="text-[12px] text-fg-3">
+      GitHub 身份：<b className="text-fg-2">@{login}</b>
+    </p>
+  );
+
+  // ---- Terminal states render as a status panel, not the apply form ----
+  // 已在白名单（本地名单命中 / 申请已批准）：再展示三步引导 + 申请按钮
+  // 就是在骗用户做无用功。
+  if (wlHit || status === "approved") {
+    const h = (wlHit ? ownHandle : statusHandle) ?? ownHandle ?? statusHandle;
+    return (
+      <section className="space-y-3">
+        <div className="flex items-start gap-3 rounded-lg border border-ok/40 bg-ok/[0.07] p-4">
+          <span className="mt-0.5 flex h-5 w-5 flex-none items-center justify-center rounded-full bg-ok text-[12px] font-bold text-white">
+            ✓
+          </span>
+          <div>
+            <div className="text-[14px] font-semibold text-ok">
+              {h ? `@${h} ` : "你的账号"}已在官方白名单
+            </div>
+            <div className="mt-1 text-[12px] leading-relaxed text-fg-2">
+              白名单账号永不会被本扩展检测、标记、自动处理或上榜。
+              {status === "approved" && !wlHit
+                ? " 你的申请已获批准，名单每 6 小时同步到本机。"
+                : ""}
+            </div>
+          </div>
+        </div>
+        {identityLine}
+      </section>
+    );
+  }
+  if (status === "pending") {
+    return (
+      <section className="space-y-3">
+        <div className="rounded-lg border border-warn/40 bg-warn/[0.07] p-4">
+          <div className="text-[14px] font-semibold text-warn">
+            申请审核中{statusHandle ? ` · @${statusHandle}` : ""}
+          </div>
+          <div className="mt-1 text-[12px] leading-relaxed text-fg-2">
+            维护者审核通过后自动生效（名单每 6 小时同步到本机），无需重复提交。
+          </div>
+        </div>
+        {identityLine}
+        {msg && <p className={`text-[12px] ${msg.ok ? "text-ok" : "text-danger"}`}>{msg.text}</p>}
+      </section>
+    );
+  }
+
+  // ---- Apply flow: the pitch is a LIVE checklist, not a static blurb ----
+  const Step = ({ done, n, children }: { done: boolean; n: number; children: React.ReactNode }) => (
+    <li className="flex items-center gap-2.5">
+      <span
+        className={`flex h-5 w-5 flex-none items-center justify-center rounded-full text-[11px] font-bold ${
+          done ? "bg-ok text-white" : "border border-border-2 text-fg-3"
+        }`}
+      >
+        {done ? "✓" : n}
+      </span>
+      <span className={done ? "text-fg-3" : "text-fg-2"}>{children}</span>
+    </li>
+  );
 
   return (
     <section>
-      <p className="mb-3 text-[13px] leading-relaxed text-fg-2">
-        三步：<b className="text-fg">GitHub 登录</b>（账号需注册满 90 天，防滥用）→
-        扩展自动识别<b className="text-fg">你登录的 X 账号</b> → 提交申请，维护者审核。
-        <span className="text-fg-3">凭证只存本机，仅用于身份验证。</span>
-      </p>
+      <ol className="mb-4 space-y-1.5 text-[13px]">
+        <Step done={!!login} n={1}>
+          GitHub 登录（账号需注册满 90 天，防滥用；凭证只存本机）
+        </Step>
+        <Step done={!!ownHandle} n={2}>
+          扩展自动识别你登录的 X 账号
+        </Step>
+        <Step done={false} n={3}>
+          提交申请，等维护者审核
+        </Step>
+      </ol>
+      {status === "rejected" && (
+        <p className="mb-3 text-[12px] text-danger">
+          上次申请被驳回{statusHandle ? `（@${statusHandle}）` : ""}——可补充附言说明后重新提交。
+        </p>
+      )}
       <div className="space-y-2.5">
         {!login && !ghFlow && (
           <div className="flex items-center gap-3">
@@ -1232,11 +1319,7 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
             </div>
           </div>
         )}
-        {login && (
-          <p className="text-[12px] text-fg-3">
-            GitHub 身份：<b className="text-fg-2">@{login}</b>
-          </p>
-        )}
+        {identityLine}
         <details className="text-[12px] text-fg-3">
           <summary className="cursor-pointer select-none">
             高级：手动粘贴 GitHub Token（无需勾选任何权限）
@@ -1256,14 +1339,14 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
             </Btn>
           </div>
         </details>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div
             className={`${input} flex items-center gap-2 ${ownHandle ? "" : "text-fg-3"}`}
             title="由你当前登录的 x.com 会话自动识别，不可手填——只能为自己的账号申请"
           >
             {ownHandle ? (
               <>
-                <span className="text-fg-3">申请账号（自动识别）</span>
+                <span className="flex-none whitespace-nowrap text-fg-3">申请账号（自动识别）</span>
                 <b className="text-fg">@{ownHandle}</b>
               </>
             ) : (
@@ -1281,14 +1364,8 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
         </div>
         <div className="flex items-center gap-3">
           <Btn tier="primary" onClick={apply} disabled={busy || !token.trim() || !ownHandle}>
-            {busy ? "提交中…" : "申请把我的 X 账号加入白名单"}
+            {busy ? "提交中…" : status === "rejected" ? "重新提交申请" : "申请把我的 X 账号加入白名单"}
           </Btn>
-          {status && (
-            <span className={`text-[12px] ${statusCls}`}>
-              申请状态：{statusZh}
-              {statusHandle ? ` · @${statusHandle}` : ""}
-            </span>
-          )}
         </div>
         {msg && <p className={`text-[12px] ${msg.ok ? "text-ok" : "text-danger"}`}>{msg.text}</p>}
       </div>
@@ -1640,7 +1717,7 @@ function WhitelistPage() {
     getSettings().then(setSt);
   }, []);
   return (
-    <Page title="保护我的账号" sub="加入官方白名单 · 永不被检测、标记或上榜">
+    <Page title="保护我的账号" sub="官方白名单 · 名单内账号永不被检测、标记或上榜">
       <div className="max-w-[680px]">{st && <WhitelistApplySection edgeBase={st.edgeBase} />}</div>
     </Page>
   );
