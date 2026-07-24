@@ -256,7 +256,7 @@ export default defineContentScript({
     if (!settings.enabled) return; // master off → don't init (applies next load)
     // Build marker — confirms which content-script build is live in this tab
     // (reloading the unpacked extension does NOT refresh already-open tabs).
-    console.info("[MXGA] content script ready · build 2026-07-22 (nav-carryover)");
+    console.info("[MXGA] content script ready · build 2026-07-24 (profile-pending-settle)");
     onSettingsChange((s) => {
       const modeChanged = s.actionMode !== settings.actionMode;
       settings = s;
@@ -294,8 +294,15 @@ export default defineContentScript({
       const tweetId = art ? articleStatusId(art) : null;
       const tweetText = sig.triggeringComment || sig.recentTweets[0];
       const timer = setTimeout(() => {
-        void executeHide(key, sig);
-        pendingActions.delete(key);
+        try {
+          void executeHide(key, sig).catch(() => {});
+        } finally {
+          pendingActions.delete(key);
+          // The undo window has settled even if X recycled the target or a
+          // synchronous DOM lookup failed. Never leave a permanent "5秒后"
+          // badge claiming an action is still pending.
+          clearMounts(anchor);
+        }
       }, PENDING_MS);
       pendingActions.set(key, {
         key,
@@ -359,9 +366,14 @@ export default defineContentScript({
       const art = articleOf(anchor);
       const sameAuthor =
         !!art && handleFromArticle(art)?.toLowerCase() === sig.handle.toLowerCase();
-      const target = sameAuthor
-        ? anchor
-        : document.querySelector(`[data-xss-key="${CSS.escape(key)}"]`);
+      // Profile badges are not inside an article. Their captured UserName
+      // anchor is still the authoritative target; hideAccountSurface resolves
+      // it to the profile header. Article anchors retain the author/recycling
+      // guard before falling back to the tagged row.
+      const target =
+        sameAuthor || (!!anchor && !art)
+          ? anchor
+          : document.querySelector(`[data-xss-key="${CSS.escape(key)}"]`);
       if (target) hideAccountSurface(target);
       // If this account is a live bubble finding (a listed hit the user chose
       // to handle from the badge popover rather than the batch panel), drive
