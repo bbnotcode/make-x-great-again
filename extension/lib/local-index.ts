@@ -12,6 +12,10 @@ import {
   getStoredWhitelist,
 } from "./list-sync";
 import { setLocalRules } from "./local-rules";
+import {
+  isLocallyAllowed,
+  warmLocalAllowlist,
+} from "./local-allowlist";
 import type { Label, Verdict } from "./types";
 
 const CODE_TO_LABEL: Record<string, Label> = { p: "porn_bot", s: "spam" };
@@ -105,6 +109,7 @@ try {
  *  null until the download lands and the onChanged hook swaps the maps in. */
 export async function warmLocalIndex(): Promise<void> {
   if (warmed) return;
+  await warmLocalAllowlist();
   const wl = await getStoredWhitelist();
   if (wl) buildWhitelist(wl);
   const stored = await getStoredList();
@@ -137,6 +142,7 @@ export function lookupByHandle(handle: string): IndexEntry | null {
 /** Official-whitelist membership — shared guard for every local detection
  *  path (list lookup AND local keyword rules). */
 export function isWhitelisted(userId?: string, handle?: string): boolean {
+  if (isLocallyAllowed(userId, handle)) return true;
   if (userId && wlIds.has(userId)) return true;
   if (handle && wlHandles.has(handle.toLowerCase())) return true;
   return false;
@@ -145,8 +151,7 @@ export function isWhitelisted(userId?: string, handle?: string): boolean {
 /** Lookup by userId first, fall back to handle. Whitelisted accounts are
  *  never reported as hits. */
 export function lookupLocal(userId?: string, handle?: string): IndexEntry | null {
-  if (userId && wlIds.has(userId)) return null;
-  if (handle && wlHandles.has(handle.toLowerCase())) return null;
+  if (isWhitelisted(userId, handle)) return null;
   if (userId) {
     const byId = lookupByUserId(userId);
     if (byId) return byId;

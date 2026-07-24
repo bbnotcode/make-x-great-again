@@ -11,6 +11,7 @@ import {
 } from "../lib/detect";
 import { CATEGORY_ZH } from "../lib/category";
 import { LIST_KEY, WL_KEY } from "../lib/list-sync";
+import { LOCAL_ALLOWLIST_KEY } from "../lib/local-allowlist";
 import { type IndexEntry, isWhitelisted, lookupLocal, warmLocalIndex } from "../lib/local-index";
 import { matchLocalRules } from "../lib/local-rules";
 import { compileRegexRules, matchRegexText } from "../lib/regex-filter";
@@ -577,7 +578,12 @@ export default defineContentScript({
     }
 
     function enqueueAuto(it: AutoItem) {
-      if (autoActing.has(it.key) || isFollowProtected(it.sig)) return;
+      if (
+        autoActing.has(it.key) ||
+        isFollowProtected(it.sig) ||
+        isWhitelisted(it.sig.userId, it.sig.handle)
+      )
+        return;
       autoActing.add(it.key);
       // Record FIRST — the protection survives navigation even if the
       // animation never gets to play.
@@ -726,7 +732,7 @@ export default defineContentScript({
           handle: p.handle,
           ...(/^\d+$/.test(p.id) ? { userId: p.id } : {}),
         } as Signals;
-        if (isFollowProtected(sig)) {
+        if (isFollowProtected(sig) || isWhitelisted(sig.userId, sig.handle)) {
           void clearPendingAction(p.id);
           continue;
         }
@@ -912,11 +918,12 @@ export default defineContentScript({
       if (inFlight.has(key)) return; // a concurrent scan is already on it
       inFlight.add(key);
       try {
-        // 0. The viewer's own follow choice wins over every MXGA signal.
+        // 0. The viewer's own follow choice and explicit 恢复显示 override
+        //    win over every MXGA signal.
         //    Run this before the local blocked fast-path so a previously
         //    hidden followed account becomes visible again. A neutral mount
         //    also prevents repeat scans without exposing list membership.
-        if (isFollowProtected(sig)) {
+        if (isFollowProtected(sig) || isWhitelisted(sig.userId, sig.handle)) {
           showTweet(articleOf(anchor));
           markViewerProtected(anchor, key);
           return;
@@ -948,17 +955,7 @@ export default defineContentScript({
         // 2. Check pending undo queue — skip if already scheduled.
         if (pendingActions.has(key)) return;
 
-        // 3. Whitelist wins over EVERYTHING below — lookupLocal excludes
-        //    whitelisted accounts itself, but a v0.4-era cached spam verdict
-        //    would otherwise keep red-badging an appealed account for up to
-        //    30 days. Still mount the neutral badge: it keeps the manual
-        //    handle available and stops scan() from revisiting the row.
-        if (isWhitelisted(sig.userId, sig.handle)) {
-          badgeFor(anchor, key, sig, null);
-          return;
-        }
-
-        // 4. Local public index lookup (no remote requests, <50ms). Ranked
+        // 3. Local public index lookup (no remote requests, <50ms). Ranked
         //    ABOVE the legacy cache: a stale "legit" entry from v0.4 must not
         //    mask a since-human-confirmed list hit, and a stale "spam" entry
         //    must not demote it to mark-only (cache never auto-acts).
@@ -1235,7 +1232,11 @@ export default defineContentScript({
     // page against the fresh list. Pending/hidden rows are untouched.
     try {
       chrome.storage.onChanged.addListener((changes, area) => {
-        if (area !== "local" || (!changes[LIST_KEY] && !changes[WL_KEY])) return;
+        if (
+          area !== "local" ||
+          (!changes[LIST_KEY] && !changes[WL_KEY] && !changes[LOCAL_ALLOWLIST_KEY])
+        )
+          return;
         for (const host of document.querySelectorAll<HTMLElement>(".xss-mount")) {
           // Badges live in the host's shadow root; keep pending-undo flows.
           if (host.shadowRoot?.querySelector(".xss-badge.pending")) continue;

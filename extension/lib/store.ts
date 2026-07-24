@@ -2,6 +2,7 @@
 // string[] blocklist auto-migrates to records on first read. All local, no
 // PII beyond the public numeric id (governance unchanged).
 import { removeBlocked } from "./blocklist";
+import { addLocalAllow } from "./local-allowlist";
 import type { Verdict } from "./types";
 
 // "manual"    → user clicked 隐藏 on a badge / bubble
@@ -161,13 +162,24 @@ export async function clearPendingAction(id: string): Promise<void> {
 
 export async function removeBlock(id: string): Promise<void> {
   const list = await getBlocklist();
+  const restored = list.find((r) => r.id === id);
+  const handle = restored?.handle;
+  const sameAccount = (r: BlockRecord) =>
+    r.id === id ||
+    (!!handle && r.handle.toLowerCase() === handle.toLowerCase());
   await set(
     K_BLOCK,
-    list.filter((r) => r.id !== id),
+    list.filter((r) => !sameAccount(r)),
   );
+  // 恢复显示 is an explicit false-positive decision. Remember it locally so
+  // the public list, regex, cache and official rules cannot hide the account
+  // again on another tweet.
+  await addLocalAllow(/^\d+$/.test(id) ? id : undefined, handle);
+  await clearPendingAction(id);
   // Also reconcile the fast-path id set (xss:blocked) that content.ts hides
   // by — otherwise un-hiding never takes effect on X pages.
   await removeBlocked(id);
+  if (handle) await removeBlocked(`h:${handle.toLowerCase()}`);
 }
 
 export async function blockedIdSet(): Promise<Set<string>> {
