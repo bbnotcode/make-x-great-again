@@ -1,4 +1,4 @@
-import { autoEligible, capAutoTierAction } from "../lib/auto-policy";
+import { autoEligible, capAutoTierAction, viewerProtected } from "../lib/auto-policy";
 import { addBlocked, isBlockedSync, warm as warmBlocklist } from "../lib/blocklist";
 import { BRAND } from "../lib/brand";
 import { type Cached, cacheGet, signalsHash } from "../lib/cache";
@@ -115,6 +115,16 @@ function hideTweet(node: Element | null) {
   const cell =
     node?.closest('[data-testid="cellInnerDiv"]') ?? node?.closest("article");
   if (cell instanceof HTMLElement) cell.style.display = "none";
+}
+
+function showTweet(node: Element | null) {
+  const cell =
+    node?.closest('[data-testid="cellInnerDiv"]') ?? node?.closest("article");
+  if (cell instanceof HTMLElement) {
+    cell.style.removeProperty("display");
+    cell.removeAttribute(REGEX_HIDDEN_ATTR);
+    cell.removeAttribute("data-mxga-regex-rule");
+  }
 }
 
 const REGEX_HIDDEN_ATTR = "data-mxga-regex-hidden";
@@ -709,7 +719,17 @@ export default defineContentScript({
       if (inFlight.has(key)) return; // a concurrent scan is already on it
       inFlight.add(key);
       try {
-        // 0. Already blocked → hide, never render again. Exception: the cell
+        // 0. The viewer's own follow choice wins over every MXGA signal.
+        //    Run this before the local blocked fast-path so a previously
+        //    hidden followed account becomes visible again. A neutral mount
+        //    also prevents repeat scans without exposing list membership.
+        if (viewerProtected(sig)) {
+          showTweet(articleOf(anchor));
+          badgeFor(anchor, key, sig, null);
+          return;
+        }
+
+        // 1. Already blocked → hide, never render again. Exception: the cell
         //    the visible auto queue is working on (it was recorded up-front)
         //    — its animation owns the hide; OTHER cells by the same account
         //    still vanish instantly.
@@ -732,10 +752,10 @@ export default defineContentScript({
           return;
         }
 
-        // 1. Check pending undo queue — skip if already scheduled.
+        // 2. Check pending undo queue — skip if already scheduled.
         if (pendingActions.has(key)) return;
 
-        // 2. Whitelist wins over EVERYTHING below — lookupLocal excludes
+        // 3. Whitelist wins over EVERYTHING below — lookupLocal excludes
         //    whitelisted accounts itself, but a v0.4-era cached spam verdict
         //    would otherwise keep red-badging an appealed account for up to
         //    30 days. Still mount the neutral badge: it keeps the manual
@@ -745,7 +765,7 @@ export default defineContentScript({
           return;
         }
 
-        // 3. Local public index lookup (no remote requests, <50ms). Ranked
+        // 4. Local public index lookup (no remote requests, <50ms). Ranked
         //    ABOVE the legacy cache: a stale "legit" entry from v0.4 must not
         //    mask a since-human-confirmed list hit, and a stale "spam" entry
         //    must not demote it to mark-only (cache never auto-acts).
@@ -755,7 +775,7 @@ export default defineContentScript({
           return;
         }
 
-        // 4. v0.4-era persistent cache, read-only since v0.5 (spam reused
+        // 5. v0.4-era persistent cache, read-only since v0.5 (spam reused
         //    as-is; legit/uncertain only if signals unchanged so new evidence
         //    can still re-trigger).
         const cached = await cacheGet(key);
@@ -768,7 +788,7 @@ export default defineContentScript({
           }
         }
 
-        // 4.5 Maintainer-curated keyword rules, shipped with the synced list.
+        // 5.5 Maintainer-curated keyword rules, shipped with the synced list.
         // Catches first-seen template accounts (brand-new porn-bot throwaways
         // not yet on the public list) with zero upload. Whitelist already won
         // at step 2.
@@ -800,7 +820,7 @@ export default defineContentScript({
           return;
         }
 
-        // 5. Local public list did not match. Just show neutral/unhit state.
+        // 6. Local public list did not match. Just show neutral/unhit state.
         badgeFor(anchor, key, sig, null);
       } finally {
         inFlight.delete(key);
@@ -868,7 +888,7 @@ export default defineContentScript({
         const regexApplies =
           settings.regexEnabled &&
           regexRules.length > 0 &&
-          !info.viewerIsSelf &&
+          !viewerProtected(info) &&
           !isWhitelisted(info.userId, info.handle) &&
           (settings.regexScope === "all" || ctx === "reply");
         const regexHit = regexApplies

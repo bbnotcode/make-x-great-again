@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { autoEligible, capAutoTierAction } from "../lib/auto-policy";
+import { autoEligible, capAutoTierAction, viewerProtected } from "../lib/auto-policy";
+
+test("viewer follow choice protects an account before every filter source", () => {
+  assert.equal(viewerProtected({ viewerFollowing: true }), true);
+  assert.equal(viewerProtected({ viewerIsSelf: true }), true);
+  assert.equal(viewerProtected({}), false);
+});
 
 test("list hits: human-confirmed entries follow autoScope", () => {
   for (const autoTierMode of ["badge", "hide", "full"] as const) {

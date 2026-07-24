@@ -32,6 +32,9 @@ export interface Signals {
   /** True when this post belongs to the currently signed-in X account.
    *  Automatic account actions must always skip it. */
   viewerIsSelf?: true;
+  /** True when the signed-in viewer follows this account. The viewer's
+   *  explicit follow choice outranks regex, public-list and rule hits. */
+  viewerFollowing?: true;
   /** The tweet texts above are X machine-translations, not the author's own
    *  words (original unavailable in the DOM). Consumers must not treat the
    *  surface language as an author signal. */

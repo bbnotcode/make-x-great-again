@@ -1,4 +1,14 @@
 import type { CategoryAction, Settings } from "./settings";
+import type { Signals } from "./types";
+
+/**
+ * Accounts the viewer deliberately follows are always protected from MXGA
+ * filtering. This gate must run before regex, blocklist, cache and local-rule
+ * handling so a public-list hit can never override the viewer's own choice.
+ */
+export function viewerProtected(sig: Pick<Signals, "viewerFollowing" | "viewerIsSelf">): boolean {
+  return sig.viewerFollowing === true || sig.viewerIsSelf === true;
+}
 
 /** Where a hit came from, for auto-action eligibility purposes. */
 export type AutoSource = "list" | "rule" | "cache" | "fresh";
