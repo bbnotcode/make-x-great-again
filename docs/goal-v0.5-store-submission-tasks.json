@@ -1,6 +1,6 @@
 {
   "goal": "Run two complete v0.5 browser-account regression rounds and prepare a verified Chrome Web Store ZIP only if both rounds pass",
-  "updatedAt": "2026-07-24T17:01:25+08:00",
+  "updatedAt": "2026-07-24T17:07:14+08:00",
   "constraints": {
     "browser": "User's existing signed-in Chrome profile",
     "rounds": 2,
@@ -9,7 +9,14 @@
       "block": 1
     },
     "cleanup": "Restore every test-only setting and reversible X action before the round ends",
-    "packageGate": "Do not create the final store ZIP unless both browser rounds pass"
+    "packageGate": "Do not create the final store ZIP unless both browser rounds pass",
+    "storeScreenshots": {
+      "count": 5,
+      "dimensions": "1280x800",
+      "format": "JPEG or PNG",
+      "layout": "Square corners, full bleed, no padding",
+      "content": "Actual current extension experience; no stale version labels or sensitive account data"
+    }
   },
   "tasks": [
     {
@@ -50,6 +57,18 @@
       "verify": "The same matrix passes a second time with fresh page state, no retained test-only setting/action, no new console errors, and new screenshots",
       "passes": false,
       "evidence": []
+    },
+    {
+      "id": "store-screenshots",
+      "task": "Prepare five current Chrome Web Store screenshots covering on-X detection, the queue panel, overview, strategy settings, and processed-record recovery",
+      "verify": "Every image is an actual latest-build UI state, JPEG or PNG, exactly 1280x800, square-cornered and full-bleed; the set contains no stale version label, private token, or unnecessary personal account data",
+      "passes": false,
+      "evidence": [
+        "Official Chrome guidance allows 1-5 screenshots and prefers 1280x800; screenshots must be square-cornered and full-bleed",
+        "Draft 1 captured from the signed-in Chrome profile: extension/store-assets/v0.5.0/01-on-x-detection.jpg (1280x800 JPEG)",
+        "Draft 2 captured from the signed-in Chrome profile: extension/store-assets/v0.5.0/02-on-x-queue-panel.jpg (1280x800 JPEG)",
+        "Existing mocked options screenshots display v0.5.1 while the release manifest is 0.5.0, so they are excluded from the final store set"
+      ]
     },
     {
       "id": "store-package",
