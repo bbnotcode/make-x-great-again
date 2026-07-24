@@ -500,7 +500,7 @@ function Overview() {
             {SPAM_CATEGORIES.map((cat) => {
               const act = st.categoryActions[cat] ?? "badge";
               const actZh =
-                act === "badge" ? "仅标记" : act === "hide" ? "自动隐藏" : act === "mute" ? "自动静音" : "自动拉黑";
+                act === "badge" ? "仅标记" : act === "hide" ? "本地隐藏" : act === "mute" ? "X 静音" : "X 拉黑";
               return (
                 <span
                   key={cat}
@@ -855,11 +855,15 @@ const CATEGORY_HINT: Record<SpamCategory, string> = {
   other: "已确认是垃圾号但未归入以上类别",
 };
 
-const CATEGORY_ACTIONS: { value: CategoryAction; label: string; needsX: boolean }[] = [
-  { value: "badge", label: "仅标记", needsX: false },
-  { value: "hide", label: "自动隐藏", needsX: false },
-  { value: "mute", label: "自动静音", needsX: true },
-  { value: "block", label: "自动拉黑", needsX: true },
+// Same action vocabulary as the manual 处理方式 selector — the four segments
+// describe WHAT happens; that this column happens automatically is carried by
+// the section title. 「自动隐藏/自动静音」-style labels made it look like a
+// different set of actions from the manual ones (they never were).
+const CATEGORY_ACTIONS: { value: CategoryAction; label: string; title: string; needsX: boolean }[] = [
+  { value: "badge", label: "仅标记", title: "只挂角标提示，不做任何处理", needsX: false },
+  { value: "hide", label: "本地隐藏", title: "只在本扩展里隐藏（仅本机、可随时恢复），与手动方式里的「本地隐藏」是同一动作", needsX: false },
+  { value: "mute", label: "X 静音", title: "X 原生静音：用你的登录态执行，所有设备生效；对方无感知", needsX: true },
+  { value: "block", label: "X 拉黑", title: "X 原生拉黑：用你的登录态执行，所有设备生效；互相不可见、解除关注，需谨慎", needsX: true },
 ];
 
 /** cat → 1-char lite-artifact code (schema v2), for the per-category counts
@@ -909,6 +913,7 @@ function CategoryPolicyRow({
             <button
               key={a.value}
               type="button"
+              title={a.title}
               onClick={() => onChange(a.value)}
               className={`px-2.5 py-1.5 text-[12px] transition ${
                 active
@@ -1445,54 +1450,19 @@ function Settings() {
 
         {st && (
           <section>
-            <SectionH>手动处理方式</SectionH>
-            <p className="mb-3 text-[12px] text-fg-3">
-              你手动点按钮时执行的动作。X 静音 / 拉黑走你自己的登录态，不经过我们的服务器；与下方的自动处理策略互相独立。
-            </p>
-            <div className="space-y-2">
-              {ACTION_MODES.map((m) => {
-                const active = st.actionMode === m.value;
-                return (
-                  <button
-                    type="button"
-                    key={m.value}
-                    onClick={() => changeMode(m.value)}
-                    className={`flex w-full items-start gap-3 rounded-lg border p-3 text-left transition ${
-                      active
-                        ? "border-fg bg-card-hi"
-                        : "border-border-2 hover:border-fg-3"
-                    }`}
-                  >
-                    <span
-                      className={`mt-0.5 flex h-4 w-4 flex-none items-center justify-center rounded-full border ${
-                        active ? "border-fg" : "border-border-2"
-                      }`}
-                    >
-                      {active && <span className="h-2 w-2 rounded-full bg-fg" />}
-                    </span>
-                    <span>
-                      <span className="font-medium text-fg">{m.label}</span>
-                      <span className="block text-[12px] text-fg-3">{m.hint}</span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-            {permDenied && (
-              <p className="mt-2 text-[12px] text-danger">
-                未授权访问 x.com，已保持当前处理方式。X 静音 / 拉黑需要该权限才能调用 X 接口。
-              </p>
-            )}
-          </section>
-        )}
-
-        {st && (
-          <section>
             <SectionH>自动处理策略</SectionH>
             <p className="mb-3 text-[12px] leading-relaxed text-fg-3">
-              命中<b className="text-fg-2">公共黑名单或官方规则</b>的账号按类别自动处理，其余只挂角标。
-              总开关在气泡里；规则命中只在评论区自动执行；白名单账号永不处理；一切可在「处理记录」撤销。
+              命中<b className="text-fg-2">公共黑名单或官方规则</b>的账号按下方类别设定自动处理，其余只挂角标。
+              规则命中只在评论区自动执行；白名单账号永不处理；一切可在「处理记录」撤销。
             </p>
+            <div className="mb-4">
+              <Toggle
+                on={st.autoProcess}
+                onChange={(v) => save("autoProcess", v)}
+                label="启用自动处理"
+                hint="总开关，与气泡面板里的「自动处理」开关同步；关闭后以下配置保留但不执行，一切命中只标记"
+              />
+            </div>
             <div className="mb-4">
               <div className="mb-1.5 text-[12px] font-semibold text-fg">自动处理范围</div>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -1539,8 +1509,8 @@ function Settings() {
             <div className="mb-4">
               <div className="mb-1.5 text-[12px] font-semibold text-fg">自动收录条目</div>
               <p className="mb-2 text-[12px] leading-relaxed text-fg-3">
-                公榜条目分两级：<b className="text-fg-2">人工确认</b>（维护者复核过，始终按下方各类别的动作完整执行）和
-                <b className="text-fg-2">自动收录</b>（AI/规则判定自动上榜，占榜单大多数）。这里决定自动收录条目能自动处理到什么程度。
+                命中分两级：<b className="text-fg-2">人工确认</b>（维护者复核过的公榜条目，始终按下方各类别的动作完整执行）和
+                <b className="text-fg-2">自动收录</b>（AI/规则自动上榜的公榜条目 + 本地官方规则命中，占大多数）。这里决定自动收录一级能自动处理到什么程度。
               </p>
               <div className="grid grid-cols-1 gap-2">
                 {(
@@ -1548,11 +1518,11 @@ function Settings() {
                     {
                       v: "full",
                       label: "完整执行（默认）",
-                      hint: "上榜即处理：与人工确认条目同权，按各类别设定的动作执行（包括 X 静音/拉黑）。误判可在「处理记录」恢复并申诉。",
+                      hint: "自动收录与人工确认同权，按各类别设定的动作执行（包括 X 静音/拉黑）。误判可在「处理记录」恢复并申诉。",
                     },
                     {
                       v: "hide",
-                      label: "封顶为自动隐藏",
+                      label: "封顶为本地隐藏",
                       hint: "按各类别设定的动作执行，但封顶为本地隐藏——零联网、一键恢复；X 静音/拉黑仍只对人工确认条目执行。",
                     },
                     {
@@ -1599,9 +1569,59 @@ function Settings() {
                 />
               ))}
             </div>
+            <p className="mt-2 text-[12px] text-fg-3">
+              动作含义与下方「手动处理动作」一致：本地隐藏仅本机、可恢复；X 静音 / 拉黑用你的登录态原生执行，所有设备生效。
+            </p>
+            {permDenied && (
+              <p className="mt-2 text-[12px] text-danger">
+                未授权访问 x.com，已保持当前设置。X 静音 / 拉黑需要该权限才能调用 X 接口。
+              </p>
+            )}
           </section>
         )}
 
+        {st && (
+          <section>
+            <SectionH>手动处理动作</SectionH>
+            <p className="mb-3 text-[12px] text-fg-3">
+              只决定你<b className="text-fg-2">手动</b>点角标或气泡按钮时执行哪种动作，不影响上方的自动处理。X 静音 / 拉黑走你自己的登录态，不经过我们的服务器。
+            </p>
+            <div className="space-y-2">
+              {ACTION_MODES.map((m) => {
+                const active = st.actionMode === m.value;
+                return (
+                  <button
+                    type="button"
+                    key={m.value}
+                    onClick={() => changeMode(m.value)}
+                    className={`flex w-full items-start gap-3 rounded-lg border p-3 text-left transition ${
+                      active
+                        ? "border-fg bg-card-hi"
+                        : "border-border-2 hover:border-fg-3"
+                    }`}
+                  >
+                    <span
+                      className={`mt-0.5 flex h-4 w-4 flex-none items-center justify-center rounded-full border ${
+                        active ? "border-fg" : "border-border-2"
+                      }`}
+                    >
+                      {active && <span className="h-2 w-2 rounded-full bg-fg" />}
+                    </span>
+                    <span>
+                      <span className="font-medium text-fg">{m.label}</span>
+                      <span className="block text-[12px] text-fg-3">{m.hint}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {permDenied && (
+              <p className="mt-2 text-[12px] text-danger">
+                未授权访问 x.com，已保持当前处理方式。X 静音 / 拉黑需要该权限才能调用 X 接口。
+              </p>
+            )}
+          </section>
+        )}
 
         <section>
           <SectionH>数据与隐私</SectionH>
@@ -1647,7 +1667,7 @@ const About = () => (
   <Page title="关于" sub={`${BRAND.name} · 公益、开源`}>
     <div className="max-w-[680px] space-y-4 text-[13px] leading-7 text-fg-2">
       <p>
-        X(Twitter) 反垃圾 / 色情机器人扩展。被动检测：公共名单由扩展定期从官方源自动同步（只下载公开名单数据，不上传任何内容），比对全部在本机完成。如在「设置 → 处理方式」里选择 X 静音 / 拉黑，则会用你当前的 X 登录态调用 X 自家接口对账号生效（仍不经过我们的服务器、不收集任何数据）。
+        X(Twitter) 反垃圾 / 色情机器人扩展。被动检测：公共名单由扩展定期从官方源自动同步（只下载公开名单数据，不上传任何内容），比对全部在本机完成。如在「设置」里把手动或自动动作选为 X 静音 / 拉黑，则会用你当前的 X 登录态调用 X 自家接口对账号生效（仍不经过我们的服务器、不收集任何数据）。
       </p>
       <div className="grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-2">
         <div className="bg-bg p-4">

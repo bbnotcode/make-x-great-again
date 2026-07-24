@@ -706,15 +706,15 @@ export default defineContentScript({
       const hitArt = articleOf(anchor);
       const hitTweetId = hitArt ? articleStatusId(hitArt) : null;
       // Auto-action decision chain (each gate independent, no cross-talk):
-      //   1. ELIGIBILITY — autoEligible() in lib/auto-policy.ts. The hard
-      //      line lives there: list hits auto-act only when human-confirmed
-      //      (tier "confirmed") — AI/rule/mention auto-published entries are
-      //      badge-only; rule hits are reply-section-only; cache never.
+      //   1. ELIGIBILITY — autoEligible() in lib/auto-policy.ts: list hits
+      //      per autoScope; rule hits reply-section-only; cache/fresh never.
+      //      autoTierMode "badge" gates out everything not human-confirmed
+      //      (auto-tier list entries AND rule hits — both are 自动收录).
+      //   2. TIER CAP — capAutoTierAction(): under autoTierMode "hide",
+      //      anything not human-confirmed is capped at the local hide.
       //      entry.tier (人工确认/自动收录) stays visible in the popover;
-      //      /v1/check keeps the same human-tier filter for legacy clients.
-      //   2. SCOPE — settings.autoScope: replies-only by default; "all"
-      //      opts feed+profile in (list hits only, see above).
-      //   3. MASTER SWITCH — settings.autoProcess (bubble toggle), below.
+      //      /v1/check keeps the human-tier filter for legacy clients.
+      //   3. MASTER SWITCH — settings.autoProcess (bubble + settings page).
       //   4. POLICY — per-category action (badge/hide/mute/block).
       // (Auto actions stay reversible from the 处理记录 tab, and mute/block
       // ride the user's own X session like the manual path.)
