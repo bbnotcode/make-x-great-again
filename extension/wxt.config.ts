@@ -97,7 +97,7 @@ export default defineConfig({
         ? {
             browser_specific_settings: {
               // iOS 18 is the mobile baseline. The macOS container still enforces
-              // macOS 26 through its deployment target.
+              // macOS 15 through its deployment target.
               safari: { strict_min_version: "18.0" },
             },
           }

@@ -34,6 +34,20 @@
 
 ---
 
+## 支持的平台与版本
+
+同一套名单与检测逻辑，三个平台版本，选你在用的浏览器装：
+
+| 平台版本 | 安装渠道 | 状态 | 环境要求 |
+|---|---|---|---|
+| 🟦 **Chrome 版**（Chrome / Edge / Brave / Arc） | [Chrome 网上应用店](https://chromewebstore.google.com/detail/make-x-great-again/aeoldnecphbkkckeedfgfcdcekkljdea) | ✅ 已上架，自动更新 | Chromium 内核，MV3 |
+| 🦊 **Firefox 版** | [Firefox 附加组件商店](https://addons.mozilla.org/firefox/addon/make-x-great-again/) | ✅ 已上架，自动更新 | Firefox 109+ |
+| 🧭 **Safari macOS 版** | [TestFlight](https://testflight.apple.com/join/SeH4raps) | 🧪 开放测试 | macOS 15+ |
+| 📱 **Safari iOS / iPadOS 版** | [TestFlight](https://testflight.apple.com/join/SeH4raps) | 🧪 开放测试 | iOS / iPadOS 18+，作用于 Safari 内的 x.com |
+
+Safari（macOS / iOS）版由 [@tualatrix](https://github.com/tualatrix) 移植与维护，
+构建说明见 [docs/SAFARI.md](./docs/SAFARI.md)（macOS）与 [docs/SAFARI-IOS.md](./docs/SAFARI-IOS.md)（iOS）。
+
 ## 这个项目要解决什么
 
 X 现在的问题，大家都知道：
@@ -263,6 +277,18 @@ CONTRIBUTING.md       贡献指南
 
 欢迎 PR、issue、申诉。请先翻一下 [CONTRIBUTING.md](./CONTRIBUTING.md) 和 [GOVERNANCE.md](./GOVERNANCE.md)。
 如果你想贡献新的 Pillar（02–05 任意一个）的设计或代码，先开 issue 聊一下方向，避免重复造轮子。
+
+### 贡献者
+
+感谢每一位让 MXGA 变得更好的人：
+
+| 贡献者 | 贡献 |
+|---|---|
+| [@tualatrix](https://github.com/tualatrix) | Safari 平台移植：macOS / iOS 容器 App、触屏交互适配、名单索引内存优化（[#90](https://github.com/foru17/make-x-great-again/pull/90)） |
+
+<a href="https://github.com/foru17/make-x-great-again/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=foru17/make-x-great-again" alt="Contributors" />
+</a>
 
 ## License
 
