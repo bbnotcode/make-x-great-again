@@ -1,6 +1,6 @@
 {
   "goal": "Run two complete v0.5 browser-account regression rounds and prepare a verified Chrome Web Store ZIP only if both rounds pass",
-  "updatedAt": "2026-07-24T17:18:00+08:00",
+  "updatedAt": "2026-07-24T17:31:00+08:00",
   "constraints": {
     "browser": "User's existing signed-in Chrome profile",
     "rounds": 2,
@@ -91,18 +91,21 @@
     {
       "id": "profile-manual-hide-stale-pending",
       "severity": "release-blocker",
-      "status": "open",
+      "status": "resolved",
       "area": "extension content-script interaction",
       "expected": "Manual local hide from a profile badge reaches an honest settled state and produces visible, reversible behavior",
       "actual": "The profile badge schedules the action, but hideTweet only hides a nearest tweet cell/article. A profile-header anchor has neither, so the profile remains visible; the pending badge is not cleared when the timer settles and disappears only after navigation, while the local processed record suppresses the useful badge on the next load.",
       "source": [
-        "extension/entrypoints/content.ts hideTweet nearest cell/article targeting",
-        "extension/entrypoints/content.ts scheduleHide/cancelPending/badgeForPending lifecycle"
+        "extension/lib/account-surface.ts profile-header surface targeting",
+        "extension/entrypoints/content.ts scheduleHide/executeHide lifecycle",
+        "extension/test/account-surface-hide.test.ts browser-surface regression"
       ],
       "evidence": [
         ".ui-acceptance/2026-07-24-store/round1-bug-profile-local-hide-no-effect.png",
-        ".ui-acceptance/2026-07-24-store/latest-reload-profile-hide-bug.jpg"
-      ]
+        ".ui-acceptance/2026-07-24-store/latest-reload-profile-hide-bug.jpg",
+        ".ui-acceptance/2026-07-24-store/profile-hide-fix-live.jpg (1488x981 JPEG; SHA-256 bd9871e5c7e876fcd9b67b5c4f2a4667cef82f4f6ffcf09d06cea3edd803a0d7)"
+      ],
+      "resolution": "Added a profile-header fallback that hides the smallest ancestor containing the profile banner and UserName. The new regression failed before implementation, then the complete suite passed 21/21; after Chrome reload, the real @sale123_ash profile surface was verified at display:none with no MXGA runtime error."
     }
   ],
   "needsUserAction": [
@@ -110,7 +113,7 @@
       "id": "reload-and-open-options",
       "action": "In chrome://extensions, reload the unpacked MXGA extension from extension/.output/chrome-mv3, then open its settings page and leave that tab open",
       "reason": "The browser controller is blocked from chrome:// and chrome-extension:// pages, so it cannot reload the just-built package or create the settings tab itself; both are required before round 1 can verify the exact build and every strategy control",
-      "resolved": false
+      "resolved": true
     },
     {
       "id": "remove-round1-test-record",

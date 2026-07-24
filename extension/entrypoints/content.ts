@@ -1,3 +1,4 @@
+import { hideAccountSurface } from "../lib/account-surface";
 import { autoEligible, capAutoTierAction } from "../lib/auto-policy";
 import { addBlocked, isBlockedSync, warm as warmBlocklist } from "../lib/blocklist";
 import { BRAND } from "../lib/brand";
@@ -197,12 +198,6 @@ function articleStatusId(art: HTMLElement): string | null {
   return null;
 }
 
-function hideTweet(node: Element | null) {
-  const cell =
-    node?.closest('[data-testid="cellInnerDiv"]') ?? node?.closest("article");
-  if (cell instanceof HTMLElement) cell.style.display = "none";
-}
-
 /** Each inline badge gets its own shadow host so X CSS can't touch it. */
 function mountBadge(anchor: HTMLElement, build: () => HTMLElement) {
   const host = document.createElement("span");
@@ -367,7 +362,7 @@ export default defineContentScript({
       const target = sameAuthor
         ? anchor
         : document.querySelector(`[data-xss-key="${CSS.escape(key)}"]`);
-      if (target) hideTweet(target);
+      if (target) hideAccountSurface(target);
       // If this account is a live bubble finding (a listed hit the user chose
       // to handle from the badge popover rather than the batch panel), drive
       // its row to "done" so it stops offering an actionable button and joins
@@ -559,7 +554,7 @@ export default defineContentScript({
           // shrink / fly-into-chip) belongs to the corner bubble; animating
           // the page's own DOM competes with X's scroll/virtualizer and reads
           // as jank on the timeline.
-          hideTweet(autoTarget(it));
+          hideAccountSurface(autoTarget(it));
           // The action has now SETTLED (attempted) — drop its pending marker so
           // it stops being a resume candidate; only items whose queue died
           // before this point stay pending. On X failure, annotate the record.
@@ -795,7 +790,7 @@ export default defineContentScript({
             articleOf(anchor)?.getAttribute("data-xss-key") === key
           )
             return;
-          hideTweet(anchor);
+          hideAccountSurface(anchor);
           return;
         }
 
