@@ -51,6 +51,21 @@ export function verdictZh(label: string | undefined): string {
   return (label && VERDICTS[label]?.zh) || label || "uncertain";
 }
 
+/** Spam category taxonomy — mirrors SPAM_CATEGORIES in src/index.ts and the
+ *  extension's CATEGORY_ZH (extension/lib/category.ts). Order = menu order. */
+export const CATEGORIES: { value: string; zh: string }[] = [
+  { value: "porn", zh: "色情招揽" },
+  { value: "crypto", zh: "币圈投放" },
+  { value: "gambling", zh: "博彩推广" },
+  { value: "resource", zh: "网盘资源" },
+  { value: "marketing", zh: "营销引流" },
+  { value: "other", zh: "其它" },
+];
+
+export function categoryZh(category: string | null | undefined): string {
+  return (category && CATEGORIES.find((c) => c.value === category)?.zh) || "";
+}
+
 /** Tailwind classes for the 4px left edge of a row, by verdict tone. */
 export function edgeClass(label: string | undefined): string {
   const tone = (label && VERDICTS[label]?.tone) || "muted";

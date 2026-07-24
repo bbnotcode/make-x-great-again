@@ -1,8 +1,14 @@
 import { useCallback } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { type Account, api, type Item, rowKey } from "@/lib/adminApi";
-import { ago, fmtN, verdictZh, VERDICTS } from "@/lib/format";
+import { ago, CATEGORIES, categoryZh, fmtN, verdictZh, VERDICTS } from "@/lib/format";
 import { runBatch } from "@/lib/runBatch";
 import { useListData } from "@/lib/useListData";
 import { useSelection } from "@/lib/useSelection";
@@ -65,6 +71,26 @@ export function BlacklistTab({ onAuth, onMutated }: { onAuth: () => void; onMuta
       }
     };
 
+  const batchCategorize = (category: string, zh: string) => async () => {
+    const keysArr = [...sel.sel];
+    const ok = await confirm({
+      title: "批量归类",
+      body: (
+        <p>
+          将已选 <b>{keysArr.length}</b> 条的分类设为「{zh}」？不改变公榜状态，仅更新分类。
+        </p>
+      ),
+      okLabel: `归类「${zh}」 ${keysArr.length} 条`,
+      okVariant: "default",
+    });
+    if (!ok) return;
+    if (await runBatch(keysArr, `归类「${zh}」`, (items: Item[]) => api.categoryBatch(category, items))) {
+      sel.clear();
+      reload();
+      onMutated();
+    }
+  };
+
   return (
     <div>
       <ViewHead
@@ -102,6 +128,20 @@ export function BlacklistTab({ onAuth, onMutated }: { onAuth: () => void; onMuta
             >
               批量白名单
             </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="outline">
+                  批量归类 ▾
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                {CATEGORIES.map((cat) => (
+                  <DropdownMenuItem key={cat.value} onClick={batchCategorize(cat.value, cat.zh)}>
+                    {cat.zh}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button size="sm" variant="outline" onClick={batch("reject", "驳回", "default")}>
               批量驳回（不公开）
             </Button>
@@ -130,9 +170,12 @@ export function BlacklistTab({ onAuth, onMutated }: { onAuth: () => void; onMuta
                 confidence={Math.round((a.confidence || 0) * 100)}
                 reporters={a.reporters || 0}
                 subExtra={
-                  <span title={new Date(a.published_at || 0).toLocaleString("zh-CN")}>
-                    · 已公榜 {ago(a.published_at)}
-                  </span>
+                  <>
+                    <span title={new Date(a.published_at || 0).toLocaleString("zh-CN")}>
+                      · 已公榜 {ago(a.published_at)}
+                    </span>
+                    {a.category && <span title={`分类：${a.category}`}> · {categoryZh(a.category)}</span>}
+                  </>
                 }
                 actions={
                   <>

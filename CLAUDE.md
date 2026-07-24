@@ -5,6 +5,7 @@ X(Twitter) 反垃圾/色情机器人浏览器扩展（`extension/`，WXT+MV3）+
 ## UI 基准
 
 - **扩展管理面板（options 页）**：基准 = `main` 分支构建 + `.ui-acceptance/2026-07-23/` 截图集（处理记录/设置/概览/检测缓存 × 桌面/移动/暗色/亮色）。改动 options 页后跑 `/ui-acceptance` 并与该截图集 diff。
+- **admin console（/admin，services/edge SPA）**：基准 = `.ui-acceptance/2026-07-24-admin-category/` 截图集（待审队列/黑名单 × 桌面/移动/暗色/亮色）。验收方法：`npm run build:app` 后用 stub API 伺服（scratchpad ui-acc/stub-server.mjs 模式：静态伺服 static/app + 假 /v1/admin/* 种子数据 + POST 落 requests.log 做行为断言），agent-browser headless 截图。已知既有问题：390px 下 tab 列第三行与页面标题轻微重叠（待修）。
 - 验收环境：`.ui-acceptance/` 内截图由 chrome-devtools 对本地构建 + chrome API stub（种子数据）截取；stub 方法见 ui-acceptance 运行记录（scratchpad `ui-acc/__stub.js` 模式：拷贝 `.output/chrome-mv3`、注入 `__stub.js`、http.server 伺服）。
 - 暗色为默认主题（`prefers-color-scheme` + `html[data-theme]` 覆盖），任何 options/popup 改动必须双主题各验一遍。
 

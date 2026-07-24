@@ -1,3 +1,4 @@
+import { hideAccountSurface } from "../lib/account-surface";
 import { autoEligible, capAutoTierAction } from "../lib/auto-policy";
 import { addBlocked, isBlockedSync, warm as warmBlocklist } from "../lib/blocklist";
 import { BRAND } from "../lib/brand";
@@ -197,12 +198,6 @@ function articleStatusId(art: HTMLElement): string | null {
   return null;
 }
 
-function hideTweet(node: Element | null) {
-  const cell =
-    node?.closest('[data-testid="cellInnerDiv"]') ?? node?.closest("article");
-  if (cell instanceof HTMLElement) cell.style.display = "none";
-}
-
 /** Each inline badge gets its own shadow host so X CSS can't touch it. */
 function mountBadge(anchor: HTMLElement, build: () => HTMLElement) {
   const host = document.createElement("span");
@@ -261,7 +256,7 @@ export default defineContentScript({
     if (!settings.enabled) return; // master off → don't init (applies next load)
     // Build marker — confirms which content-script build is live in this tab
     // (reloading the unpacked extension does NOT refresh already-open tabs).
-    console.info("[MXGA] content script ready · build 2026-07-22 (nav-carryover)");
+    console.info("[MXGA] content script ready · build 2026-07-24 (profile-pending-settle)");
     onSettingsChange((s) => {
       const modeChanged = s.actionMode !== settings.actionMode;
       settings = s;
@@ -299,8 +294,15 @@ export default defineContentScript({
       const tweetId = art ? articleStatusId(art) : null;
       const tweetText = sig.triggeringComment || sig.recentTweets[0];
       const timer = setTimeout(() => {
-        void executeHide(key, sig);
-        pendingActions.delete(key);
+        try {
+          void executeHide(key, sig).catch(() => {});
+        } finally {
+          pendingActions.delete(key);
+          // The undo window has settled even if X recycled the target or a
+          // synchronous DOM lookup failed. Never leave a permanent "5秒后"
+          // badge claiming an action is still pending.
+          clearMounts(anchor);
+        }
       }, PENDING_MS);
       pendingActions.set(key, {
         key,
@@ -364,10 +366,15 @@ export default defineContentScript({
       const art = articleOf(anchor);
       const sameAuthor =
         !!art && handleFromArticle(art)?.toLowerCase() === sig.handle.toLowerCase();
-      const target = sameAuthor
-        ? anchor
-        : document.querySelector(`[data-xss-key="${CSS.escape(key)}"]`);
-      if (target) hideTweet(target);
+      // Profile badges are not inside an article. Their captured UserName
+      // anchor is still the authoritative target; hideAccountSurface resolves
+      // it to the profile header. Article anchors retain the author/recycling
+      // guard before falling back to the tagged row.
+      const target =
+        sameAuthor || (!!anchor && !art)
+          ? anchor
+          : document.querySelector(`[data-xss-key="${CSS.escape(key)}"]`);
+      if (target) hideAccountSurface(target);
       // If this account is a live bubble finding (a listed hit the user chose
       // to handle from the badge popover rather than the batch panel), drive
       // its row to "done" so it stops offering an actionable button and joins
@@ -559,7 +566,7 @@ export default defineContentScript({
           // shrink / fly-into-chip) belongs to the corner bubble; animating
           // the page's own DOM competes with X's scroll/virtualizer and reads
           // as jank on the timeline.
-          hideTweet(autoTarget(it));
+          hideAccountSurface(autoTarget(it));
           // The action has now SETTLED (attempted) — drop its pending marker so
           // it stops being a resume candidate; only items whose queue died
           // before this point stay pending. On X failure, annotate the record.
@@ -795,7 +802,7 @@ export default defineContentScript({
             articleOf(anchor)?.getAttribute("data-xss-key") === key
           )
             return;
-          hideTweet(anchor);
+          hideAccountSurface(anchor);
           return;
         }
 

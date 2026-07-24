@@ -54,6 +54,8 @@ export interface Account {
   avatar_url?: string;
   verdict_label?: string;
   confidence?: number;
+  /** Human/AI-assigned spam category (porn|crypto|gambling|resource|marketing|other). */
+  category?: string | null;
   reporters?: number;
   /** How this row entered the queue: 'report'/'block' = a user acted on it
    *  (manual 举报 / X 屏蔽 confirm); 'auto_scan'/'auto_keyword_mention' = the
@@ -160,11 +162,17 @@ export const api = {
       // (the API's zod schema accepts undefined but rejects null).
       body: JSON.stringify({ handle, xUserId: xUserId || undefined, action }),
     }),
-  decideBatch: (action: string, items: Item[]) =>
+  decideBatch: (action: string, items: Item[], category?: string) =>
     req<{ ok: boolean; error?: string }>("/v1/admin/decide-batch", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action, items }),
+      body: JSON.stringify({ action, items, category }),
+    }),
+  categoryBatch: (category: string, items: Item[]) =>
+    req<{ ok: boolean; error?: string }>("/v1/admin/category-batch", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ category, items }),
     }),
   agentPromote: (handle: string, xUserId: string | undefined, target: string) =>
     req<{ ok: boolean }>("/v1/admin/agent-promote", {

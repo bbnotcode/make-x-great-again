@@ -1,0 +1,125 @@
+{
+  "goal": "Run two complete v0.5 browser-account regression rounds and prepare a verified Chrome Web Store ZIP only if both rounds pass",
+  "updatedAt": "2026-07-24T17:31:00+08:00",
+  "constraints": {
+    "browser": "User's existing signed-in Chrome profile",
+    "rounds": 2,
+    "nativeActionCapPerRound": {
+      "mute": 1,
+      "block": 1
+    },
+    "cleanup": "Restore every test-only setting and reversible X action before the round ends",
+    "packageGate": "Do not create the final store ZIP unless both browser rounds pass",
+    "storeScreenshots": {
+      "count": 5,
+      "dimensions": "1280x800",
+      "format": "JPEG or PNG",
+      "layout": "Square corners, full bleed, no padding",
+      "content": "Actual current extension experience; no stale version labels or sensitive account data"
+    }
+  },
+  "tasks": [
+    {
+      "id": "baseline",
+      "task": "Confirm the clean v0.5 source baseline, installed-browser test surface, strategy matrix, and release commands",
+      "verify": "Git state, package/manifest version, existing tests, build scripts, installed extension state, and signed-in X page are all directly inspected",
+      "passes": true,
+      "evidence": [
+        "extension package, lockfile, and generated Chrome manifest all report 0.5.0; manifest_version is 3",
+        "generated manifest permissions are storage/alarms/unlimitedStorage with optional X/Twitter/GitHub host access",
+        "npm run compile passed; extension tests passed 20/20; Chrome production build passed at 443.39 kB",
+        "built manifest SHA-256: 1b76323e77e8b4251fca5694d0c3d60b7a2d0b9974c377e609153495b84e368d",
+        "built content script SHA-256: ec3cca753259cb42609c89fe69f028988c3e90b8f23d8b58be6ef4b94f178e55",
+        "User Chrome X page is signed in as @luoleiorg; installed MXGA content script mounted badges and the corner bubble",
+        "Chrome console identifies MXGA extension id mcldddfhilghdbeobdmmmmjjbgdbjclg and reports the content script ready with no MXGA error"
+      ]
+    },
+    {
+      "id": "browser-round-1",
+      "task": "Run browser-account regression round 1 across master enablement, bubble/position, scope, auto tier, badge, local hide/undo, X mute, X block, options navigation, and responsive/dark interaction states",
+      "verify": "Each strategy produces its documented result on a real X page, console has no new extension errors, and desktop/mobile screenshots are captured",
+      "passes": false,
+      "evidence": [
+        "Bubble automatic-processing switch changed from enabled to '已暂停 · 仅标记' and restored to '3 类自动 · 仅评论区'",
+        "A current public-list porn account (@ElmaPoulet, user id 2070898547180920832) was detected on its real signed-in X profile as 色情bot 95%",
+        "Replies-only scope correctly kept the profile visible and badge-only before manual action",
+        "Badge hover popover rendered the expected 隐藏 / 静音 / 拉黑 / 误判申诉 actions without drift",
+        "Local hide exposed a 5-second undo state, but after the timer the profile header stayed visible, the pending badge stayed stale until navigation, and the next load suppressed the badge while leaving the profile visible",
+        "After the user reloaded the latest installed extension, Chrome logged a fresh content-script injection at 2026-07-24T09:11:47.842Z; @sale123_ash was detected as 垃圾 95% and the same profile local-hide defect reproduced after the 5-second timer",
+        "MXGA-filtered Chrome logs contained only content-script ready messages and no runtime error, so the failure is a silent state/targeting defect",
+        "Screenshot: .ui-acceptance/2026-07-24-store/round1-auto-process-off.png (SHA-256 545c4e146bbceb0f1c1cdafe0f3c4b562b68d0d7eb645cb442d41989c8dcc95c)",
+        "Screenshot: .ui-acceptance/2026-07-24-store/round1-profile-scope-and-popover.png (SHA-256 e03e6ce2a17a9b1168c63ab328c798676d8e12da0f39a37f6879f4cf207c8441)",
+        "Screenshot: .ui-acceptance/2026-07-24-store/round1-bug-profile-local-hide-no-effect.png (SHA-256 34b54842ac45ca06041483d90cd2d4fd59f9a96d1b1ab25cecee122a1a25952e)",
+        "Screenshot: .ui-acceptance/2026-07-24-store/latest-reload-profile-hide-bug.jpg (1200x928 JPEG; SHA-256 4b9dd981fbb9dfd311493f4cd9bac3f8361d6937f9e5588b87e42cae76bf7e34)"
+      ]
+    },
+    {
+      "id": "browser-round-2",
+      "task": "Repeat the complete strategy and interaction regression independently after restoring the baseline",
+      "verify": "The same matrix passes a second time with fresh page state, no retained test-only setting/action, no new console errors, and new screenshots",
+      "passes": false,
+      "evidence": []
+    },
+    {
+      "id": "store-screenshots",
+      "task": "Prepare five current Chrome Web Store screenshots covering on-X detection, the queue panel, overview, strategy settings, and processed-record recovery",
+      "verify": "Every image is an actual latest-build UI state, JPEG or PNG, exactly 1280x800, square-cornered and full-bleed; the set contains no stale version label, private token, or unnecessary personal account data",
+      "passes": false,
+      "evidence": [
+        "Official Chrome guidance allows 1-5 screenshots and prefers 1280x800; screenshots must be square-cornered and full-bleed",
+        "Draft 1 captured from the signed-in Chrome profile: extension/store-assets/v0.5.0/01-on-x-detection.jpg (1280x800 JPEG)",
+        "Draft 2 captured from the signed-in Chrome profile: extension/store-assets/v0.5.0/02-on-x-queue-panel.jpg (1280x800 JPEG)",
+        "Existing mocked options screenshots display v0.5.1 while the release manifest is 0.5.0, so they are excluded from the final store set"
+      ]
+    },
+    {
+      "id": "store-package",
+      "task": "Build the final Chrome Web Store ZIP from the exact twice-tested source state",
+      "verify": "Compile, extension tests, production build, package command, ZIP listing, manifest policy fields, size, SHA-256, and secret scan all pass",
+      "passes": false,
+      "evidence": []
+    },
+    {
+      "id": "final-adversarial-review",
+      "task": "Attempt to falsify every prior pass before declaring store readiness",
+      "verify": "Re-run critical tests, inspect evidence files, compare packaged manifest to source policy, confirm clean Git diff, and verify the ZIP can be opened",
+      "passes": false,
+      "evidence": []
+    }
+  ],
+  "findings": [
+    {
+      "id": "profile-manual-hide-stale-pending",
+      "severity": "release-blocker",
+      "status": "resolved",
+      "area": "extension content-script interaction",
+      "expected": "Manual local hide from a profile badge reaches an honest settled state and produces visible, reversible behavior",
+      "actual": "The profile badge schedules the action, but hideTweet only hides a nearest tweet cell/article. A profile-header anchor has neither, so the profile remains visible; the pending badge is not cleared when the timer settles and disappears only after navigation, while the local processed record suppresses the useful badge on the next load.",
+      "source": [
+        "extension/lib/account-surface.ts profile-header surface targeting",
+        "extension/entrypoints/content.ts scheduleHide/executeHide lifecycle",
+        "extension/test/account-surface-hide.test.ts browser-surface regression"
+      ],
+      "evidence": [
+        ".ui-acceptance/2026-07-24-store/round1-bug-profile-local-hide-no-effect.png",
+        ".ui-acceptance/2026-07-24-store/latest-reload-profile-hide-bug.jpg",
+        ".ui-acceptance/2026-07-24-store/profile-hide-fix-live.jpg (1488x981 JPEG; SHA-256 bd9871e5c7e876fcd9b67b5c4f2a4667cef82f4f6ffcf09d06cea3edd803a0d7)"
+      ],
+      "resolution": "Added a profile-header fallback that hides the smallest ancestor containing the profile banner and UserName. The new regression failed before implementation, then the complete suite passed 21/21; after Chrome reload, the real @sale123_ash profile surface was verified at display:none with no MXGA runtime error."
+    }
+  ],
+  "needsUserAction": [
+    {
+      "id": "reload-and-open-options",
+      "action": "In chrome://extensions, reload the unpacked MXGA extension from extension/.output/chrome-mv3, then open its settings page and leave that tab open",
+      "reason": "The browser controller is blocked from chrome:// and chrome-extension:// pages, so it cannot reload the just-built package or create the settings tab itself; both are required before round 1 can verify the exact build and every strategy control",
+      "resolved": true
+    },
+    {
+      "id": "remove-round1-test-record",
+      "action": "After opening MXGA settings, remove the @ElmaPoulet and @sale123_ash round-1 local test records from 处理记录",
+      "reason": "The failed profile-header local-hide flows persisted local records and the controller cannot access the extension settings page to remove them",
+      "resolved": false
+    }
+  ]
+}
