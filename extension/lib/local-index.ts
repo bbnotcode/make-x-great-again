@@ -118,7 +118,10 @@ async function getBundledSafariList(): Promise<StoredList | null> {
     const response = await fetch(chrome.runtime.getURL("blacklist-data.json"));
     if (!response.ok) throw new Error(`blacklist-data.json returned ${response.status}`);
     const raw = (await response.json()) as Record<string, unknown>;
-    const parsed = validateLiteArtifact(raw);
+    // Tolerant validation, same as the network-sync path: the packaged
+    // snapshot is sanitized at build time, but a stray invalid row must not
+    // void the whole offline fallback.
+    const parsed = validateLiteArtifact(raw, { dropInvalidEntries: true });
     if (!parsed.ok) throw new Error(parsed.error);
     const generatedAt =
       typeof raw.generatedAt === "number" && Number.isFinite(raw.generatedAt)
