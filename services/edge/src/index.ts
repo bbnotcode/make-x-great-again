@@ -70,6 +70,32 @@ const AUTO_REPORTERS = 3; // distinct GitHub reporters required for auto-publish
 // mirror of the auto_legit fast-accept and is DELIBERATELY separate from the
 // report path, whose inherited verdicts are the noisy ones (kept manual-only).
 const AUTO_AI_PUBLISH_CONF = 0.95;
+// High-reach guard for EVERY auto-publish path (ai / rule / mention /
+// apply-to-queue). Accounts at this follower count are overwhelmingly real
+// humans/brands/creators (2026-07-24 audit: 23% of queued ≥100k spam verdicts
+// were outright false positives — official brand accounts, celebrities,
+// disclosed-ad posts — rising to 37% in the top follower band), and a wrong
+// publish against a big account is maximally visible. They can still be
+// blacklisted — only via the maintainer queue, never automatically. NULL
+// followers (handle-only rows, legacy payloads) pass: the guard exists for
+// accounts we positively KNOW are high-reach.
+const AUTO_PUBLISH_MAX_FOLLOWERS = 100_000;
+
+// The only verdict labels that may ever reach the public list through an
+// automatic path. Rules can be configured with 'uncertain'/'legit' labels
+// (e.g. as annotations); before 2026-07-24 a 'blacklist' rule carrying such a
+// label still published — that's how uncertain-verdict rows ended up on the
+// public artifact. Every auto-publish path funnels through this check now.
+const AUTO_PUBLISH_LABELS = new Set(["spam", "porn_bot", "likely_spam"]);
+
+/** Central eligibility check for ALL automatic publishes (human decisions are
+ *  never subject to it). Label must be a spam label, and a known follower
+ *  count must be under the high-reach cap. */
+function autoPublishEligible(label: string, followers: number | null | undefined): boolean {
+  if (!AUTO_PUBLISH_LABELS.has(label)) return false;
+  if (typeof followers === "number" && followers >= AUTO_PUBLISH_MAX_FOLLOWERS) return false;
+  return true;
+}
 // GH accounts younger than this don't count toward the auto-publish
 // reporter threshold. Their reports are still stored (audit /
 // future re-evaluation), but a fresh throwaway account can't help flip
@@ -320,7 +346,29 @@ const SYSTEM = `You classify X (Twitter) accounts ONLY for spam / porn-advertisi
   client knows: "note: tweet texts are machine-translated"). A Chinese-looking
   tweet from an account whose bio/display name are clearly another language is
   probably translated — judge the CONTENT, and never treat the mere presence of
-  Chinese wording as a spam signal in that case.
+  Chinese wording as a spam signal in that case. This holds EVEN WITHOUT the
+  flag (older clients don't send it): never infer "hijacked account", "language
+  mismatch" or "farm account" from the tweet language alone.
+- AVATAR CAVEAT: hasDefaultAvatar is unreliable — the scraper frequently fails
+  to load real avatars (verified official accounts have arrived flagged as
+  default-avatar). NEVER cite a default avatar as evidence of a hijacked,
+  bought, or fake account, and never let it raise confidence.
+- LEGIT COMMERCE IS NOT SPAM: an account promoting ITS OWN products, content,
+  or services is not spam — official brand/company accounts posting their own
+  campaigns or giveaways, creators posting disclosed sponsorships (【PR】, #ad,
+  #sponsored, *publi), streamers/artists/authors linking their own channels,
+  commissions, or releases, and paid "Promoted" ads surfacing inside unrelated
+  threads. Off-topic promotion alone is NOT enough for spam: it becomes spam
+  when it baits to THIRD-PARTY funnels (link farms, referral/affiliate codes,
+  Telegram groups, pirated resources) or repeats template-style across
+  unrelated threads.
+- HIGH-REACH CAUTION: for accounts with followers >= 100000, a false
+  accusation is maximally harmful and true spam at that reach is rare — such
+  accounts are usually real celebrities, brands, media, or creators. Require
+  hard content evidence (an explicit scam/solicitation template, third-party
+  bait funnel) before any spam label; a lopsided follower ratio, default
+  avatar, or an off-topic ad is NOT enough. When in doubt at this reach,
+  prefer "uncertain" or "legit".
 - category (required when label is spam/porn_bot/likely_spam): the dominant
   spam business — "porn" (sexual solicitation/porn bots), "crypto" (coins,
   trading, airdrops, stocks), "gambling" (casino/betting), "resource" (netdisk
@@ -1091,10 +1139,33 @@ function tweetTextTrusted(pattern: string, s: Signals): boolean {
   return hasCJK(s.displayName) || hasCJK(s.bio) || hasCJK(s.handle);
 }
 
-function ruleMatchesText(rule: KeywordRule, s: Signals): boolean {
-  const p = rule.pattern.toLowerCase();
+// Shared pattern matcher for keyword rules (live fast-path + queue sweep).
+// Bare substring matching caused a real public-list false positive: pattern
+// "visa" hit display name "Visakan" (a 205k-follower author) and published at
+// confidence=1. ASCII-only patterns now require word boundaries (no adjacent
+// [a-z0-9_]); patterns containing CJK or other non-ASCII keep substring
+// semantics — CJK text has no word delimiters, so boundaries would silently
+// disable every curated Chinese rule.
+const keywordRegexCache = new Map<string, RegExp>();
+function keywordHit(pattern: string, v: string | undefined | null): boolean {
+  if (!v) return false;
+  const p = pattern.toLowerCase();
   if (!p) return false;
-  const has = (v: string | undefined | null) => !!v && v.toLowerCase().includes(p);
+  const t = v.toLowerCase();
+  // eslint-disable-next-line no-control-regex
+  if (!/^[\x20-\x7f]+$/.test(p)) return t.includes(p);
+  let re = keywordRegexCache.get(p);
+  if (!re) {
+    const esc = p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    re = new RegExp(`(?<![a-z0-9_])${esc}(?![a-z0-9_])`);
+    keywordRegexCache.set(p, re);
+  }
+  return re.test(t);
+}
+
+function ruleMatchesText(rule: KeywordRule, s: Signals): boolean {
+  if (!rule.pattern) return false;
+  const has = (v: string | undefined | null) => keywordHit(rule.pattern, v);
   const tweetHit = () =>
     tweetTextTrusted(rule.pattern, s) &&
     (s.recentTweets.some((t) => has(t)) || has(s.triggeringComment));
@@ -1191,6 +1262,10 @@ async function autoBlacklistMentions(
 ): Promise<string[]> {
   const own = normalizeHandle(s.handle);
   const promoted: string[] = [];
+  // A rule configured with a non-spam verdict label must never mint public
+  // rows via its mentions (mentioned accounts are handle-only here, so the
+  // follower half of the guard can't apply — the label half still must).
+  if (!autoPublishEligible(rule.verdict_label, null)) return promoted;
   for (const handle of extractMentions(s)) {
     if (promoted.length >= MENTION_PROMOTE_MAX) break;
     if (handle === own) continue;
@@ -1407,7 +1482,15 @@ app.post("/v1/classify", async (c) => {
       return c.json({ error: "rate_limited", retryAfterMs: REPORT_WINDOW_MS }, 429);
     }
     await recordReportRate(c.env, ruleFp, now);
-    const status = statusForRuleAction(ruleHit.action);
+    let status: string = statusForRuleAction(ruleHit.action);
+    // Auto-publish gate: a 'blacklist' hit may only publish when the rule's
+    // verdict label is an actual spam label AND the account isn't known
+    // high-reach. Demoted hits land in the maintainer queue instead — the
+    // rule still matched (hit_count/audit intact), it just can't self-publish.
+    const ruleDemotedToQueue =
+      status === "human_confirmed" &&
+      !autoPublishEligible(ruleHit.verdict_label, s.followersCount ?? null);
+    if (ruleDemotedToQueue) status = "auto_pending_review";
     const reasons = [`matched keyword rule "${ruleHit.pattern}" on ${ruleHit.field}`];
     const verdict = {
       label: ruleHit.verdict_label,
@@ -1444,7 +1527,9 @@ app.post("/v1/classify", async (c) => {
         s.handle,
         `keyword_${ruleHit.action}`,
         `rule:${ruleHit.id}`,
-        `matched "${ruleHit.pattern}" on ${ruleHit.field}`,
+        `matched "${ruleHit.pattern}" on ${ruleHit.field}${
+          ruleDemotedToQueue ? " · queued (auto-publish guard: label/high-follower)" : ""
+        }`,
         now,
       ),
     ]);
@@ -1454,8 +1539,10 @@ app.post("/v1/classify", async (c) => {
     // Mention-promotion is the highest-abuse surface (it publishes handles the
     // caller merely typed into a tweet body). Gate it on an aged GitHub identity
     // so a throwaway/anon caller can't weaponize it, and cap the count below.
+    // If the primary hit itself was demoted to the queue (possible false
+    // positive), don't fan its @mentions out to the public list either.
     const promotedMentions =
-      ruleHit.action === "blacklist" && who.ageDays >= REPORTER_MIN_AGE_DAYS
+      ruleHit.action === "blacklist" && !ruleDemotedToQueue && who.ageDays >= REPORTER_MIN_AGE_DAYS
         ? await autoBlacklistMentions(c.env, ruleHit, s, now)
         : [];
     return c.json({
@@ -1521,7 +1608,11 @@ app.post("/v1/classify", async (c) => {
     verdict.label === "porn_bot" &&
     verdict.confidence >= AUTO_AI_PUBLISH_CONF &&
     uid !== null &&
-    who.ageDays >= REPORTER_MIN_AGE_DAYS;
+    who.ageDays >= REPORTER_MIN_AGE_DAYS &&
+    // High-reach guard: a known ≥100k-follower account never auto-publishes,
+    // whatever the confidence — it queues for a human instead (2026-07-24
+    // audit found real creators/brands in this band mislabeled porn_bot).
+    autoPublishEligible(verdict.label, s.followersCount ?? null);
   // High-confidence legit verdicts are cached but kept out of the maintainer
   // queue. /admin/queue still only selects status='auto_pending_review', so
   // auto_legit rows are invisible there but the next /v1/classify hit still
@@ -2733,7 +2824,7 @@ app.post("/v1/admin/keyword-rules/apply-to-queue", async (c) => {
   // Pull the entire queue in one go. At current scale (~600 rows) this is
   // ~50KB; well within Worker memory. Re-evaluate when queue grows >5K.
   const rows = await c.env.DB.prepare(
-    `SELECT rowid, x_user_id, handle, display_name, evidence_text, reasons, status
+    `SELECT rowid, x_user_id, handle, display_name, evidence_text, reasons, status, followers_count
        FROM accounts WHERE status='auto_pending_review'`,
   ).all<{
     rowid: number;
@@ -2743,6 +2834,7 @@ app.post("/v1/admin/keyword-rules/apply-to-queue", async (c) => {
     evidence_text: string | null;
     reasons: string | null;
     status: string;
+    followers_count: number | null;
   }>();
   const candidates = rows.results ?? [];
   const now = Date.now();
@@ -2755,9 +2847,8 @@ app.post("/v1/admin/keyword-rules/apply-to-queue", async (c) => {
   // We can't reuse ruleMatchesText here because the row layout differs from
   // the Signals payload. Build a row-shaped matcher:
   function rowMatches(row: (typeof candidates)[number], rule: KeywordRule): boolean {
-    const p = rule.pattern.toLowerCase();
-    if (!p) return false;
-    const has = (v: string | null) => !!v && v.toLowerCase().includes(p);
+    if (!rule.pattern) return false;
+    const has = (v: string | null) => keywordHit(rule.pattern, v);
     switch (rule.field) {
       case "handle":
         return has(row.handle);
@@ -2782,6 +2873,15 @@ app.post("/v1/admin/keyword-rules/apply-to-queue", async (c) => {
   for (const row of candidates) {
     const hit = rules.find((r) => rowMatches(row, r));
     if (!hit) continue;
+    // Same auto-publish gate as the live fast-path: a 'blacklist' rule can't
+    // publish a non-spam-labeled or known-high-follower row from the sweep —
+    // the row is already exactly where it should be (the queue), so skip it.
+    if (
+      statusForRuleAction(hit.action) === "human_confirmed" &&
+      !autoPublishEligible(hit.verdict_label, row.followers_count)
+    ) {
+      continue;
+    }
     totalHit++;
     perRule[hit.id] = (perRule[hit.id] ?? 0) + 1;
     const status = statusForRuleAction(hit.action);
@@ -2805,7 +2905,7 @@ app.post("/v1/admin/keyword-rules/apply-to-queue", async (c) => {
           `UPDATE accounts
               SET status=?, source='auto_keyword',
                   verdict_label=?, confidence=1.0, reasons=?,
-                  last_scored=?, published_at=?
+                  last_scored=?, published_at=?, published_tier=?
             WHERE rowid=?`,
         ).bind(
           status,
@@ -2813,6 +2913,7 @@ app.post("/v1/admin/keyword-rules/apply-to-queue", async (c) => {
           JSON.stringify([`matched keyword rule "${hit.pattern}" on ${hit.field}`]),
           now,
           status === "human_confirmed" ? now : null,
+          status === "human_confirmed" ? "rule" : null,
           row.rowid,
         ),
       );
