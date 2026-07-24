@@ -1,6 +1,6 @@
 {
   "goal": "Run two complete v0.5 browser-account regression rounds and prepare a verified Chrome Web Store ZIP only if both rounds pass",
-  "updatedAt": "2026-07-24T16:55:16+08:00",
+  "updatedAt": "2026-07-24T17:01:25+08:00",
   "constraints": {
     "browser": "User's existing signed-in Chrome profile",
     "rounds": 2,
@@ -32,7 +32,17 @@
       "task": "Run browser-account regression round 1 across master enablement, bubble/position, scope, auto tier, badge, local hide/undo, X mute, X block, options navigation, and responsive/dark interaction states",
       "verify": "Each strategy produces its documented result on a real X page, console has no new extension errors, and desktop/mobile screenshots are captured",
       "passes": false,
-      "evidence": []
+      "evidence": [
+        "Bubble automatic-processing switch changed from enabled to '已暂停 · 仅标记' and restored to '3 类自动 · 仅评论区'",
+        "A current public-list porn account (@ElmaPoulet, user id 2070898547180920832) was detected on its real signed-in X profile as 色情bot 95%",
+        "Replies-only scope correctly kept the profile visible and badge-only before manual action",
+        "Badge hover popover rendered the expected 隐藏 / 静音 / 拉黑 / 误判申诉 actions without drift",
+        "Local hide exposed a 5-second undo state, but after the timer the profile header stayed visible, the pending badge stayed stale until navigation, and the next load suppressed the badge while leaving the profile visible",
+        "MXGA-filtered Chrome logs contained only content-script ready messages and no runtime error, so the failure is a silent state/targeting defect",
+        "Screenshot: .ui-acceptance/2026-07-24-store/round1-auto-process-off.png (SHA-256 545c4e146bbceb0f1c1cdafe0f3c4b562b68d0d7eb645cb442d41989c8dcc95c)",
+        "Screenshot: .ui-acceptance/2026-07-24-store/round1-profile-scope-and-popover.png (SHA-256 e03e6ce2a17a9b1168c63ab328c798676d8e12da0f39a37f6879f4cf207c8441)",
+        "Screenshot: .ui-acceptance/2026-07-24-store/round1-bug-profile-local-hide-no-effect.png (SHA-256 34b54842ac45ca06041483d90cd2d4fd59f9a96d1b1ab25cecee122a1a25952e)"
+      ]
     },
     {
       "id": "browser-round-2",
@@ -56,12 +66,32 @@
       "evidence": []
     }
   ],
-  "findings": [],
+  "findings": [
+    {
+      "id": "profile-manual-hide-stale-pending",
+      "severity": "release-blocker",
+      "status": "open",
+      "area": "extension content-script interaction",
+      "expected": "Manual local hide from a profile badge reaches an honest settled state and produces visible, reversible behavior",
+      "actual": "The profile badge schedules the action, but hideTweet only hides a nearest tweet cell/article. A profile-header anchor has neither, so the profile remains visible; the pending badge is not cleared when the timer settles and disappears only after navigation, while the local processed record suppresses the useful badge on the next load.",
+      "source": [
+        "extension/entrypoints/content.ts hideTweet nearest cell/article targeting",
+        "extension/entrypoints/content.ts scheduleHide/cancelPending/badgeForPending lifecycle"
+      ],
+      "evidence": ".ui-acceptance/2026-07-24-store/round1-bug-profile-local-hide-no-effect.png"
+    }
+  ],
   "needsUserAction": [
     {
       "id": "reload-and-open-options",
       "action": "In chrome://extensions, reload the unpacked MXGA extension from extension/.output/chrome-mv3, then open its settings page and leave that tab open",
       "reason": "The browser controller is blocked from chrome:// and chrome-extension:// pages, so it cannot reload the just-built package or create the settings tab itself; both are required before round 1 can verify the exact build and every strategy control",
+      "resolved": false
+    },
+    {
+      "id": "remove-round1-test-record",
+      "action": "After opening MXGA settings, remove the @ElmaPoulet round-1 local test record from 处理记录",
+      "reason": "The failed profile-header local-hide flow persisted a local record and the controller cannot access the extension settings page to remove it",
       "resolved": false
     }
   ]
