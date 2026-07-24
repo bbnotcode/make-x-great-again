@@ -24,7 +24,7 @@ export default defineConfig({
   manifest: ({ browser }) => ({
     name: "Make X Great Again (MXGA)",
     description:
-      "Passive spam / porn-bot badges for X, using a synced public blacklist and local matching. No browsing or scan data uploads. Open source.",
+      "Local spam and porn-bot warnings for X using a synced public list. Matching stays on device. Open source.",
     // alarms: periodic list refresh; unlimitedStorage: the cached list
     // (~5MB) plus local records would otherwise crowd the 10MB default
     // quota. Neither adds an install-time permission warning.
@@ -34,7 +34,9 @@ export default defineConfig({
     // Chrome uses optional_host_permissions; Firefox only added that key in
     // 127, so for our 109+ target the host patterns go in optional_permissions.
     // github.com: requested only when the user clicks 用 GitHub 登录 in the
-    // whitelist section (Device Flow endpoints don't serve CORS).
+    // whitelist section (Device Flow endpoints don't serve CORS). Safari
+    // declares the same X origins, while website access is managed from its
+    // Extensions settings rather than Chrome's runtime permission prompt.
     ...(browser === "firefox"
       ? {
           optional_permissions: [
@@ -43,13 +45,31 @@ export default defineConfig({
             "https://github.com/*",
           ],
         }
-      : {
-          optional_host_permissions: [
-            "*://x.com/*",
-            "*://twitter.com/*",
-            "https://github.com/*",
-          ],
-        }),
+      : browser === "safari"
+        ? {
+            optional_host_permissions: [
+              "*://x.com/*",
+              "*://twitter.com/*",
+              "https://github.com/*",
+            ],
+            // Safari requires packaged resources fetched by a content script
+            // to be explicitly exposed. This bundled snapshot is only the
+            // instant/offline baseline; background sync still hot-swaps newer
+            // public-list versions into local storage.
+            web_accessible_resources: [
+              {
+                resources: ["blacklist-data.json"],
+                matches: ["https://x.com/*", "https://twitter.com/*"],
+              },
+            ],
+          }
+        : {
+            optional_host_permissions: [
+              "*://x.com/*",
+              "*://twitter.com/*",
+              "https://github.com/*",
+            ],
+          }),
     action: { default_title: "Make X Great Again (MXGA)" },
     options_ui: { open_in_tab: true },
     // Firefox / AMO requirements (ignored by the Chrome build):
@@ -73,6 +93,14 @@ export default defineConfig({
             },
           },
         }
-      : {}),
+      : browser === "safari"
+        ? {
+            browser_specific_settings: {
+              // iOS 18 is the mobile baseline. The macOS container still enforces
+              // macOS 26 through its deployment target.
+              safari: { strict_min_version: "18.0" },
+            },
+          }
+        : {}),
   }),
 });

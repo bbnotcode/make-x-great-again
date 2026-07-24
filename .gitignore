@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.build/
 .env
 .env.*
 *.log
@@ -11,3 +12,8 @@ dist/
 .screens/
 .dev-screenshots/
 .ui-acceptance/
+
+# Xcode per-user state and local signing configuration
+apple/**/xcuserdata/
+apple/Config/Signing.local.xcconfig
+*.xcuserstate

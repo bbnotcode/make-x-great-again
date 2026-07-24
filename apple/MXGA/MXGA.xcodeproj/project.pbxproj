@@ -1,0 +1,930 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+
+		21472E57300BBBC00043C52B /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21472E56300BBBC00043C52B /* AppDelegate.swift */; };
+		21472EC1300BBBC00043C52B /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21472EC0300BBBC00043C52B /* OnboardingView.swift */; };
+		21472E68300BBBC00043C52B /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21472E67300BBBC00043C52B /* AppDelegate.swift */; };
+		21472EC3300BBBC00043C52B /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21472EC2300BBBC00043C52B /* OnboardingView.swift */; };
+		21472E72300BBBC00043C52B /* MXGA Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 21472E71300BBBC00043C52B /* MXGA Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		21472E7C300BBBC00043C52B /* MXGA Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 21472E7B300BBBC00043C52B /* MXGA Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		21472E8B300BBBC00043C52B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 21472E4C300BBBC00043C52B /* Assets.xcassets */; };
+		21472E8C300BBBC00043C52B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 21472E4C300BBBC00043C52B /* Assets.xcassets */; };
+		21472E8D300BBBC00043C52B /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21472E4E300BBBC00043C52B /* SafariWebExtensionHandler.swift */; };
+		21472E8E300BBBC00043C52B /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21472E4E300BBBC00043C52B /* SafariWebExtensionHandler.swift */; };
+		21472EA9300BBBC00043C52B /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 21472EA0300BBBC00043C52B /* background.js */; };
+		21472EAA300BBBC00043C52B /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = 21472EA1300BBBC00043C52B /* popup.html */; };
+		21472EAB300BBBC00043C52B /* blacklist-data.json in Resources */ = {isa = PBXBuildFile; fileRef = 21472EA2300BBBC00043C52B /* blacklist-data.json */; };
+		21472EAC300BBBC00043C52B /* chunks in Resources */ = {isa = PBXBuildFile; fileRef = 21472EA3300BBBC00043C52B /* chunks */; };
+		21472EAD300BBBC00043C52B /* content-scripts in Resources */ = {isa = PBXBuildFile; fileRef = 21472EA4300BBBC00043C52B /* content-scripts */; };
+		21472EAE300BBBC00043C52B /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 21472EA5300BBBC00043C52B /* manifest.json */; };
+		21472EAF300BBBC00043C52B /* options.html in Resources */ = {isa = PBXBuildFile; fileRef = 21472EA6300BBBC00043C52B /* options.html */; };
+		21472EB0300BBBC00043C52B /* icon in Resources */ = {isa = PBXBuildFile; fileRef = 21472EA7300BBBC00043C52B /* icon */; };
+		21472EB1300BBBC00043C52B /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 21472EA8300BBBC00043C52B /* assets */; };
+		21472EB2300BBBC00043C52B /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 21472EA0300BBBC00043C52B /* background.js */; };
+		21472EB3300BBBC00043C52B /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = 21472EA1300BBBC00043C52B /* popup.html */; };
+		21472EB4300BBBC00043C52B /* blacklist-data.json in Resources */ = {isa = PBXBuildFile; fileRef = 21472EA2300BBBC00043C52B /* blacklist-data.json */; };
+		21472EB5300BBBC00043C52B /* chunks in Resources */ = {isa = PBXBuildFile; fileRef = 21472EA3300BBBC00043C52B /* chunks */; };
+		21472EB6300BBBC00043C52B /* content-scripts in Resources */ = {isa = PBXBuildFile; fileRef = 21472EA4300BBBC00043C52B /* content-scripts */; };
+		21472EB7300BBBC00043C52B /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 21472EA5300BBBC00043C52B /* manifest.json */; };
+		21472EB8300BBBC00043C52B /* options.html in Resources */ = {isa = PBXBuildFile; fileRef = 21472EA6300BBBC00043C52B /* options.html */; };
+		21472EB9300BBBC00043C52B /* icon in Resources */ = {isa = PBXBuildFile; fileRef = 21472EA7300BBBC00043C52B /* icon */; };
+		21472EBA300BBBC00043C52B /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 21472EA8300BBBC00043C52B /* assets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		21472E73300BBBC00043C52B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 21472E40300BBBBF0043C52B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 21472E70300BBBC00043C52B;
+			remoteInfo = "MXGA Extension (iOS)";
+		};
+		21472E7D300BBBC00043C52B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 21472E40300BBBBF0043C52B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 21472E7A300BBBC00043C52B;
+			remoteInfo = "MXGA Extension (macOS)";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		21472E94300BBBC00043C52B /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				21472E72300BBBC00043C52B /* MXGA Extension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		21472E9B300BBBC00043C52B /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				21472E7C300BBBC00043C52B /* MXGA Extension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+
+		21472E4C300BBBC00043C52B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		21472E4E300BBBC00043C52B /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
+		21472E53300BBBC00043C52B /* MXGA.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MXGA.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		21472E56300BBBC00043C52B /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		21472EC0300BBBC00043C52B /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		21472E60300BBBC00043C52B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		21472E65300BBBC00043C52B /* MXGA.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MXGA.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		21472E67300BBBC00043C52B /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		21472EC2300BBBC00043C52B /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		21472E6C300BBBC00043C52B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		21472E71300BBBC00043C52B /* MXGA Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "MXGA Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		21472E76300BBBC00043C52B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		21472E7B300BBBC00043C52B /* MXGA Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "MXGA Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		21472E80300BBBC00043C52B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		21472EA0300BBBC00043C52B /* background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = background.js; path = ../../extension/.output/safari-mv3/background.js; sourceTree = SOURCE_ROOT; };
+		21472EA1300BBBC00043C52B /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = popup.html; path = ../../extension/.output/safari-mv3/popup.html; sourceTree = SOURCE_ROOT; };
+		21472EA2300BBBC00043C52B /* blacklist-data.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = "blacklist-data.json"; path = ../../extension/.output/safari-mv3/blacklist-data.json; sourceTree = SOURCE_ROOT; };
+		21472EA3300BBBC00043C52B /* chunks */ = {isa = PBXFileReference; lastKnownFileType = folder; name = chunks; path = ../../extension/.output/safari-mv3/chunks; sourceTree = SOURCE_ROOT; };
+		21472EA4300BBBC00043C52B /* content-scripts */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "content-scripts"; path = ../../extension/.output/safari-mv3/content-scripts; sourceTree = SOURCE_ROOT; };
+		21472EA5300BBBC00043C52B /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = manifest.json; path = ../../extension/.output/safari-mv3/manifest.json; sourceTree = SOURCE_ROOT; };
+		21472EA6300BBBC00043C52B /* options.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = options.html; path = ../../extension/.output/safari-mv3/options.html; sourceTree = SOURCE_ROOT; };
+		21472EA7300BBBC00043C52B /* icon */ = {isa = PBXFileReference; lastKnownFileType = folder; name = icon; path = ../../extension/.output/safari-mv3/icon; sourceTree = SOURCE_ROOT; };
+		21472EA8300BBBC00043C52B /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = assets; path = ../../extension/.output/safari-mv3/assets; sourceTree = SOURCE_ROOT; };
+		21472EC4300BBBC00043C52B /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Signing.xcconfig; path = ../Config/Signing.xcconfig; sourceTree = SOURCE_ROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		21472E50300BBBC00043C52B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		21472E62300BBBC00043C52B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		21472E6E300BBBC00043C52B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		21472E78300BBBC00043C52B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+
+		21472E3F300BBBBF0043C52B = {
+			isa = PBXGroup;
+			children = (
+				21472EC4300BBBC00043C52B /* Signing.xcconfig */,
+				21472E44300BBBBF0043C52B /* Shared (App) */,
+				21472E4D300BBBC00043C52B /* Shared (Extension) */,
+				21472E55300BBBC00043C52B /* iOS (App) */,
+				21472E66300BBBC00043C52B /* macOS (App) */,
+				21472E75300BBBC00043C52B /* iOS (Extension) */,
+				21472E7F300BBBC00043C52B /* macOS (Extension) */,
+				21472E54300BBBC00043C52B /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		21472E44300BBBBF0043C52B /* Shared (App) */ = {
+			isa = PBXGroup;
+			children = (
+				21472E4C300BBBC00043C52B /* Assets.xcassets */,
+			);
+			path = "Shared (App)";
+			sourceTree = "<group>";
+		};
+		21472E4D300BBBC00043C52B /* Shared (Extension) */ = {
+			isa = PBXGroup;
+			children = (
+				21472E4E300BBBC00043C52B /* SafariWebExtensionHandler.swift */,
+				21472E9F300BBBC00043C52B /* Resources */,
+			);
+			path = "Shared (Extension)";
+			sourceTree = "<group>";
+		};
+		21472E54300BBBC00043C52B /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				21472E53300BBBC00043C52B /* MXGA.app */,
+				21472E65300BBBC00043C52B /* MXGA.app */,
+				21472E71300BBBC00043C52B /* MXGA Extension.appex */,
+				21472E7B300BBBC00043C52B /* MXGA Extension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		21472E55300BBBC00043C52B /* iOS (App) */ = {
+			isa = PBXGroup;
+			children = (
+				21472E56300BBBC00043C52B /* AppDelegate.swift */,
+				21472EC0300BBBC00043C52B /* OnboardingView.swift */,
+				21472E60300BBBC00043C52B /* Info.plist */,
+			);
+			path = "iOS (App)";
+			sourceTree = "<group>";
+		};
+		21472E66300BBBC00043C52B /* macOS (App) */ = {
+			isa = PBXGroup;
+			children = (
+				21472E67300BBBC00043C52B /* AppDelegate.swift */,
+				21472EC2300BBBC00043C52B /* OnboardingView.swift */,
+				21472E6C300BBBC00043C52B /* Info.plist */,
+			);
+			path = "macOS (App)";
+			sourceTree = "<group>";
+		};
+		21472E75300BBBC00043C52B /* iOS (Extension) */ = {
+			isa = PBXGroup;
+			children = (
+				21472E76300BBBC00043C52B /* Info.plist */,
+			);
+			path = "iOS (Extension)";
+			sourceTree = "<group>";
+		};
+		21472E7F300BBBC00043C52B /* macOS (Extension) */ = {
+			isa = PBXGroup;
+			children = (
+				21472E80300BBBC00043C52B /* Info.plist */,
+			);
+			path = "macOS (Extension)";
+			sourceTree = "<group>";
+		};
+		21472E9F300BBBC00043C52B /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				21472EA0300BBBC00043C52B /* background.js */,
+				21472EA1300BBBC00043C52B /* popup.html */,
+				21472EA2300BBBC00043C52B /* blacklist-data.json */,
+				21472EA3300BBBC00043C52B /* chunks */,
+				21472EA4300BBBC00043C52B /* content-scripts */,
+				21472EA5300BBBC00043C52B /* manifest.json */,
+				21472EA6300BBBC00043C52B /* options.html */,
+				21472EA7300BBBC00043C52B /* icon */,
+				21472EA8300BBBC00043C52B /* assets */,
+			);
+			name = Resources;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		21472E52300BBBC00043C52B /* MXGA (iOS) */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 21472E95300BBBC00043C52B /* Build configuration list for PBXNativeTarget "MXGA (iOS)" */;
+			buildPhases = (
+				21472E4F300BBBC00043C52B /* Sources */,
+				21472E50300BBBC00043C52B /* Frameworks */,
+				21472E51300BBBC00043C52B /* Resources */,
+				21472E94300BBBC00043C52B /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				21472E74300BBBC00043C52B /* PBXTargetDependency */,
+			);
+			name = "MXGA (iOS)";
+			packageProductDependencies = (
+			);
+			productName = "MXGA (iOS)";
+			productReference = 21472E53300BBBC00043C52B /* MXGA.app */;
+			productType = "com.apple.product-type.application";
+		};
+		21472E64300BBBC00043C52B /* MXGA (macOS) */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 21472E9C300BBBC00043C52B /* Build configuration list for PBXNativeTarget "MXGA (macOS)" */;
+			buildPhases = (
+				21472E61300BBBC00043C52B /* Sources */,
+				21472E62300BBBC00043C52B /* Frameworks */,
+				21472E63300BBBC00043C52B /* Resources */,
+				21472E9B300BBBC00043C52B /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				21472E7E300BBBC00043C52B /* PBXTargetDependency */,
+			);
+			name = "MXGA (macOS)";
+			packageProductDependencies = (
+			);
+			productName = "MXGA (macOS)";
+			productReference = 21472E65300BBBC00043C52B /* MXGA.app */;
+			productType = "com.apple.product-type.application";
+		};
+		21472E70300BBBC00043C52B /* MXGA Extension (iOS) */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 21472E91300BBBC00043C52B /* Build configuration list for PBXNativeTarget "MXGA Extension (iOS)" */;
+			buildPhases = (
+				21472E6D300BBBC00043C52B /* Sources */,
+				21472E6E300BBBC00043C52B /* Frameworks */,
+				21472E6F300BBBC00043C52B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "MXGA Extension (iOS)";
+			packageProductDependencies = (
+			);
+			productName = "MXGA Extension (iOS)";
+			productReference = 21472E71300BBBC00043C52B /* MXGA Extension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		21472E7A300BBBC00043C52B /* MXGA Extension (macOS) */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 21472E98300BBBC00043C52B /* Build configuration list for PBXNativeTarget "MXGA Extension (macOS)" */;
+			buildPhases = (
+				21472E77300BBBC00043C52B /* Sources */,
+				21472E78300BBBC00043C52B /* Frameworks */,
+				21472E79300BBBC00043C52B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "MXGA Extension (macOS)";
+			packageProductDependencies = (
+			);
+			productName = "MXGA Extension (macOS)";
+			productReference = 21472E7B300BBBC00043C52B /* MXGA Extension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		21472E40300BBBBF0043C52B /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					21472E52300BBBC00043C52B = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					21472E64300BBBC00043C52B = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					21472E70300BBBC00043C52B = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					21472E7A300BBBC00043C52B = {
+						CreatedOnToolsVersion = 26.6;
+					};
+				};
+			};
+			buildConfigurationList = 21472E43300BBBBF0043C52B /* Build configuration list for PBXProject "MXGA" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 21472E3F300BBBBF0043C52B;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 21472E54300BBBC00043C52B /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				21472E52300BBBC00043C52B /* MXGA (iOS) */,
+				21472E64300BBBC00043C52B /* MXGA (macOS) */,
+				21472E70300BBBC00043C52B /* MXGA Extension (iOS) */,
+				21472E7A300BBBC00043C52B /* MXGA Extension (macOS) */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+
+		21472E51300BBBC00043C52B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				21472E8B300BBBC00043C52B /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		21472E63300BBBC00043C52B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				21472E8C300BBBC00043C52B /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		21472E6F300BBBC00043C52B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				21472EB8300BBBC00043C52B /* options.html in Resources */,
+				21472EB2300BBBC00043C52B /* background.js in Resources */,
+				21472EB4300BBBC00043C52B /* blacklist-data.json in Resources */,
+				21472EBA300BBBC00043C52B /* assets in Resources */,
+				21472EB5300BBBC00043C52B /* chunks in Resources */,
+				21472EB3300BBBC00043C52B /* popup.html in Resources */,
+				21472EB9300BBBC00043C52B /* icon in Resources */,
+				21472EB7300BBBC00043C52B /* manifest.json in Resources */,
+				21472EB6300BBBC00043C52B /* content-scripts in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		21472E79300BBBC00043C52B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				21472EAF300BBBC00043C52B /* options.html in Resources */,
+				21472EA9300BBBC00043C52B /* background.js in Resources */,
+				21472EAB300BBBC00043C52B /* blacklist-data.json in Resources */,
+				21472EB1300BBBC00043C52B /* assets in Resources */,
+				21472EAC300BBBC00043C52B /* chunks in Resources */,
+				21472EAA300BBBC00043C52B /* popup.html in Resources */,
+				21472EB0300BBBC00043C52B /* icon in Resources */,
+				21472EAE300BBBC00043C52B /* manifest.json in Resources */,
+				21472EAD300BBBC00043C52B /* content-scripts in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+
+		21472E4F300BBBC00043C52B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				21472E57300BBBC00043C52B /* AppDelegate.swift in Sources */,
+				21472EC1300BBBC00043C52B /* OnboardingView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		21472E61300BBBC00043C52B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				21472E68300BBBC00043C52B /* AppDelegate.swift in Sources */,
+				21472EC3300BBBC00043C52B /* OnboardingView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		21472E6D300BBBC00043C52B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				21472E8D300BBBC00043C52B /* SafariWebExtensionHandler.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		21472E77300BBBC00043C52B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				21472E8E300BBBC00043C52B /* SafariWebExtensionHandler.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		21472E74300BBBC00043C52B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 21472E70300BBBC00043C52B /* MXGA Extension (iOS) */;
+			targetProxy = 21472E73300BBBC00043C52B /* PBXContainerItemProxy */;
+		};
+		21472E7E300BBBC00043C52B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 21472E7A300BBBC00043C52B /* MXGA Extension (macOS) */;
+			targetProxy = 21472E7D300BBBC00043C52B /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXVariantGroup section */
+
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		21472E8F300BBBC00043C52B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 21472EC4300BBBC00043C52B /* Signing.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		21472E90300BBBC00043C52B /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 21472EC4300BBBC00043C52B /* Signing.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		21472E92300BBBC00043C52B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 7;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Make X Great Again";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.5.1;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(SAFARI_EXTENSION_BUNDLE_IDENTIFIER)";
+				PRODUCT_NAME = "MXGA Extension";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		21472E93300BBBC00043C52B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 7;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Make X Great Again";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.5.1;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(SAFARI_EXTENSION_BUNDLE_IDENTIFIER)";
+				PRODUCT_NAME = "MXGA Extension";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		21472E96300BBBC00043C52B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 7;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (App)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Make X Great Again";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.5.1;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_IDENTIFIER)";
+				PRODUCT_NAME = MXGA;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		21472E97300BBBC00043C52B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 7;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (App)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Make X Great Again";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.5.1;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_IDENTIFIER)";
+				PRODUCT_NAME = MXGA;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		21472E99300BBBC00043C52B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 7;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "macOS (Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Make X Great Again";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.5.1;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(SAFARI_EXTENSION_BUNDLE_IDENTIFIER)";
+				PRODUCT_NAME = "MXGA Extension";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		21472E9A300BBBC00043C52B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 7;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "macOS (Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Make X Great Again";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.5.1;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(SAFARI_EXTENSION_BUNDLE_IDENTIFIER)";
+				PRODUCT_NAME = "MXGA Extension";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		21472E9D300BBBC00043C52B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 7;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "macOS (App)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Make X Great Again";
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.5.1;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_IDENTIFIER)";
+				PRODUCT_NAME = MXGA;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		21472E9E300BBBC00043C52B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 7;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "macOS (App)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Make X Great Again";
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.5.1;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_IDENTIFIER)";
+				PRODUCT_NAME = MXGA;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		21472E43300BBBBF0043C52B /* Build configuration list for PBXProject "MXGA" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				21472E8F300BBBC00043C52B /* Debug */,
+				21472E90300BBBC00043C52B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		21472E91300BBBC00043C52B /* Build configuration list for PBXNativeTarget "MXGA Extension (iOS)" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				21472E92300BBBC00043C52B /* Debug */,
+				21472E93300BBBC00043C52B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		21472E95300BBBC00043C52B /* Build configuration list for PBXNativeTarget "MXGA (iOS)" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				21472E96300BBBC00043C52B /* Debug */,
+				21472E97300BBBC00043C52B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		21472E98300BBBC00043C52B /* Build configuration list for PBXNativeTarget "MXGA Extension (macOS)" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				21472E99300BBBC00043C52B /* Debug */,
+				21472E9A300BBBC00043C52B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		21472E9C300BBBC00043C52B /* Build configuration list for PBXNativeTarget "MXGA (macOS)" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				21472E9D300BBBC00043C52B /* Debug */,
+				21472E9E300BBBC00043C52B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 21472E40300BBBBF0043C52B /* Project object */;
+}

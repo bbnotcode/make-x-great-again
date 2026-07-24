@@ -1,0 +1,11 @@
+// Copy this file to Signing.local.xcconfig and replace the placeholders.
+// Signing.local.xcconfig is ignored by Git.
+DEVELOPMENT_TEAM = ABCDE12345
+APP_BUNDLE_IDENTIFIER = com.example.mxga
+
+// The Safari extension automatically uses
+// $(APP_BUNDLE_IDENTIFIER).SafariExtension.
+
+// Automatic signing is the project default. Uncomment only when a local
+// provisioning profile must be selected explicitly.
+// PROVISIONING_PROFILE_SPECIFIER = Your Profile Name

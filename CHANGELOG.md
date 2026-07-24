@@ -6,6 +6,25 @@ This project follows a pragmatic [Keep a Changelog](https://keepachangelog.com/e
 style. Version numbers refer to the browser extension package unless noted
 otherwise.
 
+## [Unreleased]
+
+### Added
+
+- iOS / iPadOS 18+ Safari Web Extension container with a SwiftUI setup guide,
+  Simulator build script, shared MV3 resources, and iPhone/iPad icons.
+- Touch-first badge popovers plus an iOS hamburger drawer, single-column dashboard cards,
+  and responsive Safari popup/options layouts for compact screens.
+- A shared optional Xcode signing configuration that injects local Team settings into all
+  Apple platform targets without committing developer credentials.
+
+### Changed
+
+- Consolidated the macOS and iOS containers and Safari extensions into one Xcode project with
+  four platform-specific targets; deployment baselines are now macOS 15 and iOS 18.
+- Safari's in-page blacklist index now retains compact lite rows and expands display data only
+  on a hit, reducing the measured retained heap for the current 134k snapshot from roughly
+  55 MB to 32 MB per page context.
+
 ## [0.5.0] - 2026-07-18
 
 The public store release: the 2026-06-10 v0.5 rewrite (documented below in

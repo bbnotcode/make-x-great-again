@@ -27,10 +27,16 @@ export const STYLE = `
   }
 }
 .xss-bubble {
-  position: fixed; right: 16px; top: 16px; z-index: 2147483000;
+  position: fixed;
+  right: max(12px, env(safe-area-inset-right));
+  top: max(12px, env(safe-area-inset-top));
+  z-index: 2147483000;
   color: var(--text); -webkit-font-smoothing: antialiased;
 }
-.xss-bubble.br { top: auto; bottom: 16px; }
+.xss-bubble.br {
+  top: auto;
+  bottom: max(12px, env(safe-area-inset-bottom));
+}
 .pill, .card {
   background: var(--surface); border: 1px solid var(--border);
   box-shadow: var(--shadow); backdrop-filter: blur(12px);
@@ -76,7 +82,10 @@ export const STYLE = `
   flex: none; font-size: 11px; font-weight: 650; color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-.card { width: 312px; padding: 14px; display: none; margin-top: 10px; }
+.card {
+  width: min(312px, calc(100vw - 24px));
+  padding: 14px; display: none; margin-top: 10px;
+}
 /* Expand = the card GROWS out of the pill with a springy overshoot
  * (origin sits up near the pill), instead of teleporting into place. */
 .card { transform-origin: calc(100% - 34px) -8px; }
@@ -409,6 +418,11 @@ svg { display: block; }
 .pop-status[data-kind="info"] { color: var(--muted); }
 .pop-status[data-kind="ok"] { color: var(--danger); }
 .pop-status[data-kind="err"] { color: var(--warn); }
+@media (pointer: coarse) {
+  .pill { min-height: 44px; }
+  .acts button { min-height: 40px; padding-inline: 14px; }
+  .xss-badge { min-height: 28px; }
+}
 
 /* ---- animated badge states (transform/opacity only) ---- */
 .xss-badge.fresh { animation: xrise .22s ease-out; }
@@ -1709,14 +1723,21 @@ export function createBadge(
     pop?.remove();
     pop = null;
     window.removeEventListener("scroll", onScroll, true);
+    document.removeEventListener("pointerdown", onOutsidePointerDown, true);
   };
   const onScroll = () => {
     // A fixed popover detaches visually from its anchor the moment the page
     // scrolls — close it instead of letting it float over unrelated content.
     close();
   };
-  const hide = () => {
-    if (pop?.matches(":hover")) {
+  const onOutsidePointerDown = (event: PointerEvent) => {
+    if (!pop) return;
+    const path = event.composedPath();
+    if (path.includes(el) || path.includes(pop)) return;
+    hide(true);
+  };
+  const hide = (force = false) => {
+    if (!force && pop?.matches(":hover")) {
       // Cursor is on the popover (e.g. blur fired mid-click) — stay open.
       scheduleHide();
       return;
@@ -1839,9 +1860,26 @@ export function createBadge(
     };
     raf = requestAnimationFrame(track);
     window.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    document.addEventListener("pointerdown", onOutsidePointerDown, true);
   };
-  el.addEventListener("mouseenter", show);
-  el.addEventListener("focus", show);
+  let touchInteraction = false;
+  el.addEventListener("pointerdown", (event) => {
+    touchInteraction = event.pointerType !== "mouse";
+  });
+  el.addEventListener("click", (event) => {
+    if (!touchInteraction) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (pop) hide(true);
+    else show();
+    touchInteraction = false;
+  });
+  el.addEventListener("pointerenter", (event) => {
+    if (event.pointerType === "mouse") show();
+  });
+  el.addEventListener("focus", () => {
+    if (!touchInteraction) show();
+  });
   el.addEventListener("mouseleave", scheduleHide);
   el.addEventListener("blur", scheduleHide);
   return el;
