@@ -73,6 +73,43 @@ function trueFlag(v: unknown): true | undefined {
   return v === true ? true : undefined;
 }
 
+/** X has moved viewer/account relationships out of `legacy` into
+ * `relationship_perspectives` on newer GraphQL user objects. Accept both
+ * shapes so a followed author remains protected across X payload variants. */
+export function viewerStateFromUserObject(value: unknown): Pick<
+  FiberUser,
+  "viewerFollowing" | "viewerBlocking" | "viewerMuting" | "viewerFollowRequestSent"
+> {
+  if (!value || typeof value !== "object") return {};
+  const user = value as Record<string, unknown>;
+  const legacy =
+    user.legacy && typeof user.legacy === "object"
+      ? (user.legacy as Record<string, unknown>)
+      : user;
+  const perspectivesRaw =
+    user.relationship_perspectives ??
+    user.relationshipPerspectives ??
+    legacy.relationship_perspectives;
+  const perspectives =
+    perspectivesRaw && typeof perspectivesRaw === "object"
+      ? (perspectivesRaw as Record<string, unknown>)
+      : {};
+  return {
+    ...(trueFlag(perspectives.following) || trueFlag(legacy.following)
+      ? { viewerFollowing: true as const }
+      : {}),
+    ...(trueFlag(perspectives.blocking) || trueFlag(legacy.blocking)
+      ? { viewerBlocking: true as const }
+      : {}),
+    ...(trueFlag(perspectives.muting) || trueFlag(legacy.muting)
+      ? { viewerMuting: true as const }
+      : {}),
+    ...(trueFlag(perspectives.follow_request_sent) || trueFlag(legacy.follow_request_sent)
+      ? { viewerFollowRequestSent: true as const }
+      : {}),
+  };
+}
+
 function bannerUserId(scope: Element | Document): string | undefined {
   const el = scope.querySelector<HTMLElement>('[src*="profile_banners/"], [style*="profile_banners/"]');
   const raw =
@@ -241,6 +278,7 @@ function readFiberUserUncached(el: Element, expectedHandle?: string): FiberUser 
           const accountCreatedAt = Number.isNaN(created)
             ? undefined
             : new Date(created).toISOString();
+          const viewerState = viewerStateFromUserObject(u);
           return {
             bio: typeof legacy.description === "string" ? legacy.description : "",
             ...(userId ? { userId } : {}),
@@ -248,12 +286,7 @@ function readFiberUserUncached(el: Element, expectedHandle?: string): FiberUser 
             followingCount: legacy.friends_count,
             ...(accountCreatedAt ? { accountCreatedAt } : {}),
             ...(accountAgeDays !== undefined ? { accountAgeDays } : {}),
-            ...(trueFlag(legacy.following) ? { viewerFollowing: true as const } : {}),
-            ...(trueFlag(legacy.blocking) ? { viewerBlocking: true as const } : {}),
-            ...(trueFlag(legacy.muting) ? { viewerMuting: true as const } : {}),
-            ...(trueFlag(legacy.follow_request_sent)
-              ? { viewerFollowRequestSent: true as const }
-              : {}),
+            ...viewerState,
           };
         }
       }

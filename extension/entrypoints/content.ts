@@ -628,6 +628,20 @@ export default defineContentScript({
       );
     }
 
+    /** Leave a non-visual mount so the virtualization-aware scanner knows the
+     * followed account was handled without rendering any MXGA badge. */
+    function markViewerProtected(anchor: HTMLElement, key: string) {
+      anchorByKey.delete(key);
+      findings = findings.filter((item) => (item.userId || `h:${item.handle}`) !== key);
+      if (!dismissed) bubbleApi?.update(findings);
+      clearMounts(anchor);
+      const marker = document.createElement("span");
+      marker.className = "xss-mount";
+      marker.hidden = true;
+      marker.setAttribute("data-mxga-follow-protected", "");
+      anchor.appendChild(marker);
+    }
+
     function renderCached(anchor: HTMLElement, key: string, sig: Signals, c: Cached) {
       badgeFor(anchor, key, sig, c.verdict, undefined, "cache");
       pushFinding(sig, c.verdict, "cache");
@@ -725,7 +739,7 @@ export default defineContentScript({
         //    also prevents repeat scans without exposing list membership.
         if (viewerProtected(sig)) {
           showTweet(articleOf(anchor));
-          badgeFor(anchor, key, sig, null);
+          markViewerProtected(anchor, key);
           return;
         }
 
