@@ -1,6 +1,6 @@
 {
   "goal": "Run two complete v0.5 browser-account regression rounds and prepare a verified Chrome Web Store ZIP only if both rounds pass",
-  "updatedAt": "2026-07-24T17:00:00+08:00",
+  "updatedAt": "2026-07-24T16:55:16+08:00",
   "constraints": {
     "browser": "User's existing signed-in Chrome profile",
     "rounds": 2,
@@ -16,8 +16,16 @@
       "id": "baseline",
       "task": "Confirm the clean v0.5 source baseline, installed-browser test surface, strategy matrix, and release commands",
       "verify": "Git state, package/manifest version, existing tests, build scripts, installed extension state, and signed-in X page are all directly inspected",
-      "passes": false,
-      "evidence": []
+      "passes": true,
+      "evidence": [
+        "extension package, lockfile, and generated Chrome manifest all report 0.5.0; manifest_version is 3",
+        "generated manifest permissions are storage/alarms/unlimitedStorage with optional X/Twitter/GitHub host access",
+        "npm run compile passed; extension tests passed 20/20; Chrome production build passed at 443.39 kB",
+        "built manifest SHA-256: 1b76323e77e8b4251fca5694d0c3d60b7a2d0b9974c377e609153495b84e368d",
+        "built content script SHA-256: ec3cca753259cb42609c89fe69f028988c3e90b8f23d8b58be6ef4b94f178e55",
+        "User Chrome X page is signed in as @luoleiorg; installed MXGA content script mounted badges and the corner bubble",
+        "Chrome console identifies MXGA extension id mcldddfhilghdbeobdmmmmjjbgdbjclg and reports the content script ready with no MXGA error"
+      ]
     },
     {
       "id": "browser-round-1",
@@ -49,5 +57,12 @@
     }
   ],
   "findings": [],
-  "needsUserAction": []
+  "needsUserAction": [
+    {
+      "id": "reload-and-open-options",
+      "action": "In chrome://extensions, reload the unpacked MXGA extension from extension/.output/chrome-mv3, then open its settings page and leave that tab open",
+      "reason": "The browser controller is blocked from chrome:// and chrome-extension:// pages, so it cannot reload the just-built package or create the settings tab itself; both are required before round 1 can verify the exact build and every strategy control",
+      "resolved": false
+    }
+  ]
 }
