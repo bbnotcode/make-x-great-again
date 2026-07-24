@@ -1,6 +1,31 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { viewerStateFromUserObject } from "../lib/detect";
+import {
+  parseViewerRelationshipControl,
+  viewerStateFromUserObject,
+} from "../lib/detect";
+
+test("parses X profile follow controls into an explicit relationship", () => {
+  assert.deepEqual(
+    parseViewerRelationshipControl(
+      "1868117602356359168-unfollow",
+      "正在关注 @maimaiRC_",
+    ),
+    {
+      userId: "1868117602356359168",
+      handle: "maimairc_",
+      following: true,
+    },
+  );
+  assert.deepEqual(
+    parseViewerRelationshipControl("3511226595-follow", "关注 @tongbingxue"),
+    {
+      userId: "3511226595",
+      handle: "tongbingxue",
+      following: false,
+    },
+  );
+});
 
 test("detects following from current relationship_perspectives payloads", () => {
   assert.deepEqual(

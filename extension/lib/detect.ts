@@ -203,6 +203,46 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+export interface ViewerRelationship {
+  handle?: string;
+  userId: string;
+  following: boolean;
+}
+
+/** Parse X's stable `<uid>-follow` / `<uid>-unfollow` controls. `unfollow`
+ * means the signed-in viewer currently follows that account. */
+export function parseViewerRelationshipControl(
+  testId: string | null | undefined,
+  label: string | null | undefined,
+): ViewerRelationship | null {
+  const match = (testId ?? "").match(/^(\d+)-(follow|unfollow)$/);
+  if (!match?.[1] || !match[2]) return null;
+  const handle = normalizeHandle((label ?? "").match(/@([A-Za-z0-9_]{1,15})/)?.[1]);
+  return {
+    userId: match[1],
+    ...(handle ? { handle } : {}),
+    following: match[2] === "unfollow",
+  };
+}
+
+/** Read all relationship controls currently rendered by X. Profile headers
+ * expose this even though their individual tweet articles do not. */
+export function visibleViewerRelationships(
+  scope: Element | Document = document,
+): ViewerRelationship[] {
+  const out: ViewerRelationship[] = [];
+  for (const el of scope.querySelectorAll<HTMLElement>(
+    '[data-testid$="-follow"], [data-testid$="-unfollow"]',
+  )) {
+    const rel = parseViewerRelationshipControl(
+      el.getAttribute("data-testid"),
+      `${el.getAttribute("aria-label") ?? ""}\n${el.innerText ?? ""}`,
+    );
+    if (rel) out.push(rel);
+  }
+  return out;
+}
+
 function actionUserInfo(scope: Element | Document, handle?: string): Pick<
   FiberUser,
   "userId" | "viewerFollowing"

@@ -6,6 +6,7 @@ import {
   extractFromArticle,
   extractProfile,
   extractThreadTopic,
+  visibleViewerRelationships,
   viewerHandle,
 } from "../lib/detect";
 import { CATEGORY_ZH } from "../lib/category";
@@ -216,6 +217,42 @@ export default defineContentScript({
     const pendingActions = new Map<string, PendingAction>();
     const inFlight = new Set<string>(); // keys currently in process()
     const hitPublicSeen = new Set<string>(); // hitPublic stat: once per account
+    const followedKeys = new Set<string>();
+
+    function followedKeyForHandle(handle: string): string {
+      return `h:${handle.trim().replace(/^@+/, "").toLowerCase()}`;
+    }
+
+    function rememberFollowed(sig: Signals) {
+      if (!sig.viewerFollowing) return;
+      followedKeys.add(followedKeyForHandle(sig.handle));
+      if (sig.userId) followedKeys.add(sig.userId);
+    }
+
+    function isFollowProtected(sig: Signals): boolean {
+      rememberFollowed(sig);
+      return (
+        viewerProtected(sig) ||
+        followedKeys.has(followedKeyForHandle(sig.handle)) ||
+        (!!sig.userId && followedKeys.has(sig.userId))
+      );
+    }
+
+    /** Relationship controls often live outside the tweet article. Refresh
+     * them before extracting posts so one profile-level "正在关注" protects
+     * every article by that author on the page. */
+    function refreshVisibleRelationships() {
+      for (const rel of visibleViewerRelationships()) {
+        const keys = [
+          rel.userId,
+          ...(rel.handle ? [followedKeyForHandle(rel.handle)] : []),
+        ];
+        for (const key of keys) {
+          if (rel.following) followedKeys.add(key);
+          else followedKeys.delete(key);
+        }
+      }
+    }
 
     let settings = await getSettings();
     let regexRules = compileRegexRules(settings.regexRules).compiled;
@@ -737,7 +774,7 @@ export default defineContentScript({
         //    Run this before the local blocked fast-path so a previously
         //    hidden followed account becomes visible again. A neutral mount
         //    also prevents repeat scans without exposing list membership.
-        if (viewerProtected(sig)) {
+        if (isFollowProtected(sig)) {
           showTweet(articleOf(anchor));
           markViewerProtected(anchor, key);
           return;
@@ -858,6 +895,7 @@ export default defineContentScript({
 
     function scan() {
       captureViewer();
+      refreshVisibleRelationships();
       const p = extractProfile();
       if (p) {
         const el = document.querySelector<HTMLElement>('[data-testid="UserName"]');
@@ -902,7 +940,7 @@ export default defineContentScript({
         const regexApplies =
           settings.regexEnabled &&
           regexRules.length > 0 &&
-          !viewerProtected(info) &&
+          !isFollowProtected(info) &&
           !isWhitelisted(info.userId, info.handle) &&
           (settings.regexScope === "all" || ctx === "reply");
         const regexHit = regexApplies
