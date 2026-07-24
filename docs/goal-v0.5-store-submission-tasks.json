@@ -1,6 +1,6 @@
 {
   "goal": "Run two complete v0.5 browser-account regression rounds and prepare a verified Chrome Web Store ZIP only if both rounds pass",
-  "updatedAt": "2026-07-24T17:07:14+08:00",
+  "updatedAt": "2026-07-24T17:18:00+08:00",
   "constraints": {
     "browser": "User's existing signed-in Chrome profile",
     "rounds": 2,
@@ -45,10 +45,12 @@
         "Replies-only scope correctly kept the profile visible and badge-only before manual action",
         "Badge hover popover rendered the expected 隐藏 / 静音 / 拉黑 / 误判申诉 actions without drift",
         "Local hide exposed a 5-second undo state, but after the timer the profile header stayed visible, the pending badge stayed stale until navigation, and the next load suppressed the badge while leaving the profile visible",
+        "After the user reloaded the latest installed extension, Chrome logged a fresh content-script injection at 2026-07-24T09:11:47.842Z; @sale123_ash was detected as 垃圾 95% and the same profile local-hide defect reproduced after the 5-second timer",
         "MXGA-filtered Chrome logs contained only content-script ready messages and no runtime error, so the failure is a silent state/targeting defect",
         "Screenshot: .ui-acceptance/2026-07-24-store/round1-auto-process-off.png (SHA-256 545c4e146bbceb0f1c1cdafe0f3c4b562b68d0d7eb645cb442d41989c8dcc95c)",
         "Screenshot: .ui-acceptance/2026-07-24-store/round1-profile-scope-and-popover.png (SHA-256 e03e6ce2a17a9b1168c63ab328c798676d8e12da0f39a37f6879f4cf207c8441)",
-        "Screenshot: .ui-acceptance/2026-07-24-store/round1-bug-profile-local-hide-no-effect.png (SHA-256 34b54842ac45ca06041483d90cd2d4fd59f9a96d1b1ab25cecee122a1a25952e)"
+        "Screenshot: .ui-acceptance/2026-07-24-store/round1-bug-profile-local-hide-no-effect.png (SHA-256 34b54842ac45ca06041483d90cd2d4fd59f9a96d1b1ab25cecee122a1a25952e)",
+        "Screenshot: .ui-acceptance/2026-07-24-store/latest-reload-profile-hide-bug.jpg (1200x928 JPEG; SHA-256 4b9dd981fbb9dfd311493f4cd9bac3f8361d6937f9e5588b87e42cae76bf7e34)"
       ]
     },
     {
@@ -97,7 +99,10 @@
         "extension/entrypoints/content.ts hideTweet nearest cell/article targeting",
         "extension/entrypoints/content.ts scheduleHide/cancelPending/badgeForPending lifecycle"
       ],
-      "evidence": ".ui-acceptance/2026-07-24-store/round1-bug-profile-local-hide-no-effect.png"
+      "evidence": [
+        ".ui-acceptance/2026-07-24-store/round1-bug-profile-local-hide-no-effect.png",
+        ".ui-acceptance/2026-07-24-store/latest-reload-profile-hide-bug.jpg"
+      ]
     }
   ],
   "needsUserAction": [
@@ -109,8 +114,8 @@
     },
     {
       "id": "remove-round1-test-record",
-      "action": "After opening MXGA settings, remove the @ElmaPoulet round-1 local test record from 处理记录",
-      "reason": "The failed profile-header local-hide flow persisted a local record and the controller cannot access the extension settings page to remove it",
+      "action": "After opening MXGA settings, remove the @ElmaPoulet and @sale123_ash round-1 local test records from 处理记录",
+      "reason": "The failed profile-header local-hide flows persisted local records and the controller cannot access the extension settings page to remove them",
       "resolved": false
     }
   ]
