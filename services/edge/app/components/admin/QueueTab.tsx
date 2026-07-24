@@ -18,7 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { type Account, api, AuthError, type Item, rowKey } from "@/lib/adminApi";
-import { ago, fmtN, verdictZh, VERDICTS } from "@/lib/format";
+import { ago, CATEGORIES, categoryZh, fmtN, verdictZh, VERDICTS } from "@/lib/format";
 import { runBatch } from "@/lib/runBatch";
 import { useSelection } from "@/lib/useSelection";
 import { cn } from "@/lib/utils";
@@ -118,26 +118,30 @@ export function QueueTab({ onAuth, onMutated }: { onAuth: () => void; onMutated:
     }
   };
 
-  const batch = (action: string, label: string, variant: "destructive" | "default") => async () => {
-    const keysArr = [...sel.sel];
-    const ok = await confirm({
-      title: `批量${label}`,
-      body: (
-        <p>
-          确认对已选 <b>{keysArr.length}</b> 条执行「{label}」？写 review_log，不可批量撤回。
-        </p>
-      ),
-      okLabel: `${label} ${keysArr.length} 条`,
-      okVariant: variant,
-    });
-    if (!ok) return;
-    if (await runBatch(keysArr, label, (items: Item[]) => api.decideBatch(action, items))) {
-      const set = new Set(keysArr);
-      setQueue((q) => q.filter((a) => !set.has(rowKey(a))));
-      sel.clear();
-      onMutated();
-    }
-  };
+  const batch =
+    (action: string, label: string, variant: "destructive" | "default", category?: string) =>
+    async () => {
+      const keysArr = [...sel.sel];
+      const ok = await confirm({
+        title: `批量${label}`,
+        body: (
+          <p>
+            确认对已选 <b>{keysArr.length}</b> 条执行「{label}」？写 review_log，不可批量撤回。
+          </p>
+        ),
+        okLabel: `${label} ${keysArr.length} 条`,
+        okVariant: variant,
+      });
+      if (!ok) return;
+      if (
+        await runBatch(keysArr, label, (items: Item[]) => api.decideBatch(action, items, category))
+      ) {
+        const set = new Set(keysArr);
+        setQueue((q) => q.filter((a) => !set.has(rowKey(a))));
+        sel.clear();
+        onMutated();
+      }
+    };
 
   return (
     <div>
@@ -251,6 +255,23 @@ export function QueueTab({ onAuth, onMutated }: { onAuth: () => void; onMutated:
             <Button size="sm" variant="destructive" onClick={batch("approve", "拉黑", "destructive")}>
               批量拉黑
             </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="destructive">
+                  拉黑并归类 ▾
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                {CATEGORIES.map((cat) => (
+                  <DropdownMenuItem
+                    key={cat.value}
+                    onClick={batch("approve", `拉黑并归类「${cat.zh}」`, "destructive", cat.value)}
+                  >
+                    {cat.zh}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button size="sm" variant="outline" onClick={batch("reject", "驳回", "default")}>
               批量驳回
             </Button>
@@ -280,9 +301,12 @@ export function QueueTab({ onAuth, onMutated }: { onAuth: () => void; onMutated:
                 confidence={Math.round((a.confidence || 0) * 100)}
                 reporters={a.reporters || 0}
                 subExtra={
-                  <span title={new Date(a.last_scored || a.published_at || 0).toLocaleString("zh-CN")}>
-                    · 入队 {ago(a.last_scored || a.published_at)}
-                  </span>
+                  <>
+                    <span title={new Date(a.last_scored || a.published_at || 0).toLocaleString("zh-CN")}>
+                      · 入队 {ago(a.last_scored || a.published_at)}
+                    </span>
+                    {a.category && <span title={`分类：${a.category}`}> · {categoryZh(a.category)}</span>}
+                  </>
                 }
                 actions={
                   <>
