@@ -5,11 +5,13 @@
 import { CATEGORY_ZH, type SpamCategory, categoryFromCode } from "./category";
 import {
   LIST_KEY,
+  type LiteRow,
   type StoredList,
   type StoredWhitelist,
   WL_KEY,
   getStoredList,
   getStoredWhitelist,
+  validateLiteArtifact,
 } from "./list-sync";
 import { setLocalRules } from "./local-rules";
 import {
@@ -39,8 +41,13 @@ export interface IndexEntry {
 }
 
 // ---- In-memory lookup structures ----
-let userIdMap: Map<string, IndexEntry> | null = null;
-let handleMap: Map<string, IndexEntry> | null = null;
+// Keep the original compact lite tuples in the maps and expand only an
+// actual hit. Materializing a Verdict/reasons/date object for every one of
+// 100k+ entries costs tens of megabytes per X tab on iOS.
+type CompactIndexEntry = LiteRow;
+let userIdMap: Map<string, CompactIndexEntry> | null = null;
+let handleMap: Map<string, CompactIndexEntry> | null = null;
+let indexUpdatedAt = new Date(0).toISOString();
 // Official whitelist — accounts here are never returned by lookupLocal,
 // whatever the blacklist says. Safety valve for false positives / appeals.
 let wlIds = new Set<string>();
@@ -58,37 +65,42 @@ function buildWhitelist(wl: StoredWhitelist): void {
   wlHandles = handles;
 }
 
+export function indexEntryFromRow(row: LiteRow, updatedAt: string): IndexEntry | null {
+  const [userId, handle, code] = row;
+  const label = CODE_TO_LABEL[String(code)[0] ?? ""];
+  if (!label) return null;
+  const category = categoryFromCode(String(code)[1]);
+  const tier = String(code)[2] === "h" ? "confirmed" : "auto";
+  return {
+    userId,
+    handle,
+    verdict: {
+      label,
+      confidence: 1,
+      reasons: [
+        `公共黑名单收录 · ${CATEGORY_ZH[category]}${tier === "confirmed" ? " · 人工确认" : " · 自动收录"}`,
+      ],
+    },
+    category,
+    tier,
+    source: "curated",
+    updatedAt,
+  };
+}
+
 function buildMaps(list: StoredList): void {
-  const nextById = new Map<string, IndexEntry>();
-  const nextByHandle = new Map<string, IndexEntry>();
-  const updatedAt = new Date(list.fetchedAt).toISOString();
+  const nextById = new Map<string, CompactIndexEntry>();
+  const nextByHandle = new Map<string, CompactIndexEntry>();
   for (const row of list.entries) {
     if (!Array.isArray(row) || row.length < 3) continue;
     const [userId, handle, code] = row;
-    const label = CODE_TO_LABEL[String(code)[0] ?? ""];
-    if (!label) continue;
-    const category = categoryFromCode(String(code)[1]);
-    const tier = String(code)[2] === "h" ? "confirmed" : "auto";
-    const entry: IndexEntry = {
-      userId,
-      handle,
-      verdict: {
-        label,
-        confidence: 1,
-        reasons: [
-          `公共黑名单收录 · ${CATEGORY_ZH[category]}${tier === "confirmed" ? " · 人工确认" : " · 自动收录"}`,
-        ],
-      },
-      category,
-      tier,
-      source: "curated",
-      updatedAt,
-    };
-    if (userId) nextById.set(userId, entry);
-    if (handle) nextByHandle.set(handle.toLowerCase(), entry);
+    if (!CODE_TO_LABEL[String(code)[0] ?? ""]) continue;
+    if (userId) nextById.set(userId, row);
+    if (handle) nextByHandle.set(handle.toLowerCase(), row);
   }
   userIdMap = nextById;
   handleMap = nextByHandle;
+  indexUpdatedAt = new Date(list.fetchedAt).toISOString();
   setLocalRules(list.rules);
 }
 
@@ -104,9 +116,49 @@ try {
   /* not an extension context (tests) — non-fatal */
 }
 
-/** Warm the local index from the synced cache. When the cache is empty
- *  (fresh install, first run), asks the background to sync; lookups return
- *  null until the download lands and the onChanged hook swaps the maps in. */
+async function getBundledSafariList(): Promise<StoredList | null> {
+  if (import.meta.env?.SAFARI !== true) return null;
+  try {
+    const response = await fetch(chrome.runtime.getURL("blacklist-data.json"));
+    if (!response.ok) throw new Error(`blacklist-data.json returned ${response.status}`);
+    const raw = (await response.json()) as Record<string, unknown>;
+    // Tolerant validation, same as the network-sync path: the packaged
+    // snapshot is sanitized at build time, but a stray invalid row must not
+    // void the whole offline fallback.
+    const parsed = validateLiteArtifact(raw, { dropInvalidEntries: true });
+    if (!parsed.ok) throw new Error(parsed.error);
+    const generatedAt =
+      typeof raw.generatedAt === "number" && Number.isFinite(raw.generatedAt)
+        ? raw.generatedAt
+        : Date.now();
+    return {
+      version:
+        parsed.value.version ??
+        `bundled-${generatedAt}-${parsed.value.entries.length}`,
+      fetchedAt: generatedAt,
+      count: parsed.value.entries.length,
+      entries: parsed.value.entries,
+      ...(parsed.value.rules ? { rules: parsed.value.rules } : {}),
+    };
+  } catch (error) {
+    console.error("Failed to load bundled Safari blacklist fallback:", error);
+    return null;
+  }
+}
+
+function requestBackgroundSync(): void {
+  try {
+    // Fire-and-forget: background owns the download. Safari starts with its
+    // packaged snapshot, then receives newer versions via storage.onChanged.
+    void chrome.runtime.sendMessage({ type: "list-sync" });
+  } catch {
+    /* background unavailable (tests) — keep the current maps */
+  }
+}
+
+/** Warm the local index from the synced cache. Safari also carries a packaged
+ *  snapshot because its background worker/storage may not be ready on the
+ *  first page load; remote sync still replaces it as soon as it succeeds. */
 export async function warmLocalIndex(): Promise<void> {
   if (warmed) return;
   await warmLocalAllowlist();
@@ -118,25 +170,30 @@ export async function warmLocalIndex(): Promise<void> {
     warmed = true;
     return;
   }
+
+  const bundled = await getBundledSafariList();
+  if (bundled) {
+    buildMaps(bundled);
+    warmed = true;
+    requestBackgroundSync();
+    return;
+  }
+
   userIdMap ??= new Map();
   handleMap ??= new Map();
-  try {
-    // Fire-and-forget: background owns the download (content scripts must not
-    // each fetch a 5MB artifact). Response arrives via storage.onChanged.
-    void chrome.runtime.sendMessage({ type: "list-sync" });
-  } catch {
-    /* background unavailable (tests) — stay empty */
-  }
+  requestBackgroundSync();
 }
 
 /** Synchronous lookup by numeric userId. Returns null if not found. */
 export function lookupByUserId(userId: string): IndexEntry | null {
-  return userIdMap?.get(userId) ?? null;
+  const row = userIdMap?.get(userId);
+  return row ? indexEntryFromRow(row, indexUpdatedAt) : null;
 }
 
 /** Synchronous lookup by handle (case-insensitive). Returns null if not found. */
 export function lookupByHandle(handle: string): IndexEntry | null {
-  return handleMap?.get(handle.toLowerCase()) ?? null;
+  const row = handleMap?.get(handle.toLowerCase());
+  return row ? indexEntryFromRow(row, indexUpdatedAt) : null;
 }
 
 /** Official-whitelist membership — shared guard for every local detection

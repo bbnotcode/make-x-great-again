@@ -78,12 +78,27 @@ test("cap passes through human-confirmed entries and 'full' opt-in unchanged", (
       capAutoTierAction(action, { source: "list", tier: "auto", autoTierMode: "full" }),
       action,
     );
-    // Rule hits carry their own reply-section confinement; no tier cap.
+  }
+});
+
+test("rule hits are auto tier: 'hide' caps them at local hide, 'badge' gates them out", () => {
+  // The options copy promises "X 静音/拉黑仍只对人工确认条目执行" (hide) and
+  // "自动收录条目永不自动处理" (badge). Rule hits target first-seen accounts
+  // with zero human review, so both promises must cover them.
+  for (const action of ["mute", "block", "hide"] as const) {
     assert.equal(
       capAutoTierAction(action, { source: "rule", tier: "auto", autoTierMode: "hide" }),
+      "hide",
+    );
+    assert.equal(
+      capAutoTierAction(action, { source: "rule", tier: "auto", autoTierMode: "full" }),
       action,
     );
   }
+  assert.equal(
+    autoEligible({ source: "rule", tier: "auto", inReply: true, autoScope: "replies", autoTierMode: "badge" }),
+    false,
+  );
 });
 
 test("rule hits: reply sections only, autoScope cannot widen them", () => {

@@ -289,7 +289,7 @@ const Page = ({
   sub,
   children,
 }: { title: string; sub?: string; children?: React.ReactNode }) => (
-  <main className="min-w-0 max-w-[1160px] flex-1 px-5 py-6 md:px-9 md:py-8">
+  <main className="mxga-page w-full min-w-0 max-w-[1160px] flex-1 px-4 py-5 sm:px-6 md:px-9 md:py-8">
     <h1 className="text-[26px] font-semibold tracking-[-0.015em] text-fg">{title}</h1>
     {sub && <div className="mb-7 mt-1.5 text-[13px] text-fg-3">{sub}</div>}
     {children}
@@ -380,26 +380,26 @@ function ListStatusCard({ ls, onRefreshed }: { ls: ListState; onRefreshed: () =>
     }
   };
   return (
-    <div className="mb-8 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3">
-      <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-[13px]">
-        <span>
+    <div className="list-status-card mb-8 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3">
+      <div className="list-status-summary flex flex-wrap items-baseline gap-x-5 gap-y-1 text-[13px]">
+        <span className="list-status-stat">
           <b className="font-mono text-[16px] tabular-nums">{ls.black.toLocaleString("zh-CN")}</b>
           <span className="ml-1 text-fg-3">黑名单</span>
         </span>
-        <span>
+        <span className="list-status-stat">
           <b className="font-mono text-[16px] tabular-nums">{ls.white.toLocaleString("zh-CN")}</b>
           <span className="ml-1 text-fg-3">白名单</span>
         </span>
-        <span>
+        <span className="list-status-stat">
           <b className="font-mono text-[16px] tabular-nums">{ls.rules}</b>
           <span className="ml-1 text-fg-3">检测规则</span>
         </span>
-        <span className="text-[12px] text-fg-3">
+        <span className="list-status-meta text-[12px] text-fg-3">
           上次同步 {relTime(ls.fetchedAt)}
           {ls.version ? ` · ${ls.version.slice(0, 14)}…` : ""} · 每 6 小时自动同步
         </span>
       </div>
-      <div className="flex items-center gap-3">
+      <div className="list-status-actions flex items-center gap-3">
         {msg && <span className="text-[12px] text-fg-3">{msg}</span>}
         <Btn onClick={refresh} disabled={busy}>
           {busy ? "同步中…" : "立即更新"}
@@ -438,7 +438,7 @@ function Overview() {
       />
     ) : null;
   const Card = ({ n, l }: { n: number; l: string }) => (
-    <div className="bg-bg p-5">
+    <div className="overview-stat-card bg-bg p-5">
       <div className="font-mono text-[28px] font-semibold tabular-nums leading-[1.05] tracking-[-0.02em] text-fg">
         {n.toLocaleString("zh-CN")}
       </div>
@@ -457,7 +457,7 @@ function Overview() {
   return (
     <Page title="概览" sub="本地统计 · 数据仅存于本机，不含个人隐私信息">
       {ls && <ListStatusCard ls={ls} onRefreshed={loadLists} />}
-      <div className="mb-8 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border lg:grid-cols-4">
+      <div className="overview-stats mb-8 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border lg:grid-cols-4">
         <Card n={s.detections} l="AI 检测总数" />
         <Card n={s.cacheHits} l="缓存命中 · 省下的 AI 判定" />
         <Card n={bl} l={autoBl ? `已处理账号 · 其中自动 ${autoBl.toLocaleString("zh-CN")}` : "已处理账号"} />
@@ -505,7 +505,7 @@ function Overview() {
             {SPAM_CATEGORIES.map((cat) => {
               const act = st.categoryActions[cat] ?? "badge";
               const actZh =
-                act === "badge" ? "仅标记" : act === "hide" ? "自动隐藏" : act === "mute" ? "自动静音" : "自动拉黑";
+                act === "badge" ? "仅标记" : act === "hide" ? "本地隐藏" : act === "mute" ? "X 静音" : "X 拉黑";
               return (
                 <span
                   key={cat}
@@ -594,7 +594,7 @@ function Blocklist() {
         className="mb-4 w-full max-w-[320px] rounded-md border border-border-2 bg-transparent px-3 py-2 text-[13px] outline-none transition focus:border-accent"
       />
       {/* overflow-x-auto（而非 hidden）：窄窗口下表格横向滚动，操作列不再被裁掉 */}
-      <div className="overflow-x-auto rounded-lg border border-border">
+      <div className="desktop-record-table overflow-x-auto rounded-lg border border-border">
         <table className="w-full min-w-[880px] border-collapse text-[13px]">
           <thead className="bg-card">
             <tr>
@@ -705,6 +705,67 @@ function Blocklist() {
           </tbody>
         </table>
       </div>
+      <div className="mobile-record-list">
+        {rows.map((r) => (
+          <article key={r.id} className="mobile-record-card">
+            <header className="flex items-start gap-3">
+              <AvatarLink
+                handle={r.handle}
+                url={r.avatarUrl}
+                name={r.displayName || r.handle}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-semibold text-fg">
+                  {r.displayName || `@${r.handle}`}
+                </div>
+                <HandleLink handle={r.handle} className="text-[12px] text-fg-3" />
+              </div>
+              {r.verdict && <Tag label={r.verdict.label} conf={r.verdict.confidence} />}
+            </header>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <ReasonChip raw={r.reason} />
+              {tweetUrl(r) && (
+                <a
+                  href={tweetUrl(r) as string}
+                  target="_blank"
+                  rel="noopener"
+                  className="text-[12px] text-fg-2 underline decoration-dotted underline-offset-2"
+                >
+                  查看现场 ↗
+                </a>
+              )}
+            </div>
+            {r.tweetText && (
+              <p className="mt-2 line-clamp-3 text-[12px] leading-5 text-fg-3">“{r.tweetText}”</p>
+            )}
+            <footer className="mt-4 flex items-center justify-between gap-3 border-t border-border pt-3">
+              <span className="text-[11px] text-fg-3">
+                {src[r.source]?.label ?? r.source} · {when(r.ts)}
+              </span>
+              <div className="flex flex-col items-end gap-1.5">
+                <Btn
+                  size="sm"
+                  className="mobile-record-action"
+                  onClick={async () => {
+                    await removeBlock(r.id);
+                    load();
+                  }}
+                >
+                  恢复显示
+                </Btn>
+                <a
+                  href={appealUrl(r.handle, r.id)}
+                  target="_blank"
+                  rel="noopener"
+                  className="text-[11px] text-fg-3 underline decoration-dotted underline-offset-2"
+                >
+                  误判申诉 ↗
+                </a>
+              </div>
+            </footer>
+          </article>
+        ))}
+      </div>
       {!list.length && <div className="py-10 text-center text-fg-3">还没有处理记录</div>}
     </Page>
   );
@@ -718,7 +779,7 @@ function Cache() {
       title="检测缓存"
       sub={`共 ${rows.length} 条 · 同一账号再次出现时直接复用判定结果，不再调用 AI`}
     >
-      <div className="overflow-x-auto rounded-lg border border-border">
+      <div className="desktop-record-table overflow-x-auto rounded-lg border border-border">
         <table className="w-full min-w-[760px] border-collapse text-[13px]">
           <thead className="bg-card">
             <tr>
@@ -775,6 +836,33 @@ function Cache() {
             ))}
           </tbody>
         </table>
+      </div>
+      <div className="mobile-record-list">
+        {rows.map((c) => (
+          <article key={c.id} className="mobile-record-card">
+            <header className="flex items-start gap-3">
+              <AvatarLink
+                handle={c.handle}
+                url={c.avatarUrl}
+                name={c.displayName || c.handle}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-semibold text-fg">
+                  {c.displayName || `@${c.handle}`}
+                </div>
+                <HandleLink handle={c.handle} className="text-[12px] text-fg-3" />
+              </div>
+              <Tag label={c.verdict.label} conf={c.verdict.confidence} />
+            </header>
+            <div className="mt-3">
+              <ReasonChip reasons={c.verdict.reasons} />
+            </div>
+            <footer className="mt-4 flex items-center justify-between gap-3 border-t border-border pt-3 text-[11px] text-fg-3">
+              <span className="truncate font-mono">{c.model}</span>
+              <span className="flex-none">{when(c.ts)}</span>
+            </footer>
+          </article>
+        ))}
       </div>
       {!rows.length && <div className="py-10 text-center text-fg-3">缓存为空</div>}
     </Page>
@@ -842,8 +930,22 @@ const ACTION_MODES: {
   },
 ];
 
-/** Ensure the optional x.com host permission before enabling an X action. */
+function isMobileApplePlatform(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return (
+    /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+  );
+}
+
+/** Ensure X website access before enabling a native action.
+ *
+ * Safari grants website access for the content script from Safari Settings;
+ * its permissions.request() result does not reliably reflect that grant. If
+ * the content script can run on X, the native action is a same-site request
+ * and needs no second Chrome-style runtime grant. */
 async function ensureXPermission(): Promise<boolean> {
+  if (import.meta.env.SAFARI) return true;
   try {
     if (await chrome.permissions.contains({ origins: X_ORIGINS })) return true;
     return await chrome.permissions.request({ origins: X_ORIGINS });
@@ -861,11 +963,15 @@ const CATEGORY_HINT: Record<SpamCategory, string> = {
   other: "已确认是垃圾号但未归入以上类别",
 };
 
-const CATEGORY_ACTIONS: { value: CategoryAction; label: string; needsX: boolean }[] = [
-  { value: "badge", label: "仅标记", needsX: false },
-  { value: "hide", label: "自动隐藏", needsX: false },
-  { value: "mute", label: "自动静音", needsX: true },
-  { value: "block", label: "自动拉黑", needsX: true },
+// Same action vocabulary as the manual 处理方式 selector — the four segments
+// describe WHAT happens; that this column happens automatically is carried by
+// the section title. 「自动隐藏/自动静音」-style labels made it look like a
+// different set of actions from the manual ones (they never were).
+const CATEGORY_ACTIONS: { value: CategoryAction; label: string; title: string; needsX: boolean }[] = [
+  { value: "badge", label: "仅标记", title: "只挂角标提示，不做任何处理", needsX: false },
+  { value: "hide", label: "本地隐藏", title: "只在本扩展里隐藏（仅本机、可随时恢复），与手动方式里的「本地隐藏」是同一动作", needsX: false },
+  { value: "mute", label: "X 静音", title: "X 原生静音：用你的登录态执行，所有设备生效；对方无感知", needsX: true },
+  { value: "block", label: "X 拉黑", title: "X 原生拉黑：用你的登录态执行，所有设备生效；互相不可见、解除关注，需谨慎", needsX: true },
 ];
 
 /** cat → 1-char lite-artifact code (schema v2), for the per-category counts
@@ -895,8 +1001,8 @@ function CategoryPolicyRow({
   onChange: (a: CategoryAction) => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-border-2 p-3">
-      <div className="min-w-[150px]">
+    <div className="category-policy-row flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-border-2 p-3">
+      <div className="min-w-0 flex-1 sm:min-w-[150px]">
         <span className="font-medium text-fg">{CATEGORY_ZH[cat]}</span>
         {count !== undefined && (
           <span
@@ -908,13 +1014,14 @@ function CategoryPolicyRow({
         )}
         <span className="block text-[12px] text-fg-3">{CATEGORY_HINT[cat]}</span>
       </div>
-      <div className="flex overflow-hidden rounded-md border border-border-2">
+      <div className="category-policy-actions flex w-full overflow-x-auto rounded-md border border-border-2 sm:w-auto">
         {CATEGORY_ACTIONS.map((a) => {
           const active = value === a.value;
           return (
             <button
               key={a.value}
               type="button"
+              title={a.title}
               onClick={() => onChange(a.value)}
               className={`px-2.5 py-1.5 text-[12px] transition ${
                 active
@@ -1449,7 +1556,7 @@ function Settings() {
   };
   return (
     <Page title="设置" sub="配置仅存于本机">
-      <div className="max-w-[680px] space-y-9">
+      <div className="settings-content max-w-[680px] space-y-9">
         {st && (
           <section>
             <SectionH>检测行为</SectionH>
@@ -1478,57 +1585,22 @@ function Settings() {
 
         {st && (
           <section>
-            <SectionH>手动处理方式</SectionH>
-            <p className="mb-3 text-[12px] text-fg-3">
-              你手动点按钮时执行的动作。X 静音 / 拉黑走你自己的登录态，不经过我们的服务器；与下方的自动处理策略互相独立。
-            </p>
-            <div className="space-y-2">
-              {ACTION_MODES.map((m) => {
-                const active = st.actionMode === m.value;
-                return (
-                  <button
-                    type="button"
-                    key={m.value}
-                    onClick={() => changeMode(m.value)}
-                    className={`flex w-full items-start gap-3 rounded-lg border p-3 text-left transition ${
-                      active
-                        ? "border-fg bg-card-hi"
-                        : "border-border-2 hover:border-fg-3"
-                    }`}
-                  >
-                    <span
-                      className={`mt-0.5 flex h-4 w-4 flex-none items-center justify-center rounded-full border ${
-                        active ? "border-fg" : "border-border-2"
-                      }`}
-                    >
-                      {active && <span className="h-2 w-2 rounded-full bg-fg" />}
-                    </span>
-                    <span>
-                      <span className="font-medium text-fg">{m.label}</span>
-                      <span className="block text-[12px] text-fg-3">{m.hint}</span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-            {permDenied && (
-              <p className="mt-2 text-[12px] text-danger">
-                未授权访问 x.com，已保持当前处理方式。X 静音 / 拉黑需要该权限才能调用 X 接口。
-              </p>
-            )}
-          </section>
-        )}
-
-        {st && (
-          <section>
             <SectionH>自动处理策略</SectionH>
             <p className="mb-3 text-[12px] leading-relaxed text-fg-3">
-              命中<b className="text-fg-2">公共黑名单或官方规则</b>的账号按类别自动处理，其余只挂角标。
-              总开关在气泡里；规则命中只在评论区自动执行；白名单账号永不处理；一切可在「处理记录」撤销。
+              命中<b className="text-fg-2">公共黑名单或官方规则</b>的账号按下方类别设定自动处理，其余只挂角标。
+              规则命中只在评论区自动执行；白名单账号永不处理；一切可在「处理记录」撤销。
             </p>
             <div className="mb-4">
+              <Toggle
+                on={st.autoProcess}
+                onChange={(v) => save("autoProcess", v)}
+                label="启用自动处理"
+                hint="总开关，与气泡面板里的「自动处理」开关同步；关闭后以下配置保留但不执行，一切命中只标记"
+              />
+            </div>
+            <div className="mb-4">
               <div className="mb-1.5 text-[12px] font-semibold text-fg">自动处理范围</div>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div className="auto-scope-grid grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {(
                   [
                     {
@@ -1572,8 +1644,8 @@ function Settings() {
             <div className="mb-4">
               <div className="mb-1.5 text-[12px] font-semibold text-fg">自动收录条目</div>
               <p className="mb-2 text-[12px] leading-relaxed text-fg-3">
-                公榜条目分两级：<b className="text-fg-2">人工确认</b>（维护者复核过，始终按下方各类别的动作完整执行）和
-                <b className="text-fg-2">自动收录</b>（AI/规则判定自动上榜，占榜单大多数）。这里决定自动收录条目能自动处理到什么程度。
+                命中分两级：<b className="text-fg-2">人工确认</b>（维护者复核过的公榜条目，始终按下方各类别的动作完整执行）和
+                <b className="text-fg-2">自动收录</b>（AI/规则自动上榜的公榜条目 + 本地官方规则命中，占大多数）。这里决定自动收录一级能自动处理到什么程度。
               </p>
               <div className="grid grid-cols-1 gap-2">
                 {(
@@ -1581,11 +1653,11 @@ function Settings() {
                     {
                       v: "full",
                       label: "完整执行（默认）",
-                      hint: "上榜即处理：与人工确认条目同权，按各类别设定的动作执行（包括 X 静音/拉黑）。误判可在「处理记录」恢复并申诉。",
+                      hint: "自动收录与人工确认同权，按各类别设定的动作执行（包括 X 静音/拉黑）。误判可在「处理记录」恢复并申诉。",
                     },
                     {
                       v: "hide",
-                      label: "封顶为自动隐藏",
+                      label: "封顶为本地隐藏",
                       hint: "按各类别设定的动作执行，但封顶为本地隐藏——零联网、一键恢复；X 静音/拉黑仍只对人工确认条目执行。",
                     },
                     {
@@ -1632,6 +1704,21 @@ function Settings() {
                 />
               ))}
             </div>
+            <p className="mt-2 text-[12px] text-fg-3">
+              动作含义与下方「手动处理动作」一致：本地隐藏仅本机、可恢复；X 静音 / 拉黑用你的登录态原生执行，所有设备生效。
+            </p>
+            {import.meta.env.SAFARI && (
+              <p className="mt-2 text-[12px] leading-relaxed text-fg-3">
+                {isMobileApplePlatform()
+                  ? "Safari 的网站访问权限由浏览器统一管理。如果 X 上没有出现徽标或动作未执行，请前往“设置”→“App”→“Safari”→“扩展”→“Make X Great Again”，启用扩展并允许访问 x.com。"
+                  : "Safari 的网站访问权限由浏览器统一管理。如果 X 上没有出现徽标或动作未执行，请前往 Safari → 设置 → 扩展 → Make X Great Again，启用扩展并允许访问 x.com。"}
+              </p>
+            )}
+            {permDenied && (
+              <p className="mt-2 text-[12px] text-danger">
+                未授权访问 x.com，已保持当前设置。X 静音 / 拉黑需要该权限才能调用 X 接口。
+              </p>
+            )}
           </section>
         )}
 
@@ -1723,6 +1810,48 @@ function Settings() {
           </section>
         )}
 
+        {st && (
+          <section>
+            <SectionH>手动处理动作</SectionH>
+            <p className="mb-3 text-[12px] text-fg-3">
+              只决定你<b className="text-fg-2">手动</b>点角标或气泡按钮时执行哪种动作，不影响上方的自动处理。X 静音 / 拉黑走你自己的登录态，不经过我们的服务器。
+            </p>
+            <div className="space-y-2">
+              {ACTION_MODES.map((m) => {
+                const active = st.actionMode === m.value;
+                return (
+                  <button
+                    type="button"
+                    key={m.value}
+                    onClick={() => changeMode(m.value)}
+                    className={`flex w-full items-start gap-3 rounded-lg border p-3 text-left transition ${
+                      active
+                        ? "border-fg bg-card-hi"
+                        : "border-border-2 hover:border-fg-3"
+                    }`}
+                  >
+                    <span
+                      className={`mt-0.5 flex h-4 w-4 flex-none items-center justify-center rounded-full border ${
+                        active ? "border-fg" : "border-border-2"
+                      }`}
+                    >
+                      {active && <span className="h-2 w-2 rounded-full bg-fg" />}
+                    </span>
+                    <span>
+                      <span className="font-medium text-fg">{m.label}</span>
+                      <span className="block text-[12px] text-fg-3">{m.hint}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {permDenied && (
+              <p className="mt-2 text-[12px] text-danger">
+                未授权访问 x.com，已保持当前处理方式。X 静音 / 拉黑需要该权限才能调用 X 接口。
+              </p>
+            )}
+          </section>
+        )}
 
         <section>
           <SectionH>数据与隐私</SectionH>
@@ -1768,9 +1897,9 @@ const About = () => (
   <Page title="关于" sub={`${BRAND.name} · 公益、开源`}>
     <div className="max-w-[680px] space-y-4 text-[13px] leading-7 text-fg-2">
       <p>
-        X(Twitter) 反垃圾 / 色情机器人扩展。被动检测：公共名单由扩展定期从官方源自动同步（只下载公开名单数据，不上传任何内容），比对全部在本机完成。如在「设置 → 处理方式」里选择 X 静音 / 拉黑，则会用你当前的 X 登录态调用 X 自家接口对账号生效（仍不经过我们的服务器、不收集任何数据）。
+        X(Twitter) 反垃圾 / 色情机器人扩展。被动检测：公共名单由扩展定期从官方源自动同步（只下载公开名单数据，不上传任何内容），比对全部在本机完成。如在「设置」里把手动或自动动作选为 X 静音 / 拉黑，则会用你当前的 X 登录态调用 X 自家接口对账号生效（仍不经过我们的服务器、不收集任何数据）。
       </p>
-      <div className="grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-2">
+      <div className="about-grid grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-2">
         <div className="bg-bg p-4">
           <div className="text-[11px] uppercase tracking-[0.15em] text-fg-3">许可证</div>
           <code className="mt-1 inline-block font-mono text-[13px] text-fg">{BRAND.license}</code>
@@ -1831,6 +1960,20 @@ const Mascot = () => (
   />
 );
 
+function BrandLockup() {
+  return (
+    <div className="flex min-w-0 items-center gap-2.5 text-[15px] font-semibold tracking-[-0.005em]">
+      <Mascot />
+      <span className="flex min-w-0 flex-col gap-px leading-tight">
+        <span>{BRAND.acronym}</span>
+        <span className="truncate text-[10px] font-medium uppercase tracking-[0.08em] text-fg-4">
+          {BRAND.name}
+        </span>
+      </span>
+    </div>
+  );
+}
+
 /** 白名单自助申请 — its own nav page so the entry isn't buried in 设置. */
 function WhitelistPage() {
   const [st, setSt] = useState<Settings | null>(null);
@@ -1855,6 +1998,53 @@ const TABS = [
 type TabId = (typeof TABS)[number][0];
 const tabIds = new Set<TabId>(TABS.map(([id]) => id));
 
+function TabButtons({
+  active,
+  drawer = false,
+  onSelect,
+}: {
+  active: TabId;
+  drawer?: boolean;
+  onSelect: (id: TabId) => void;
+}) {
+  return TABS.map(([id, label]) => (
+    <button
+      key={id}
+      type="button"
+      onClick={() => onSelect(id)}
+      className={`flex min-h-11 flex-none cursor-pointer items-center gap-2 whitespace-nowrap rounded-md px-3 py-2 text-left text-[13px] transition ${
+        drawer ? "w-full" : ""
+      } ${active === id ? "bg-card-hi text-fg" : "text-fg-3 hover:bg-card hover:text-fg"}`}
+    >
+      {label}
+    </button>
+  ));
+}
+
+function NavigationFooter() {
+  return (
+    <div className="space-y-2 text-[11px] text-fg-3">
+      <a
+        href={`${EDGE_DEFAULT}/list`}
+        target="_blank"
+        rel="noopener"
+        className="block min-h-11 content-center rounded-md px-3 text-fg-2 hover:bg-card hover:text-fg"
+      >
+        看公榜 ↗
+      </a>
+      <a
+        href={REPO}
+        target="_blank"
+        rel="noopener"
+        className="block min-h-11 content-center rounded-md px-3 text-fg-2 hover:bg-card hover:text-fg"
+      >
+        GitHub ↗
+      </a>
+      <div className="px-3 pt-1 font-mono text-fg-4">v{chrome.runtime.getManifest().version}</div>
+    </div>
+  );
+}
+
 function tabFromLocation(): TabId {
   if (typeof location === "undefined") return "overview";
   const url = new URL(location.href);
@@ -1875,57 +2065,101 @@ function setTabUrl(id: TabId) {
 
 export function App() {
   const [tab, setTabState] = useState<TabId>(() => tabFromLocation());
-  const Active = TABS.find((t) => t[0] === tab)?.[2] ?? Overview;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const mobileApple = isMobileApplePlatform();
+  const activeTab = TABS.find((item) => item[0] === tab);
+  const Active = activeTab?.[2] ?? Overview;
   const setTab = (id: TabId) => {
     setTabState(id);
     setTabUrl(id);
+    setMenuOpen(false);
   };
-  return (
-    // 窄屏（手机 / 窄窗口）侧边栏折叠为顶栏 + 横向可换行导航，避免整页
-    // 横向滚动；md 及以上恢复左侧固定栏。
-    <div className="flex min-h-screen flex-col md:flex-row">
-      <aside className="flex w-full flex-none flex-col gap-3 border-b border-border px-4 py-4 md:sticky md:top-0 md:h-screen md:w-[220px] md:gap-6 md:border-b-0 md:border-r md:py-6">
-        <div className="flex items-center gap-2.5 px-1 text-[15px] font-semibold tracking-[-0.005em]">
-          <Mascot />
-          <span className="flex flex-col gap-px leading-tight">
-            <span>{BRAND.acronym}</span>
-            <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-fg-4">{BRAND.name}</span>
-          </span>
-        </div>
-        <nav className="flex flex-row flex-wrap gap-0.5 md:flex-col" aria-label="管理面板导航">
-          {TABS.map(([id, label]) => (
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [menuOpen]);
+
+  if (mobileApple) {
+    return (
+      <div className="ios-mobile-shell min-h-screen">
+        <header className="ios-mobile-header sticky top-0 z-30 flex items-center gap-3 border-b border-border bg-bg/95 px-4 pb-3 backdrop-blur">
+          <button
+            type="button"
+            aria-label="打开管理菜单"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen(true)}
+            className="grid h-11 w-11 flex-none place-items-center rounded-lg border border-border-2 bg-card text-fg"
+          >
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+              <path d="M4 6h16M4 12h16M4 18h16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            </svg>
+          </button>
+          <BrandLockup />
+        </header>
+
+        {menuOpen && (
+          <div className="fixed inset-0 z-50">
             <button
-              key={id}
               type="button"
-              onClick={() => setTab(id)}
-              className={`flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-left text-[13px] transition ${
-                tab === id
-                  ? "bg-card-hi text-fg"
-                  : "text-fg-3 hover:bg-card hover:text-fg"
-              }`}
+              aria-label="关闭管理菜单"
+              onClick={() => setMenuOpen(false)}
+              className="absolute inset-0 h-full w-full bg-black/65 backdrop-blur-[2px]"
+            />
+            <aside
+              role="dialog"
+              aria-modal="true"
+              aria-label="管理面板菜单"
+              className="ios-mobile-drawer absolute inset-y-0 left-0 flex w-[min(320px,86vw)] flex-col border-r border-border-2 bg-bg px-4 pb-5 shadow-[20px_0_60px_rgba(0,0,0,0.45)]"
             >
-              {label}
-            </button>
-          ))}
+              <div className="flex items-center justify-between border-b border-border pb-4">
+                <BrandLockup />
+                <button
+                  type="button"
+                  aria-label="关闭菜单"
+                  onClick={() => setMenuOpen(false)}
+                  className="grid h-11 w-11 place-items-center rounded-lg text-fg-2 hover:bg-card-hi hover:text-fg"
+                >
+                  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                    <path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                  </svg>
+                </button>
+              </div>
+              <nav className="mt-4 flex flex-col gap-1" aria-label="管理面板导航">
+                <TabButtons active={tab} drawer onSelect={setTab} />
+              </nav>
+              <div className="mt-auto border-t border-border pt-3">
+                <NavigationFooter />
+              </div>
+            </aside>
+          </div>
+        )}
+
+        <Active />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-h-screen flex-col md:flex-row">
+      <aside className="sticky top-0 z-20 flex w-full flex-none flex-col gap-3 border-b border-border bg-bg/95 px-4 py-3 backdrop-blur md:h-screen md:w-[220px] md:gap-6 md:border-b-0 md:border-r md:py-6">
+        <div className="px-1">
+          <BrandLockup />
+        </div>
+        <nav className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 md:mx-0 md:flex-col md:gap-0.5 md:overflow-visible md:px-0 md:pb-0" aria-label="管理面板导航">
+          <TabButtons active={tab} onSelect={setTab} />
         </nav>
-        <div className="mt-auto hidden space-y-1.5 text-[11px] text-fg-3 md:block">
-          <a
-            href={`${EDGE_DEFAULT}/list`}
-            target="_blank"
-            rel="noopener"
-            className="block text-fg-2 hover:text-fg"
-          >
-            看公榜 ↗
-          </a>
-          <a
-            href={REPO}
-            target="_blank"
-            rel="noopener"
-            className="block text-fg-2 hover:text-fg"
-          >
-            GitHub ↗
-          </a>
-          <div className="pt-2 font-mono text-fg-4">v{chrome.runtime.getManifest().version}</div>
+        <div className="mt-auto hidden md:block">
+          <NavigationFooter />
         </div>
       </aside>
       <Active />

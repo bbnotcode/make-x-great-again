@@ -74,6 +74,7 @@
 
 html, body { margin: 0; }
 body {
+  min-width: 0;
   color: var(--color-fg);
   background: var(--color-bg);
   font: 14px/1.55 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Inter",
@@ -89,6 +90,109 @@ body {
   outline: 2px solid var(--color-accent);
   outline-offset: -1px;
   border-radius: var(--radius);
+}
+
+.mobile-record-list { display: none; }
+
+/* Safari on iPhone can expose a desktop-like extension-page viewport even
+   though the page is shown in a narrow sheet. The runtime iOS shell is the
+   source of truth: it removes the split view and forces a single-column,
+   touch-first layout regardless of CSS breakpoint reporting. */
+.ios-mobile-shell {
+  min-width: 0;
+  min-height: 100vh;
+  overflow-x: clip;
+}
+.ios-mobile-header {
+  padding-top: max(12px, env(safe-area-inset-top));
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+}
+.ios-mobile-drawer {
+  padding-top: max(20px, env(safe-area-inset-top));
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-bottom: max(20px, env(safe-area-inset-bottom));
+  overflow-y: auto;
+  animation: mxga-drawer-in .2s ease-out;
+}
+@keyframes mxga-drawer-in {
+  from { transform: translateX(-24px); opacity: .65; }
+}
+.ios-mobile-shell .mxga-page {
+  width: 100%;
+  max-width: 680px;
+  margin-inline: auto;
+  padding: 24px max(16px, env(safe-area-inset-right)) max(32px, env(safe-area-inset-bottom));
+  padding-left: max(16px, env(safe-area-inset-left));
+}
+.ios-mobile-shell .mxga-page > h1 { font-size: 24px; }
+.ios-mobile-shell .mxga-page > h1 + div { margin-bottom: 20px; }
+.ios-mobile-shell .overview-stats {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.ios-mobile-shell .overview-stat-card { padding: 16px; }
+.ios-mobile-shell .overview-stat-card > div:first-child { font-size: 24px; }
+.ios-mobile-shell .list-status-card {
+  display: block;
+  padding: 16px;
+}
+.ios-mobile-shell .list-status-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px 8px;
+}
+.ios-mobile-shell .list-status-stat b,
+.ios-mobile-shell .list-status-stat span {
+  display: block;
+  margin-left: 0;
+}
+.ios-mobile-shell .list-status-stat b { font-size: 18px; }
+.ios-mobile-shell .list-status-meta {
+  grid-column: 1 / -1;
+  line-height: 1.6;
+}
+.ios-mobile-shell .list-status-actions {
+  width: 100%;
+  margin-top: 14px;
+  align-items: stretch;
+  flex-direction: column;
+}
+.ios-mobile-shell .list-status-actions button { width: 100%; }
+.ios-mobile-shell .desktop-record-table { display: none; }
+.ios-mobile-shell .mobile-record-list {
+  display: grid;
+  gap: 12px;
+}
+.ios-mobile-shell .mobile-record-card {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-card);
+}
+.ios-mobile-shell .mobile-record-action { min-width: 88px; }
+.ios-mobile-shell .settings-content { max-width: none; }
+.ios-mobile-shell .auto-scope-grid,
+.ios-mobile-shell .about-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+.ios-mobile-shell .category-policy-row { display: block; }
+.ios-mobile-shell .category-policy-actions {
+  display: grid;
+  width: 100%;
+  margin-top: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+}
+.ios-mobile-shell .category-policy-actions button {
+  min-width: 0;
+  padding-inline: 6px;
+  white-space: normal;
+}
+
+@media (pointer: coarse) {
+  button, input, select { min-height: 44px; }
+  a, button { -webkit-tap-highlight-color: transparent; }
 }
 
 @media (prefers-reduced-motion: reduce) {

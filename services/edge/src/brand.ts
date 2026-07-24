@@ -21,6 +21,8 @@ export const BRAND = {
   /** Mozilla Add-ons (AMO) listing — the install path for Firefox users.
    *  Locale-neutral path; AMO localizes per the visitor's browser. */
   firefoxAddons: "https://addons.mozilla.org/firefox/addon/make-x-great-again/",
+  /** Apple TestFlight invite — the beta install path for iOS, iPadOS, and macOS. */
+  testFlight: "https://testflight.apple.com/join/SeH4raps",
   /** Public Worker entry point (custom domain). */
   edgeBase: "https://x.zuoluo.tv",
   /** Governance doc inside the repo. */

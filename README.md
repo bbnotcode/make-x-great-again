@@ -8,12 +8,13 @@
 
 <p align="center">
   <b>少看垃圾，多看人话。</b><br>
-  你照常刷 X，社区共建的公开黑名单帮你把广告号和色情 bot 标出来 · Chrome / Firefox 扩展 · AGPL-3.0 开源
+  你照常刷 X，社区共建的公开黑名单帮你把广告号和色情 bot 标出来 · Chrome / Firefox / Safari 扩展 · AGPL-3.0 开源
 </p>
 
 <p align="center">
   <a href="https://chromewebstore.google.com/detail/make-x-great-again/aeoldnecphbkkckeedfgfcdcekkljdea"><img src="https://img.shields.io/chrome-web-store/v/aeoldnecphbkkckeedfgfcdcekkljdea?style=flat-square&color=4285F4&label=chrome%20web%20store&logo=googlechrome&logoColor=white" alt="Chrome Web Store"></a>
   <a href="https://addons.mozilla.org/firefox/addon/make-x-great-again/"><img src="https://img.shields.io/amo/v/make-x-great-again?style=flat-square&color=FF7139&label=firefox%20add-ons&logo=firefoxbrowser&logoColor=white" alt="Firefox Add-ons"></a>
+  <a href="https://testflight.apple.com/join/SeH4raps"><img src="https://img.shields.io/badge/TestFlight-开放测试-0D96F6?style=flat-square&logo=apple&logoColor=white" alt="TestFlight"></a>
   <a href="https://github.com/foru17/make-x-great-again/blob/main/LICENSE"><img src="https://img.shields.io/github/license/foru17/make-x-great-again?style=flat-square&color=green" alt="License: AGPL-3.0"></a>
   <a href="https://github.com/foru17/make-x-great-again/releases/latest"><img src="https://img.shields.io/github/v/release/foru17/make-x-great-again?style=flat-square&color=blue&include_prereleases&label=release" alt="Release"></a>
   <a href="https://github.com/foru17/make-x-great-again/stargazers"><img src="https://img.shields.io/github/stars/foru17/make-x-great-again?style=flat-square&color=yellow" alt="Stars"></a>
@@ -24,6 +25,7 @@
 <p align="center">
   <a href="https://chromewebstore.google.com/detail/make-x-great-again/aeoldnecphbkkckeedfgfcdcekkljdea">🟦 从 Chrome 商店安装</a> ·
   <a href="https://addons.mozilla.org/firefox/addon/make-x-great-again/">🦊 从 Firefox 商店安装</a> ·
+  <a href="https://testflight.apple.com/join/SeH4raps">🍎 加入 TestFlight 测试</a> ·
   <a href="https://x.zuoluo.tv">🌐 官网门户</a> ·
   <a href="https://x.zuoluo.tv/list">📋 公共名单</a> ·
   <a href="https://github.com/foru17/make-x-great-again/releases/latest">📦 GitHub Release</a> ·
@@ -31,6 +33,20 @@
 </p>
 
 ---
+
+## 支持的平台与版本
+
+同一套名单与检测逻辑，三个平台版本，选你在用的浏览器装：
+
+| 平台版本 | 安装渠道 | 状态 | 环境要求 |
+|---|---|---|---|
+| 🟦 **Chrome 版**（Chrome / Edge / Brave / Arc） | [Chrome 网上应用店](https://chromewebstore.google.com/detail/make-x-great-again/aeoldnecphbkkckeedfgfcdcekkljdea) | ✅ 已上架，自动更新 | Chromium 内核，MV3 |
+| 🦊 **Firefox 版** | [Firefox 附加组件商店](https://addons.mozilla.org/firefox/addon/make-x-great-again/) | ✅ 已上架，自动更新 | Firefox 109+ |
+| 🧭 **Safari macOS 版** | [TestFlight](https://testflight.apple.com/join/SeH4raps) | 🧪 开放测试 | macOS 15+ |
+| 📱 **Safari iOS / iPadOS 版** | [TestFlight](https://testflight.apple.com/join/SeH4raps) | 🧪 开放测试 | iOS / iPadOS 18+，作用于 Safari 内的 x.com |
+
+Safari（macOS / iOS）版由 [@tualatrix](https://github.com/tualatrix) 移植与维护，
+构建说明见 [docs/SAFARI.md](./docs/SAFARI.md)（macOS）与 [docs/SAFARI-IOS.md](./docs/SAFARI-IOS.md)（iOS）。
 
 ## 这个项目要解决什么
 
@@ -90,6 +106,7 @@ X 现在的问题，大家都知道：
 
 - 🟦 **Chrome / Edge / Brave / Arc**：[Chrome 网上应用店](https://chromewebstore.google.com/detail/make-x-great-again/aeoldnecphbkkckeedfgfcdcekkljdea)
 - 🦊 **Firefox**：[Firefox 附加组件商店](https://addons.mozilla.org/firefox/addon/make-x-great-again/)
+- 🍎 **iOS / iPadOS / macOS**：[加入 TestFlight 测试](https://testflight.apple.com/join/SeH4raps)
 
 装好后，访问 x.com 扩展会自动开始工作。
 
@@ -126,11 +143,19 @@ cd extension
 pnpm dev          # Chromium：监听 + 自动重载，把 .output/chrome-mv3 加进 Chrome 即可
 pnpm dev:firefox  # Firefox：同上，产物在 .output/firefox-mv3
 
-# 3. 边缘服务（Cloudflare Worker + D1 + Hono）
+# 3. Safari 扩展（macOS 15+ / iOS 18+，MV3 + SwiftUI 容器）
+npm --prefix extension install
+# 可选：复制后填写本机 Team ID；该本地文件不会提交
+cp apple/Config/Signing.local.xcconfig.example apple/Config/Signing.local.xcconfig
+./scripts/build-safari-app.sh      # macOS 构建；有本地 Team 时自动签名
+./scripts/build-safari-ios-app.sh  # iOS Simulator 构建检查
+# macOS 说明见 docs/SAFARI.md；iOS 说明见 docs/SAFARI-IOS.md
+
+# 4. 边缘服务（Cloudflare Worker + D1 + Hono）
 cd services/edge
 pnpm dev         # 本地 8787
 
-# 4. 部署（需 Cloudflare 账号 + wrangler 登录）
+# 5. 部署（需 Cloudflare 账号 + wrangler 登录）
 pnpm deploy
 ```
 
@@ -161,6 +186,7 @@ extension/            MV3 浏览器扩展：WXT + React 19 + Tailwind v4（名�
     background.ts     名单定时同步、GitHub Device Flow、本地健康检查 / 统计
     popup/ options/   React 弹窗 + 设置页（含本地隐藏列表的取消隐藏、处理方式选择）
   lib/                cache / blocklist / local-index / detect / stats / x-action（X 静音/拉黑限速队列）
+apple/MXGA/           macOS 15+ / iOS 18+ 共用的 Xcode 工程（4 个平台 target）
 services/edge/        Cloudflare Worker（Hono）+ D1（xss-db）
   src/index.ts        /v1/* API + scheduled cron + Env 类型
   src/pages/          SSR landing / list / admin（同套 base-ui design token）
@@ -241,7 +267,8 @@ CONTRIBUTING.md       贡献指南
 
 | 层 | 选型 | 备注 |
 |---|---|---|
-| 扩展 | WXT 0.20 · React 19 · Tailwind v4 · Shadow DOM · Chrome + Firefox MV3 | content-script 用 Shadow DOM 隔离样式，不污染 X；同一套代码出 Chrome / Firefox 两个产物；后台同步公开名单、本地匹配；可选 X 静音/拉黑用 x.com 可选权限调 X 自家接口 |
+| 扩展 | WXT 0.20 · React 19 · Tailwind v4 · Shadow DOM · Chrome + Firefox MV3 | content-script 用 Shadow DOM 隔离样式，不污染 X；后台同步公开名单、本地匹配；可选 X 静音/拉黑用 x.com 可选权限调 X 自家接口 |
+| Safari | Safari Web Extension MV3 · Swift 6 · SwiftUI · macOS 15+ / iOS 18+ | 单一 Xcode 工程复用 WXT WebExtension 源码与名单同步；支持本地隐藏及可选 X 静音/拉黑。iOS 仅作用于 Safari 网页；构建见 [macOS](./docs/SAFARI.md) / [iOS](./docs/SAFARI-IOS.md) |
 | 边缘 | Cloudflare Worker · Hono · D1 SQLite · R2 | 单 region，custom domain `x.zuoluo.tv` |
 | LLM | 任何 OpenAI 兼容 `/chat/completions` | 仅靠 system prompt 约束，不微调；只在服务端策展管线使用 |
 | 身份 | GitHub token 验证（仅网站端举报/共建流程） | 扩展无任何登录；X 静音/拉黑复用你浏览器已有的 X 登录态，不读取也不上传该凭据；服务端只存加盐 HMAC 指纹 |
@@ -253,6 +280,18 @@ CONTRIBUTING.md       贡献指南
 
 欢迎 PR、issue、申诉。请先翻一下 [CONTRIBUTING.md](./CONTRIBUTING.md) 和 [GOVERNANCE.md](./GOVERNANCE.md)。
 如果你想贡献新的 Pillar（02–05 任意一个）的设计或代码，先开 issue 聊一下方向，避免重复造轮子。
+
+### 贡献者
+
+感谢每一位让 MXGA 变得更好的人：
+
+| 贡献者 | 贡献 |
+|---|---|
+| [@tualatrix](https://github.com/tualatrix) | Safari 平台移植：macOS / iOS 容器 App、触屏交互适配、名单索引内存优化（[#90](https://github.com/foru17/make-x-great-again/pull/90)） |
+
+<a href="https://github.com/foru17/make-x-great-again/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=foru17/make-x-great-again" alt="Contributors" />
+</a>
 
 ## License
 

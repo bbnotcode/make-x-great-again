@@ -75,6 +75,10 @@
   --color-violet: #7e22ce;
 }
 
+/* Safari for macOS sizes extension popovers from the document's intrinsic
+   width. A viewport-relative width here creates a circular calculation and
+   collapses the toolbar popup to a narrow, translucent strip. Keep the
+   desktop intrinsic width fixed; only use the viewport on touch devices. */
 html, body { width: 340px; margin: 0; }
 body {
   color: var(--color-fg);
@@ -92,6 +96,12 @@ body {
   outline: 2px solid var(--color-accent);
   outline-offset: -1px;
   border-radius: var(--radius);
+}
+
+@media (pointer: coarse) {
+  html, body { width: 100vw; max-width: 340px; }
+  button { min-height: 44px; }
+  a, button { -webkit-tap-highlight-color: transparent; }
 }
 
 @media (prefers-reduced-motion: reduce) {

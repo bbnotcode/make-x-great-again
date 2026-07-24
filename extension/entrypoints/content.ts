@@ -1,3 +1,4 @@
+import { hideAccountSurface } from "../lib/account-surface";
 import { autoEligible, capAutoTierAction, viewerProtected } from "../lib/auto-policy";
 import { addBlocked, isBlockedSync, warm as warmBlocklist } from "../lib/blocklist";
 import { BRAND } from "../lib/brand";
@@ -34,7 +35,6 @@ import {
   updateBlockRecord,
 } from "../lib/store";
 import type { Signals, Verdict } from "../lib/types";
-import { performXAction, retryDelayForAttempt } from "../lib/x-action";
 import {
   type BadgeSource,
   type Finding,
@@ -150,6 +150,10 @@ function autoCategoryCount(s: Settings): number {
  *  the bubble's batch panel to surface a per-row 重试 state). */
 async function applyXAction(mode: ActionMode, sig: Signals): Promise<boolean> {
   if (mode === "local") return true;
+
+  // Load the mutation client only after the user explicitly chooses a native
+  // X action and grants the optional host permission.
+  const { performXAction, retryDelayForAttempt } = await import("../lib/x-action");
   const attempt = await performXAction(mode, sig.userId, sig.handle);
   if (attempt.ok) return true;
   const delay = retryDelayForAttempt(attempt, 1);
@@ -231,7 +235,6 @@ function restoreRegexHidden(): void {
     cell.removeAttribute("data-mxga-regex-rule");
   }
 }
-
 /** Each inline badge gets its own shadow host so X CSS can't touch it. */
 function mountBadge(anchor: HTMLElement, build: () => HTMLElement) {
   const host = document.createElement("span");
@@ -327,7 +330,7 @@ export default defineContentScript({
     if (!settings.enabled) return; // master off → don't init (applies next load)
     // Build marker — confirms which content-script build is live in this tab
     // (reloading the unpacked extension does NOT refresh already-open tabs).
-    console.info("[MXGA] content script ready · build 2026-07-22 (nav-carryover)");
+    console.info("[MXGA] content script ready · build 2026-07-24 (profile-pending-settle)");
     onSettingsChange((s) => {
       const modeChanged = s.actionMode !== settings.actionMode;
       const regexChanged =
@@ -418,8 +421,15 @@ export default defineContentScript({
       const tweetId = art ? articleStatusId(art) : null;
       const tweetText = sig.triggeringComment || sig.recentTweets[0];
       const timer = setTimeout(() => {
-        void executeHide(key, sig);
-        pendingActions.delete(key);
+        try {
+          void executeHide(key, sig).catch(() => {});
+        } finally {
+          pendingActions.delete(key);
+          // The undo window has settled even if X recycled the target or a
+          // synchronous DOM lookup failed. Never leave a permanent "5秒后"
+          // badge claiming an action is still pending.
+          clearMounts(anchor);
+        }
       }, PENDING_MS);
       pendingActions.set(key, {
         key,
@@ -483,10 +493,15 @@ export default defineContentScript({
       const art = articleOf(anchor);
       const sameAuthor =
         !!art && handleFromArticle(art)?.toLowerCase() === sig.handle.toLowerCase();
-      const target = sameAuthor
-        ? anchor
-        : document.querySelector(`[data-xss-key="${CSS.escape(key)}"]`);
-      if (target) hideTweet(target);
+      // Profile badges are not inside an article. Their captured UserName
+      // anchor is still the authoritative target; hideAccountSurface resolves
+      // it to the profile header. Article anchors retain the author/recycling
+      // guard before falling back to the tagged row.
+      const target =
+        sameAuthor || (!!anchor && !art)
+          ? anchor
+          : document.querySelector(`[data-xss-key="${CSS.escape(key)}"]`);
+      if (target) hideAccountSurface(target);
       // If this account is a live bubble finding (a listed hit the user chose
       // to handle from the badge popover rather than the batch panel), drive
       // its row to "done" so it stops offering an actionable button and joins
@@ -683,7 +698,7 @@ export default defineContentScript({
           // shrink / fly-into-chip) belongs to the corner bubble; animating
           // the page's own DOM competes with X's scroll/virtualizer and reads
           // as jank on the timeline.
-          hideTweet(autoTarget(it));
+          hideAccountSurface(autoTarget(it));
           // The action has now SETTLED (attempted) — drop its pending marker so
           // it stops being a resume candidate; only items whose queue died
           // before this point stay pending. On X failure, annotate the record.
@@ -848,15 +863,15 @@ export default defineContentScript({
       const hitArt = articleOf(anchor);
       const hitTweetId = hitArt ? articleStatusId(hitArt) : null;
       // Auto-action decision chain (each gate independent, no cross-talk):
-      //   1. ELIGIBILITY — autoEligible() in lib/auto-policy.ts. The hard
-      //      line lives there: list hits auto-act only when human-confirmed
-      //      (tier "confirmed") — AI/rule/mention auto-published entries are
-      //      badge-only; rule hits are reply-section-only; cache never.
+      //   1. ELIGIBILITY — autoEligible() in lib/auto-policy.ts: list hits
+      //      per autoScope; rule hits reply-section-only; cache/fresh never.
+      //      autoTierMode "badge" gates out everything not human-confirmed
+      //      (auto-tier list entries AND rule hits — both are 自动收录).
+      //   2. TIER CAP — capAutoTierAction(): under autoTierMode "hide",
+      //      anything not human-confirmed is capped at the local hide.
       //      entry.tier (人工确认/自动收录) stays visible in the popover;
-      //      /v1/check keeps the same human-tier filter for legacy clients.
-      //   2. SCOPE — settings.autoScope: replies-only by default; "all"
-      //      opts feed+profile in (list hits only, see above).
-      //   3. MASTER SWITCH — settings.autoProcess (bubble toggle), below.
+      //      /v1/check keeps the human-tier filter for legacy clients.
+      //   3. MASTER SWITCH — settings.autoProcess (bubble + settings page).
       //   4. POLICY — per-category action (badge/hide/mute/block).
       // (Auto actions stay reversible from the 处理记录 tab, and mute/block
       // ride the user's own X session like the manual path.)
@@ -948,7 +963,7 @@ export default defineContentScript({
             articleOf(anchor)?.getAttribute("data-xss-key") === key
           )
             return;
-          hideTweet(anchor);
+          hideAccountSurface(anchor);
           return;
         }
 

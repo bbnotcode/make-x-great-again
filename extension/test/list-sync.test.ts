@@ -37,6 +37,40 @@ test("rejects malformed identities, codes, counts, and rules", () => {
   for (const value of cases) assert.equal(validateLiteArtifact(value).ok, false);
 });
 
+test("network mode quarantines a bounded number of malformed entry rows", () => {
+  const artifact = {
+    schema: 2,
+    version: "v-live-3",
+    count: 3,
+    entries: [
+      ["123", "good_user", "sma"],
+      ["", "invalid handle @duplicate", "sma"],
+      ["456", "also_good", "pph"],
+    ],
+  };
+  assert.equal(validateLiteArtifact(artifact).ok, false);
+
+  const tolerant = validateLiteArtifact(artifact, { dropInvalidEntries: true });
+  assert.equal(tolerant.ok, true);
+  if (tolerant.ok) {
+    assert.equal(tolerant.value.entries.length, 2);
+    assert.equal(tolerant.value.droppedEntries, 1);
+  }
+
+  const tooManyBad = Array.from({ length: 101 }, (_, i) => [
+    "",
+    `invalid-handle-${i}`,
+    "sma",
+  ]);
+  assert.equal(
+    validateLiteArtifact(
+      { schema: 2, count: tooManyBad.length, entries: tooManyBad },
+      { dropInvalidEntries: true },
+    ).ok,
+    false,
+  );
+});
+
 test("rejects oversized entry and rule collections", () => {
   const entries = Array.from({ length: 250_001 }, () => ["1", "user", "sma"]);
   assert.equal(validateLiteArtifact({ schema: 2, entries }).ok, false);

@@ -19,6 +19,8 @@ export const BRAND = {
     "https://chromewebstore.google.com/detail/make-x-great-again/aeoldnecphbkkckeedfgfcdcekkljdea",
   /** Mozilla Add-ons (AMO) listing — the install path for Firefox users. */
   firefoxAddons: "https://addons.mozilla.org/firefox/addon/make-x-great-again/",
+  /** TestFlight invite — the beta install path for Apple platform users. */
+  testFlight: "https://testflight.apple.com/join/SeH4raps",
   /** Public Worker base URL (custom domain). Extension can override in settings. */
   edgeBase: "https://x.zuoluo.tv",
   /** Governance doc inside the repo. */

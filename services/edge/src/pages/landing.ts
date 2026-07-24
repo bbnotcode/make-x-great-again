@@ -1,16 +1,18 @@
-// Product landing — public, zero-PII. MXGA — the passive Chrome extension
-// that identifies spam / porn-ad bots on X and hands you a one-click block.
+// Product landing — public, zero-PII. MXGA identifies spam / porn-ad bots
+// on X and hands you a one-click block across supported browsers.
 // Visual: base-ui inspired — monochrome canvas, type-led hierarchy.
 import { BRAND } from "../brand";
 import { ICONS, LINKS, layout } from "./_layout";
 
-// Install CTAs now use the official multi-color Chrome / Firefox store logos
-// (served from /static as SVG); see the .store-badge markup in HERO.
+// Install CTAs use the official Chrome, Firefox, and TestFlight logos served
+// from /static; see the .store-badge markup in HERO.
 const ICON_GH = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.2c-3.3.7-4-1.4-4-1.4-.5-1.4-1.3-1.8-1.3-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.7.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.7-5.5 6 .4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/></svg>`;
 const ICON_LIST = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg>`;
 // Small chevron tucked after the store name — signals "this jumps out to the
 // store". Tints with currentColor and nudges right on badge hover.
 const ICON_ARROW = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>`;
+// Apple glyph inline in the TestFlight badge's sub-line, sized to the 11px text.
+const ICON_APPLE = `<svg viewBox="0 0 384 512" fill="currentColor" style="display:inline-block;width:10px;height:10px;vertical-align:-1px" aria-hidden="true"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>`;
 const ICON_SHIELD = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>`;
 const ICON_LOCK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
 const ICON_DB = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>`;
@@ -39,7 +41,7 @@ const HERO = `
   <span class="eyebrow">
     <span class="dot" aria-hidden="true"></span>
     <span class="x">${ICONS.X}</span>
-    Chrome &amp; Firefox 扩展<span class="sep">·</span>${BRAND.license} 开源
+    Chrome / Firefox / Safari 扩展<span class="sep">·</span>${BRAND.license} 开源
   </span>
   <h1>Make <span class="xmark">${ICONS.X}</span> Great Again<br><span class="sub">少看垃圾，多看人话。</span></h1>
   <p class="lede">广告号、色情引流先标出；拉黑由你确认。</p>
@@ -58,13 +60,20 @@ const HERO = `
         <span class="store-name">Firefox 附加组件<span class="store-go" aria-hidden="true">${ICON_ARROW}</span></span>
       </span>
     </a>
+    <a class="store-badge testflight" href="${BRAND.testFlight}" target="_blank" rel="noopener" aria-label="通过 TestFlight 安装 Apple 平台测试版">
+      <img class="store-logo" src="/store-safari.svg" alt="" width="34" height="34" loading="eager">
+      <span class="store-text">
+        <span class="store-sub" style="white-space:nowrap">Safari · ${ICON_APPLE} iOS · iPadOS · macOS</span>
+        <span class="store-name">TestFlight 测试版<span class="store-go" aria-hidden="true">${ICON_ARROW}</span></span>
+      </span>
+    </a>
   </div>
   <div class="ctas ctas-minor">
     <a class="btn ghost" href="/list" aria-label="看公开名单">${ICON_LIST}<span>看公开名单</span></a>
     <a class="btn ghost" href="${BRAND.repo}" aria-label="在 GitHub 上查看源码">${ICON_GH}<span>看源码</span></a>
   </div>
   <p class="meta">
-    <span>已上架 Chrome / Firefox</span><span class="dot" aria-hidden="true"></span>
+    <span>Chrome / Firefox 已上架，TestFlight 开放测试</span><span class="dot" aria-hidden="true"></span>
     <span>手动拉黑</span><span class="dot" aria-hidden="true"></span>
     <span>不存身份</span><span class="dot" aria-hidden="true"></span>
     <span>开源</span>
@@ -499,7 +508,7 @@ const SCRIPT = `
 
 // Pre-install risk interstitial. Self-contained IIFE so it stays independent
 // of the live-feed boot script above. Shows the modal the first time a user
-// clicks through to the Chrome Web Store; once acknowledged (continue OR
+// clicks through to an install channel; once acknowledged (continue OR
 // dismiss), a localStorage flag lets every later click pass straight through —
 // so the dialog appears exactly once per browser.
 const RISK_MODAL_JS = `
@@ -526,10 +535,10 @@ const RISK_MODAL_JS = `
     setTimeout(function(){modal.hidden=true},220);
     try{lastFocus&&lastFocus.focus&&lastFocus.focus()}catch(e){}
   }
-  // Intercept any jump to an extension store — Chrome Web Store or Firefox
-  // AMO (skip the modal's own button, which carries the resolved href).
+  // Intercept any jump to an install channel (skip the modal's own button,
+  // which carries the resolved href).
   document.addEventListener('click',function(e){
-    var a=e.target.closest&&e.target.closest('a[href*="chromewebstore"],a[href*="addons.mozilla"]');
+    var a=e.target.closest&&e.target.closest('a[href*="chromewebstore"],a[href*="addons.mozilla"],a[href*="testflight.apple.com"]');
     if(!a||a.id==='riskModalGo')return;
     if(acked())return;            // already seen — let it through
     e.preventDefault();

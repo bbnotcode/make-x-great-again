@@ -2338,7 +2338,7 @@ app.get("/v1/admin/queue", async (c) => {
      SELECT a.rid, a.sort_value,
             a.x_user_id, a.handle, a.display_name, a.avatar_url, a.verdict_label, a.confidence,
             a.account_created_at, a.account_age_days, a.followers_count, a.following_count,
-            a.reasons, a.evidence_text, a.last_scored, a.source,
+            a.reasons, a.evidence_text, a.last_scored, a.source, a.category,
             (SELECT count(DISTINCT reporter_fp) FROM reports r
               WHERE lower(r.handle)=lower(a.handle)
                 AND (a.x_user_id IS NULL OR r.x_user_id IS NULL OR r.x_user_id=a.x_user_id)
@@ -2445,8 +2445,13 @@ function buildDecideStatements(
   xUserId: string | undefined,
   action: DecideAction,
   now: number,
+  category?: SpamCategory,
 ): D1PreparedStatement[] {
   const status = statusForAction(action);
+  // COALESCE keeps whatever category the row already carries when the admin
+  // didn't pick one; whitelist always clears it (legit accounts have no spam
+  // category by definition).
+  const cat = category ?? null;
   const stmts: D1PreparedStatement[] = [];
   if (xUserId) {
     if (action === "whitelist") {
@@ -2459,6 +2464,7 @@ function buildDecideStatements(
                   confidence=1.0,
                   reasons='["whitelisted by admin"]',
                   signals_hash=NULL,
+                  category=NULL,
                   last_scored=?,
                   published_at=NULL
             WHERE lower(handle)=? AND x_user_id=?`,
@@ -2467,11 +2473,12 @@ function buildDecideStatements(
     } else {
       stmts.push(
         env.DB.prepare(
-          "UPDATE accounts SET status=?, published_at=?, published_tier=? WHERE lower(handle)=? AND x_user_id=?",
+          "UPDATE accounts SET status=?, published_at=?, published_tier=?, category=COALESCE(?, category) WHERE lower(handle)=? AND x_user_id=?",
         ).bind(
           status,
           action === "approve" ? now : null,
           action === "approve" ? "human" : null,
+          cat,
           handle,
           xUserId,
         ),
@@ -2496,6 +2503,7 @@ function buildDecideStatements(
                   confidence=1.0,
                   reasons='["whitelisted by admin"]',
                   signals_hash=NULL,
+                  category=NULL,
                   last_scored=?,
                   published_at=NULL
             WHERE lower(handle)=? AND x_user_id IS NULL`,
@@ -2504,11 +2512,12 @@ function buildDecideStatements(
     } else {
       stmts.push(
         env.DB.prepare(
-          "UPDATE accounts SET status=?, published_at=?, published_tier=? WHERE lower(handle)=? AND x_user_id IS NULL",
+          "UPDATE accounts SET status=?, published_at=?, published_tier=?, category=COALESCE(?, category) WHERE lower(handle)=? AND x_user_id IS NULL",
         ).bind(
           status,
           action === "approve" ? now : null,
           action === "approve" ? "human" : null,
+          cat,
           handle,
         ),
       );
@@ -2545,6 +2554,10 @@ const DecideBody = z.object({
   // Unknown actions used to silently map to "rejected" via statusForAction —
   // they are an explicit 400 now.
   action: z.enum(["approve", "reject", "remove", "whitelist"]),
+  // Optional human-assigned spam category, stamped alongside the decision so
+  // the maintainer can approve-and-categorize in one step. Ignored for
+  // whitelist (which clears category).
+  category: z.enum(SPAM_CATEGORIES).optional(),
 });
 
 app.post("/v1/admin/decide", async (c) => {
@@ -2559,8 +2572,17 @@ app.post("/v1/admin/decide", async (c) => {
   const xUserId = body.xUserId;
   const action = body.action;
   const now = Date.now();
-  const stmts = buildDecideStatements(c.env, handle, xUserId, action, now);
-  stmts.push(reviewLogStmt(c.env, xUserId ?? null, handle, action, "panel", now));
+  const stmts = buildDecideStatements(c.env, handle, xUserId, action, now, body.category);
+  stmts.push(
+    reviewLogStmt(
+      c.env,
+      xUserId ?? null,
+      handle,
+      action,
+      body.category ? `panel category=${body.category}` : "panel",
+      now,
+    ),
+  );
   await c.env.DB.batch(stmts);
   return c.json({ ok: true, status: statusForAction(action) });
 });
@@ -2572,9 +2594,11 @@ app.post("/v1/admin/decide", async (c) => {
 // hiccups mid-batch.
 //
 // Body: { action: "approve"|"reject"|"remove"|"whitelist",
+//         category?: SpamCategory,
 //         items: [{ handle: string, xUserId?: string }, ...] }
 const DecideBatchBody = z.object({
   action: z.enum(["approve", "reject", "remove", "whitelist"]),
+  category: z.enum(SPAM_CATEGORIES).optional(),
   items: z
     .array(
       z.object({
@@ -2596,10 +2620,11 @@ app.post("/v1/admin/decide-batch", async (c) => {
   }
   const now = Date.now();
   const stmts: D1PreparedStatement[] = [];
+  const batchNote = body.category ? `panel_batch category=${body.category}` : "panel_batch";
   for (const it of body.items) {
     const h = normalizeHandle(it.handle);
-    stmts.push(...buildDecideStatements(c.env, h, it.xUserId, body.action, now));
-    stmts.push(reviewLogStmt(c.env, it.xUserId ?? null, h, body.action, "panel_batch", now));
+    stmts.push(...buildDecideStatements(c.env, h, it.xUserId, body.action, now, body.category));
+    stmts.push(reviewLogStmt(c.env, it.xUserId ?? null, h, body.action, batchNote, now));
   }
   await c.env.DB.batch(stmts);
   return c.json({
@@ -2607,6 +2632,49 @@ app.post("/v1/admin/decide-batch", async (c) => {
     status: statusForAction(body.action),
     processed: body.items.length,
   });
+});
+
+// Batch categorize — stamps a human-assigned spam category onto a list of
+// accounts WITHOUT touching status/published_at. This is the "这批都是博彩"
+// flow on already-confirmed rows; queue rows can categorize at approve time
+// via decide-batch's optional category instead. Same atomic-batch contract.
+const CategoryBatchBody = z.object({
+  category: z.enum(SPAM_CATEGORIES),
+  items: z
+    .array(
+      z.object({
+        handle: z.string().min(1),
+        xUserId: optionalNumericId,
+      }),
+    )
+    .min(1)
+    .max(100),
+});
+
+app.post("/v1/admin/category-batch", async (c) => {
+  if (!(await admin(c))) return c.json({ error: "forbidden" }, 403);
+  let body: z.infer<typeof CategoryBatchBody>;
+  try {
+    body = CategoryBatchBody.parse(await c.req.json());
+  } catch (err) {
+    return c.json({ error: "bad_request", detail: (err as Error).message }, 400);
+  }
+  const now = Date.now();
+  const stmts: D1PreparedStatement[] = [];
+  for (const it of body.items) {
+    const h = normalizeHandle(it.handle);
+    const uid = it.xUserId ?? null;
+    stmts.push(
+      c.env.DB.prepare(
+        "UPDATE accounts SET category=? WHERE lower(handle)=? AND (x_user_id IS ? OR x_user_id=?)",
+      ).bind(body.category, h, uid, uid),
+    );
+    stmts.push(
+      reviewLogStmt(c.env, uid, h, "categorize", `panel_batch category=${body.category}`, now),
+    );
+  }
+  await c.env.DB.batch(stmts);
+  return c.json({ ok: true, category: body.category, processed: body.items.length });
 });
 
 // Batch whitelist-remove — drops a list of accounts from the whitelist back
@@ -3336,7 +3404,7 @@ app.get("/v1/admin/blacklist", async (c) => {
      SELECT a.rid, a.sort_value,
             a.x_user_id, a.handle, a.display_name, a.avatar_url,
             a.account_created_at, a.account_age_days, a.followers_count, a.following_count,
-            a.verdict_label, a.confidence, a.reasons, a.evidence_text, a.last_scored,
+            a.verdict_label, a.confidence, a.category, a.reasons, a.evidence_text, a.last_scored,
             a.published_at,
             a.last_decided_by, a.last_decided_at,
             (SELECT count(DISTINCT r.reporter_fp) FROM reports r
@@ -3360,6 +3428,7 @@ app.get("/v1/admin/blacklist", async (c) => {
       following_count: number | null;
       verdict_label: string;
       confidence: number;
+      category: string | null;
       reasons: string;
       last_scored: number;
       published_at: number;
@@ -3672,7 +3741,7 @@ function pageHeaders(c: Ctx, cacheSeconds: number): void {
 const OG_BASE = BRAND.edgeBase;
 function landingHead(): string {
   return (
-    `<title>${BRAND.name} · ${BRAND.tagline}</title><meta name="description" content="MXGA 是开源 X 扩展：标出广告号和色情引流号，拉黑由你确认。Chrome / Firefox 已上架。"><meta property="og:title" content="${BRAND.name} · ${BRAND.tagline}"><meta property="og:description" content="社区共建的公开黑名单，帮你把 X 上的广告号和色情 bot 标出来。"><meta property="og:type" content="website"><meta property="og:url" content="${OG_BASE}/"><meta property="og:image" content="${OG_BASE}/og.png"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="${OG_BASE}/og.png">${googleAnalyticsHead()}`
+    `<title>${BRAND.name} · ${BRAND.tagline}</title><meta name="description" content="MXGA 是开源 X 扩展：标出广告号和色情引流号，拉黑由你确认。Chrome / Firefox 已上架，TestFlight 开放测试。"><meta property="og:title" content="${BRAND.name} · ${BRAND.tagline}"><meta property="og:description" content="社区共建的公开黑名单，帮你把 X 上的广告号和色情 bot 标出来。"><meta property="og:type" content="website"><meta property="og:url" content="${OG_BASE}/"><meta property="og:image" content="${OG_BASE}/og.png"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="${OG_BASE}/og.png">${googleAnalyticsHead()}`
   );
 }
 function listHead(): string {

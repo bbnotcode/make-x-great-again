@@ -22,6 +22,12 @@ const X_ICON = (
   </svg>
 );
 
+const APPLE_ICON = (
+  <svg viewBox="0 0 384 512" fill="currentColor" className="inline size-2.5 align-[-1px]" aria-hidden="true">
+    <path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z" />
+  </svg>
+);
+
 function StoreBadge({
   href,
   logo,
@@ -32,7 +38,7 @@ function StoreBadge({
 }: {
   href: string;
   logo: string;
-  sub: string;
+  sub: React.ReactNode;
   name: string;
   warm?: boolean;
   onInstall: (e: React.MouseEvent, url: string) => void;
@@ -276,7 +282,7 @@ export function LandingPage() {
         <div className="max-w-2xl">
           <span className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/60 px-3 py-1 text-[11.5px] font-semibold text-muted-foreground backdrop-blur">
             <span className="size-1.5 rounded-full bg-success" />
-            {X_ICON} Chrome &amp; Firefox 扩展 · {BRAND.license} 开源
+            {X_ICON} Chrome / Firefox / Safari 扩展 · {BRAND.license} 开源
           </span>
           <h1 className="mt-5 font-serif text-5xl font-semibold leading-[1.05] tracking-tight sm:text-6xl">
             Make X Great Again
@@ -291,6 +297,13 @@ export function LandingPage() {
           <div className="mt-6 flex flex-wrap gap-3">
             <StoreBadge href={BRAND.chromeWebStore} logo="/store-chrome.svg" sub="Chrome · Edge · Brave · Arc" name="Chrome 网上应用店" onInstall={onInstall} />
             <StoreBadge href={BRAND.firefoxAddons} logo="/store-firefox.svg" sub="Firefox 浏览器" name="Firefox 附加组件" onInstall={onInstall} warm />
+            <StoreBadge
+              href={BRAND.testFlight}
+              logo="/store-safari.svg"
+              sub={<>Safari · {APPLE_ICON} iOS · iPadOS · macOS</>}
+              name="TestFlight 测试版"
+              onInstall={onInstall}
+            />
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
             <Button asChild variant="ghost" size="sm">
@@ -305,7 +318,7 @@ export function LandingPage() {
             </Button>
           </div>
           <p className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px] text-muted-foreground">
-            <span>已上架 Chrome / Firefox</span> · <span>手动拉黑</span> · <span>不存身份</span> · <span>开源</span>
+            <span>Chrome / Firefox 已上架，TestFlight 开放测试</span> · <span>手动拉黑</span> · <span>不存身份</span> · <span>开源</span>
           </p>
         </div>
         <div className="flex flex-col items-center gap-6">
