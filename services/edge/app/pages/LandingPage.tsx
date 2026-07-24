@@ -276,7 +276,7 @@ export function LandingPage() {
         <div className="max-w-2xl">
           <span className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/60 px-3 py-1 text-[11.5px] font-semibold text-muted-foreground backdrop-blur">
             <span className="size-1.5 rounded-full bg-success" />
-            {X_ICON} Chrome &amp; Firefox 扩展 · {BRAND.license} 开源
+            {X_ICON} Chrome / Firefox / Safari 扩展 · {BRAND.license} 开源
           </span>
           <h1 className="mt-5 font-serif text-5xl font-semibold leading-[1.05] tracking-tight sm:text-6xl">
             Make X Great Again
@@ -291,6 +291,7 @@ export function LandingPage() {
           <div className="mt-6 flex flex-wrap gap-3">
             <StoreBadge href={BRAND.chromeWebStore} logo="/store-chrome.svg" sub="Chrome · Edge · Brave · Arc" name="Chrome 网上应用店" onInstall={onInstall} />
             <StoreBadge href={BRAND.firefoxAddons} logo="/store-firefox.svg" sub="Firefox 浏览器" name="Firefox 附加组件" onInstall={onInstall} warm />
+            <StoreBadge href={BRAND.testFlight} logo="/store-testflight.png" sub="iOS · iPadOS · macOS" name="TestFlight 测试版" onInstall={onInstall} />
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
             <Button asChild variant="ghost" size="sm">
@@ -305,7 +306,7 @@ export function LandingPage() {
             </Button>
           </div>
           <p className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px] text-muted-foreground">
-            <span>已上架 Chrome / Firefox</span> · <span>手动拉黑</span> · <span>不存身份</span> · <span>开源</span>
+            <span>Chrome / Firefox 已上架，TestFlight 开放测试</span> · <span>手动拉黑</span> · <span>不存身份</span> · <span>开源</span>
           </p>
         </div>
         <div className="flex flex-col items-center gap-6">

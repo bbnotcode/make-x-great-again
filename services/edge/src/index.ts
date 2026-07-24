@@ -3741,7 +3741,7 @@ function pageHeaders(c: Ctx, cacheSeconds: number): void {
 const OG_BASE = BRAND.edgeBase;
 function landingHead(): string {
   return (
-    `<title>${BRAND.name} · ${BRAND.tagline}</title><meta name="description" content="MXGA 是开源 X 扩展：标出广告号和色情引流号，拉黑由你确认。Chrome / Firefox 已上架。"><meta property="og:title" content="${BRAND.name} · ${BRAND.tagline}"><meta property="og:description" content="社区共建的公开黑名单，帮你把 X 上的广告号和色情 bot 标出来。"><meta property="og:type" content="website"><meta property="og:url" content="${OG_BASE}/"><meta property="og:image" content="${OG_BASE}/og.png"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="${OG_BASE}/og.png">${googleAnalyticsHead()}`
+    `<title>${BRAND.name} · ${BRAND.tagline}</title><meta name="description" content="MXGA 是开源 X 扩展：标出广告号和色情引流号，拉黑由你确认。Chrome / Firefox 已上架，TestFlight 开放测试。"><meta property="og:title" content="${BRAND.name} · ${BRAND.tagline}"><meta property="og:description" content="社区共建的公开黑名单，帮你把 X 上的广告号和色情 bot 标出来。"><meta property="og:type" content="website"><meta property="og:url" content="${OG_BASE}/"><meta property="og:image" content="${OG_BASE}/og.png"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="${OG_BASE}/og.png">${googleAnalyticsHead()}`
   );
 }
 function listHead(): string {

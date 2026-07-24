@@ -56,6 +56,10 @@ const MAX_WHITELIST_BYTES = 2 * 1024 * 1024;
 const MAX_META_BYTES = 64 * 1024;
 const MAX_LIST_ENTRIES = 250_000;
 const MAX_RULES = 10_000;
+// A published snapshot can contain a handful of stale database rows whose
+// handle is no longer a valid X handle. The sync path may quarantine at most
+// this many rows; larger damage still rejects the artifact wholesale.
+const MAX_DROPPED_ENTRY_ROWS = 100;
 const HANDLE_RE = /^[A-Za-z0-9_]{1,15}$/;
 const USER_ID_RE = /^\d{1,32}$/;
 const ENTRY_CODE_RE = /^[ps][pcgrmo](?:[ha])?$/;
@@ -75,11 +79,18 @@ function validIdentity(uid: unknown, handle: unknown): boolean {
   );
 }
 
-/** Parse the untrusted lite artifact as an all-or-nothing contract. */
-export function validateLiteArtifact(raw: unknown): ValidationResult<{
+/** Parse the untrusted lite artifact. Validation is strict by default.
+ *  The network-sync path can opt into quarantining a small bounded number of
+ *  malformed identity rows so one stale server record does not block every
+ *  otherwise-valid list update. */
+export function validateLiteArtifact(
+  raw: unknown,
+  options: { dropInvalidEntries?: boolean } = {},
+): ValidationResult<{
   version?: string;
   entries: LiteRow[];
   rules?: [string, string, string][];
+  droppedEntries: number;
 }> {
   if (!raw || typeof raw !== "object") return { ok: false, error: "artifact is not an object" };
   const lite = raw as LiteArtifact;
@@ -103,6 +114,7 @@ export function validateLiteArtifact(raw: unknown): ValidationResult<{
     return { ok: false, error: "entry count mismatch" };
   }
   const entries: LiteRow[] = [];
+  let droppedEntries = 0;
   for (const row of lite.entries) {
     if (
       !Array.isArray(row) ||
@@ -111,9 +123,17 @@ export function validateLiteArtifact(raw: unknown): ValidationResult<{
       typeof row[2] !== "string" ||
       !ENTRY_CODE_RE.test(row[2])
     ) {
-      return { ok: false, error: "invalid entry row" };
+      if (!options.dropInvalidEntries) return { ok: false, error: "invalid entry row" };
+      droppedEntries++;
+      if (droppedEntries > MAX_DROPPED_ENTRY_ROWS) {
+        return { ok: false, error: "too many invalid entry rows" };
+      }
+      continue;
     }
-    entries.push([row[0] as string, row[1] as string, row[2] as string]);
+    // Validation does not mutate rows, so retain the compact tuple instead
+    // of allocating a second 100k+ array graph. This matters on iOS, where
+    // every active X tab has a tighter memory budget.
+    entries.push(row as LiteRow);
   }
   let rules: [string, string, string][] | undefined;
   if (lite.rules !== undefined) {
@@ -138,7 +158,7 @@ export function validateLiteArtifact(raw: unknown): ValidationResult<{
       rules.push([row[0], row[1], row[2]]);
     }
   }
-  return { ok: true, value: { version: lite.version, entries, rules } };
+  return { ok: true, value: { version: lite.version, entries, rules, droppedEntries } };
 }
 
 export function validateWhitelist(raw: unknown): ValidationResult<[string, string][]> {
@@ -285,7 +305,10 @@ async function doSync(force: boolean): Promise<SyncResult> {
 
     const liteRes = await fetch(`${base}${litePath}`);
     if (!liteRes.ok) return { updated: false, white, error: `lite ${liteRes.status}` };
-    const validated = validateLiteArtifact(await readJsonBounded(liteRes, MAX_LITE_BYTES));
+    const validated = validateLiteArtifact(
+      await readJsonBounded(liteRes, MAX_LITE_BYTES),
+      { dropInvalidEntries: true },
+    );
     if (!validated.ok) return { updated: false, white, error: validated.error };
     const { entries, rules, version } = validated.value;
     if (entries.length < MIN_SANE_ENTRIES) {

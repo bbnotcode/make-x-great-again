@@ -1,0 +1,6 @@
+// Shared signing entry point for every Apple platform target.
+// Local values are optional so unsigned command-line builds keep working.
+APP_BUNDLE_IDENTIFIER = tv.zuoluo.mxga
+SAFARI_EXTENSION_BUNDLE_IDENTIFIER = $(APP_BUNDLE_IDENTIFIER).SafariExtension
+
+#include? "Signing.local.xcconfig"

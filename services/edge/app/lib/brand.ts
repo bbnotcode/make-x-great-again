@@ -8,6 +8,7 @@ export const BRAND = {
   chromeWebStore:
     "https://chromewebstore.google.com/detail/make-x-great-again/aeoldnecphbkkckeedfgfcdcekkljdea",
   firefoxAddons: "https://addons.mozilla.org/firefox/addon/make-x-great-again/",
+  testFlight: "https://testflight.apple.com/join/SeH4raps",
   edgeBase: "https://x.zuoluo.tv",
   governance: "https://github.com/foru17/make-x-great-again/blob/main/GOVERNANCE.md",
   privacy: "https://github.com/foru17/make-x-great-again/blob/main/docs/PRIVACY.md",

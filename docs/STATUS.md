@@ -125,7 +125,7 @@ Wrangler 4 · @cloudflare/workers-types · @types/chrome。
   Secrets：`LLM_API_BASE` / `LLM_API_MODEL` / `LLM_API_KEY` / `ADMIN_TOKEN`。
 - GitHub 登录用于官网上报和防滥用计数（扩展不再内置登录）；上线前后需要持续确认鉴权和限流配置。
 - 审核台：`/admin`（ADMIN_TOKEN 进入）。
-- 扩展主分发渠道：[Chrome Web Store](https://chromewebstore.google.com/detail/make-x-great-again/aeoldnecphbkkckeedfgfcdcekkljdea)（Chromium 内核）+ [Firefox 附加组件商店](https://addons.mozilla.org/firefox/addon/make-x-great-again/)；GitHub Release zip 作为开发版的备用通道。
+- 扩展主分发渠道：[Chrome Web Store](https://chromewebstore.google.com/detail/make-x-great-again/aeoldnecphbkkckeedfgfcdcekkljdea)（Chromium 内核）+ [Firefox 附加组件商店](https://addons.mozilla.org/firefox/addon/make-x-great-again/) + [TestFlight](https://testflight.apple.com/join/SeH4raps)（iOS / iPadOS / macOS 测试版）；GitHub Release zip 作为开发版的备用通道。
 
 ## 7. 安全/治理姿态
 

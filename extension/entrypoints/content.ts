@@ -32,7 +32,6 @@ import {
   updateBlockRecord,
 } from "../lib/store";
 import type { Signals, Verdict } from "../lib/types";
-import { performXAction, retryDelayForAttempt } from "../lib/x-action";
 import {
   type BadgeSource,
   type Finding,
@@ -148,6 +147,10 @@ function autoCategoryCount(s: Settings): number {
  *  the bubble's batch panel to surface a per-row 重试 state). */
 async function applyXAction(mode: ActionMode, sig: Signals): Promise<boolean> {
   if (mode === "local") return true;
+
+  // Load the mutation client only after the user explicitly chooses a native
+  // X action and grants the optional host permission.
+  const { performXAction, retryDelayForAttempt } = await import("../lib/x-action");
   const attempt = await performXAction(mode, sig.userId, sig.handle);
   if (attempt.ok) return true;
   const delay = retryDelayForAttempt(attempt, 1);
