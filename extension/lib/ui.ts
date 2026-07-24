@@ -2,6 +2,7 @@
 // cannot bleed in and ours cannot leak out. Vanilla DOM — no framework
 // weight injected into the page. Tokens per docs/UX.md.
 import { BRAND } from "./brand";
+import type { ActionMode } from "./settings";
 import type { Label, Verdict } from "./types";
 
 export const STYLE = `
@@ -301,6 +302,13 @@ export const STYLE = `
   text-overflow: ellipsis; white-space: nowrap;
 }
 .qmeta { font-size: 11px; }
+/* Per-row 误判 link — quiet until hovered, so it never competes with the
+ * account meta but stays reachable for a wrongly-listed account. */
+.qappeal {
+  margin-left: 6px; color: var(--muted); cursor: pointer;
+  text-decoration: none; font-weight: 600; opacity: .7;
+}
+.qappeal:hover { color: var(--warn); opacity: 1; text-decoration: underline; }
 .qsnip {
   font-size: 11px; color: var(--muted); overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
@@ -355,6 +363,7 @@ svg { display: block; }
 /* v0.4 popover: soft 12px radius, deep layered shadow, pop-in scale. */
 .pop {
   position: fixed; z-index: 2147482001; width: 280px; padding: 12px;
+  margin: 0; /* .card's margin-top would shift the measured placement */
   max-width: calc(100vw - 16px);
   font-size: 12px; color: var(--text); border-radius: 12px;
   box-shadow: 0 18px 48px rgba(15,23,42,.22), 0 2px 8px rgba(15,23,42,.10);
@@ -389,7 +398,17 @@ svg { display: block; }
   background: color-mix(in srgb, var(--warn) 9%, transparent);
 }
 .acts button[data-a] { color: var(--muted); border-color: transparent; }
-.acts button:disabled { cursor: default; transform: none; filter: none; }
+.acts button[data-report] {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 46%, var(--border));
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+}
+.acts button:disabled { cursor: default; transform: none; filter: none; opacity: .7; }
+/* 举报 inline result line — text only, colored by outcome. */
+.pop-status { margin-top: 8px; font-size: 11px; line-height: 1.5; }
+.pop-status[data-kind="info"] { color: var(--muted); }
+.pop-status[data-kind="ok"] { color: var(--danger); }
+.pop-status[data-kind="err"] { color: var(--warn); }
 
 /* ---- animated badge states (transform/opacity only) ---- */
 .xss-badge.fresh { animation: xrise .22s ease-out; }
@@ -507,6 +526,14 @@ const esc = (s: string) =>
 const safeAvatarUrl = (url: string | undefined): string | undefined =>
   url && /^https:\/\/pbs\.twimg\.com\//.test(url) ? url : undefined;
 
+/** Inline status line inside a popover (举报 result). Text-only, no HTML. */
+function setPopStatus(el: HTMLElement | null | undefined, msg: string, kind: "info" | "ok" | "err") {
+  if (!el) return;
+  el.textContent = msg;
+  el.dataset.kind = kind;
+  el.hidden = false;
+}
+
 // Lucide-style 24-viewBox stroke icons. No emoji (per design system).
 const P: Record<string, string> = {
   shield: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
@@ -566,6 +593,8 @@ export interface BubbleHandlers {
   onProcess: (keys: string[], onProgress: (key: string, ok: boolean) => void) => void;
   onReviewEach: () => void;
   onDismiss: () => void;
+  /** Per-row 误判申诉 — opens the pre-filled GitHub appeal for this account. */
+  onAppeal: (appeal: { handle: string; userId?: string }) => void;
   /** 自动处理 master switch flipped from the card header. */
   onToggleAuto?: (v: boolean) => void;
 }
@@ -822,6 +851,21 @@ export function createBubble(
       });
       return;
     }
+    if (archive.length > 0) {
+      // No live hits on THIS page, but this browsing session (and re-hydrated
+      // recent history) has processed accounts — keep them one click away
+      // instead of resting all the way back to 守护, so navigating off a
+      // page never reads as "the records vanished".
+      pill.innerHTML = progressMarkup({
+        iconName: "shield-check",
+        iconColor: "var(--danger)",
+        title: "已处理",
+        count: String(archive.length),
+        percent: 100,
+        danger: true,
+      });
+      return;
+    }
     // Calm "guarding" state — confirms the extension is working even
     // when nothing suspicious is on the page (no alarm color).
     pill.innerHTML = progressMarkup({
@@ -837,8 +881,8 @@ export function createBubble(
   function autoRowMarkup() {
     const hint = autoOn
       ? autoCats > 0
-        ? `分级策略 · ${autoCats} 类自动 · ${autoScopeAll ? "全局" : "仅评论区"}`
-        : "分级策略 · 全部仅标记"
+        ? `${autoCats} 类自动 · ${autoScopeAll ? "全局" : "仅评论区"}`
+        : "全部仅标记"
       : "已暂停 · 仅标记";
     return `<div class="auto-row">
       <button class="xss-sw" data-auto role="switch" aria-checked="${autoOn}"
@@ -906,7 +950,7 @@ export function createBubble(
             ? selectableCount || s.running
               ? `本页发现 ${findings.length} 个可疑账号`
               : `本页已处理 ${s.done} 个账号`
-            : `本次浏览已处理 ${doneRows.length} 个账号`
+            : `近期已处理 ${doneRows.length} 个账号`
         }</span>
         <span class="x" data-x>${icon("x", "currentColor", 14)}</span></div>
       ${autoRowMarkup()}
@@ -922,7 +966,7 @@ export function createBubble(
         </span>
         <span class="metric${doneRows.length ? " tab" : ""}${view === "done" ? " on" : ""}"
           data-done-chip ${doneRows.length ? `data-tab-done role="button" tabindex="0" aria-pressed="${view === "done"}"` : ""}
-          title="${s.failed ? `失败 ${s.failed}，` : ""}本次浏览已处理（含之前页面）${doneRows.length ? " · 点击查看明细" : ""}">
+          title="${s.failed ? `失败 ${s.failed}，` : ""}近期已处理（含之前页面与历史记录）${doneRows.length ? " · 点击查看明细" : ""}">
           <i style="background:${s.failed ? "var(--warn)" : "var(--danger)"}"></i><b>${doneRows.length}</b><em>已处理</em>
         </span>
       </div>
@@ -995,7 +1039,7 @@ export function createBubble(
               ${av}
               <div class="qbody">
                 <div class="qname">${name}</div>
-                <div class="qmeta" style="color:${col}">@${esc(f.handle)} · ${m.zh} ${(f.verdict.confidence * 100).toFixed(0)}%</div>
+                <div class="qmeta" style="color:${col}">@${esc(f.handle)} · ${m.zh} ${(f.verdict.confidence * 100).toFixed(0)}%<a class="qappeal" data-appeal-h="${esc(f.handle)}"${f.userId ? ` data-appeal-u="${esc(f.userId)}"` : ""} title="误判？提交申诉（已预填账号信息）">误判</a></div>
                 ${(() => {
                   // 命中原因 chips — small tags kept apart from the content
                   // line: source (公榜 / 规则 / 缓存) + category, plus a
@@ -1048,6 +1092,14 @@ export function createBubble(
       root.remove();
     });
     card.querySelector("[data-each]")?.addEventListener("click", h.onReviewEach);
+    for (const a of card.querySelectorAll<HTMLElement>("[data-appeal-h]")) {
+      a.addEventListener("click", () => {
+        const handle = a.dataset.appealH;
+        if (!handle) return;
+        const userId = a.dataset.appealU;
+        h.onAppeal({ handle, ...(userId ? { userId } : {}) });
+      });
+    }
     const doneTab = card.querySelector<HTMLElement>("[data-tab-done]");
     const toggleDone = () => {
       view = view === "done" ? "queue" : "done";
@@ -1286,6 +1338,10 @@ export function createBubble(
 
   function expand() {
     open = true;
+    // Opening onto an empty live queue when history exists (e.g. right after
+    // navigating off the page that had the hits) would show a blank panel —
+    // land on the 已处理 record instead so the user finds what they processed.
+    if (!findings.length && archive.length) view = "done";
     card.classList.remove("closing");
     card.classList.add("open");
     renderCard();
@@ -1366,17 +1422,30 @@ export function createBubble(
   return {
     el: root,
     update(f: Finding[]) {
-      const grew = f.length > findings.length;
+      // content.ts restarts its findings array on SPA navigation, so this
+      // replace is wholesale — but rows the auto queue owns must survive it:
+      // the paced X-action drain keeps running across navigations, and rows
+      // it finished on a PREVIOUS page (done/failed, absorbed, not yet
+      // archived) are only reachable through `findings` until the next
+      // pageReset() archives them. Untouched (pending) rows still die with
+      // their page as before.
+      const incoming = new Set(f.map(rowKey));
+      const held = findings.filter((x) => {
+        const k = rowKey(x);
+        return !incoming.has(k) && autoRows.has(k) && !archivedKeys.has(k) && rowState.has(k);
+      });
+      const merged = [...f, ...held];
+      const grew = merged.length > findings.length;
       if (grew) view = "queue"; // new hits pull focus back to the live queue
       // Newly discovered rows enter the feed at the top.
-      for (const x of f) {
+      for (const x of merged) {
         const k = rowKey(x);
         if (!activitySeq.has(k)) bump(k);
       }
-      findings = f;
+      findings = merged;
       // Prune state for rows that left the page — but keep everything the
       // session archive still renders (its rows read rowState/autoRows too).
-      const live = new Set([...f.map(rowKey), ...archivedKeys]);
+      const live = new Set([...merged.map(rowKey), ...archivedKeys]);
       for (const k of [...rowState.keys()]) if (!live.has(k)) rowState.delete(k);
       for (const k of [...deselected]) if (!live.has(k)) deselected.delete(k);
       for (const k of [...seenRows]) if (!live.has(k)) seenRows.delete(k);
@@ -1407,30 +1476,41 @@ export function createBubble(
       scanning = Math.max(0, n);
       if (!open) renderPill();
     },
-    /** SPA navigation: collapse the card, move this page's processed rows
-     *  into the session archive (viewable via the 已处理 tab until a hard
-     *  reload), drop everything else with the page. */
+    /** SPA navigation: move this page's SETTLED rows into the session
+     *  archive (viewable via the 已处理 tab until a hard reload) and drop
+     *  the untouched ones with the page. Rows the auto queue still owns
+     *  (queued/processing) are CARRIED OVER instead: the paced X-action
+     *  drain in content.ts survives SPA navigation and keeps firing, so
+     *  dropping its rows here made every surface read 已处理 while blocks
+     *  were still pending — the card only folds once nothing is running. */
     pageReset() {
+      const carriedKeys = new Set<string>();
+      const carried: Finding[] = [];
       for (const f of findings) {
         const k = rowKey(f);
         const st = rowState.get(k);
         if ((st === "done" || st === "failed") && !archivedKeys.has(k)) {
           archivedKeys.add(k);
           archive.push(f);
+        } else if (autoRows.has(k) && (st === "queued" || st === "processing")) {
+          carriedKeys.add(k);
+          carried.push(f);
         }
       }
-      findings = [];
-      for (const k of [...rowState.keys()]) if (!archivedKeys.has(k)) rowState.delete(k);
-      for (const k of [...autoRows]) if (!archivedKeys.has(k)) autoRows.delete(k);
-      for (const k of [...autoVerbs.keys()]) if (!archivedKeys.has(k)) autoVerbs.delete(k);
-      for (const k of [...seenRows]) if (!archivedKeys.has(k)) seenRows.delete(k);
-      for (const k of [...doneSeen]) if (!archivedKeys.has(k)) doneSeen.delete(k);
-      for (const k of [...activitySeq.keys()]) if (!archivedKeys.has(k)) activitySeq.delete(k);
+      findings = carried;
+      const keep = (k: string) => archivedKeys.has(k) || carriedKeys.has(k);
+      for (const k of [...rowState.keys()]) if (!keep(k)) rowState.delete(k);
+      for (const k of [...autoRows]) if (!keep(k)) autoRows.delete(k);
+      for (const k of [...autoVerbs.keys()]) if (!keep(k)) autoVerbs.delete(k);
+      for (const k of [...seenRows]) if (!keep(k)) seenRows.delete(k);
+      for (const k of [...doneSeen]) if (!keep(k)) doneSeen.delete(k);
+      for (const k of [...activitySeq.keys()]) if (!keep(k)) activitySeq.delete(k);
       deselected.clear();
       view = "queue";
       queueScrollTop = 0;
       // Archived rows are served by the 已处理 tab directly — pending
-      // absorb theater dies with the page.
+      // absorb theater dies with the page. (Carried rows are pre-absorb
+      // by definition: queued/processing only.)
       for (const t of absorbTimers.values()) clearTimeout(t);
       absorbTimers.clear();
       absorbed.clear();
@@ -1438,10 +1518,18 @@ export function createBubble(
       flights.length = 0; // ghosts self-remove on animation finish
       // New page = a fresh conversation: auto-open is allowed again even if
       // the user dismissed the card on the previous page.
-      autoOpened = false;
       userClosed = false;
-      clearTimeout(collapseTimer);
-      collapse();
+      if (open && carried.length) {
+        // Mid-batch navigation with the card up: the live queue it shows is
+        // still true — folding it was the "看起来处理完了" lie. Keep it open
+        // (autoOpened survives, so it still folds once the batch settles).
+        clearTimeout(collapseTimer);
+        renderCard();
+      } else {
+        autoOpened = false;
+        clearTimeout(collapseTimer);
+        collapse();
+      }
       renderPill();
     },
     /** AUTO path: content.ts pushed the finding, then drives its row state
@@ -1469,6 +1557,20 @@ export function createBubble(
       if (open) renderCard();
       if (st === "done") scheduleAbsorb(key); // linger, then fly into the chip
       if (autoOpened && open && stats().running === 0) scheduleAutoCollapse();
+    },
+    /** Manual popover hide of a listed account: drive the live bubble row to
+     *  "done" so it stops showing an actionable 隐藏 button (the tweet is
+     *  already gone) and joins the 已处理 record — matching the auto path.
+     *  No-op if the account isn't a current finding (e.g. a ghost hide). */
+    markManual(key: string, verbLabel: string) {
+      if (!findings.some((f) => rowKey(f) === key)) return;
+      autoVerbs.set(key, verbLabel);
+      rowState.set(key, "done");
+      autoRows.add(key);
+      bump(key);
+      renderPill();
+      if (open) renderCard();
+      scheduleAbsorb(key);
     },
     /** Sync the header switch when settings change elsewhere (options page
      *  or another tab). Optionally refresh the category-count/scope hint. */
@@ -1507,13 +1609,26 @@ export function createActingBadge(verb: string, queued = false): HTMLElement {
 }
 
 export interface BadgeActions {
-  /** Primary action — executes the user's configured actionMode (拉黑/静音/隐藏). */
-  onHide: () => void;
-  /** Secondary local-only hide (no X call) — v0.4's 隐藏 next to 拉黑.
-   *  Only rendered when the primary verb isn't already 隐藏. */
-  onHideLocal?: () => void;
+  /** Run one action against this account in the given mode. The popover
+   *  exposes the full ladder (隐藏 / 静音 / 拉黑); the caller's configured
+   *  actionMode is only the DEFAULT (rendered as the primary button), so a
+   *  user on 本地隐藏 can still one-off 拉黑 without visiting options. */
+  onAct: (mode: ActionMode) => void;
   onAppeal: () => void;
+  /** Report this account to the public queue (GitHub-authed contribution).
+   *  Only offered for accounts NOT already on the community list. Resolves to
+   *  a short user-facing result the popover shows inline; the network call,
+   *  GitHub-auth gating and abuse feedback all live in the caller. */
+  onReport?: () => Promise<{ ok: boolean; message: string }>;
 }
+
+/** The manual action ladder shown in the popover, weakest → strongest.
+ *  The configured mode is styled as primary; the rest are secondary chips. */
+const ACTION_LADDER: { mode: ActionMode; verb: string }[] = [
+  { mode: "local", verb: "隐藏" },
+  { mode: "mute", verb: "静音" },
+  { mode: "block", verb: "拉黑" },
+];
 
 /** Inline pill on the author row; hover/focus → popover with reasons. */
 /** source: 'fresh' = just classified (rise-in); 'list'/'cache' = already on
@@ -1545,7 +1660,7 @@ export function createBadge(
   a: BadgeActions,
   note?: string,
   source: BadgeSource = "fresh",
-  verb = "隐藏",
+  mode: ActionMode = "local",
 ): HTMLElement {
   const el = document.createElement("span");
   el.tabIndex = 0;
@@ -1586,13 +1701,19 @@ export function createBadge(
 
   let pop: HTMLElement | null = null;
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
-  const onScroll = () => {
-    // A fixed popover detaches visually from its anchor the moment the page
-    // scrolls — close it instead of letting it float over unrelated content.
+  let raf = 0;
+  /** Unconditional teardown — bypasses the :hover keep-open rule. */
+  const close = () => {
     clearTimeout(hideTimer);
+    cancelAnimationFrame(raf);
     pop?.remove();
     pop = null;
     window.removeEventListener("scroll", onScroll, true);
+  };
+  const onScroll = () => {
+    // A fixed popover detaches visually from its anchor the moment the page
+    // scrolls — close it instead of letting it float over unrelated content.
+    close();
   };
   const hide = () => {
     if (pop?.matches(":hover")) {
@@ -1600,9 +1721,7 @@ export function createBadge(
       scheduleHide();
       return;
     }
-    pop?.remove();
-    pop = null;
-    window.removeEventListener("scroll", onScroll, true);
+    close();
   };
   const scheduleHide = () => {
     clearTimeout(hideTimer);
@@ -1615,27 +1734,74 @@ export function createBadge(
     pop = document.createElement("div");
     pop.className = "xss pop card";
     pop.style.display = "block";
+    // Action ladder: 隐藏 / 静音 / 拉黑, the configured mode as primary
+    // (data-b), the rest as secondary chips. A one-off 拉黑 is reachable
+    // here even for a 本地隐藏 user — the block/mute fetch is same-origin
+    // (this script already runs on x.com), so no fresh permission prompt.
+    const ladder = ACTION_LADDER.map(
+      (m) =>
+        `<button data-act="${m.mode}"${m.mode === mode ? " data-b" : ""}>${esc(m.verb)}</button>`,
+    ).join("");
+    // 举报 = contribute an unlisted account to the public review queue. Only
+    // offered for accounts NOT already on the community list/official rules
+    // (reporting those is a no-op). GitHub-auth gating + abuse feedback are
+    // the caller's job; the popover only shows the inline result.
+    const canReport = !!a.onReport && source !== "list" && source !== "rule";
+    const reportBtn = canReport
+      ? `<button data-report title="举报给公共名单人工审核（需 GitHub 授权）">举报为spam</button>`
+      : "";
     pop.innerHTML = v
       ? `
       <h4 style="color:${color}">${LABEL[v.label].zh} · ${(v.confidence * 100).toFixed(0)}%</h4>
       <ul>${v.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
       ${note ? `<div style="color:var(--muted)">${esc(note)}</div>` : ""}
       <div class="acts">
-        ${spammy ? `<button data-b>${esc(verb)}</button>` : ""}
-        ${spammy && verb !== "隐藏" && a.onHideLocal ? `<button data-h>隐藏</button>` : ""}
-        <button data-a title="打开 GitHub 提交误判申诉 issue">误判?</button>
-      </div>`
+        ${spammy ? ladder : ""}
+        ${reportBtn}
+        <button data-a title="打开 GitHub 提交误判申诉 issue（已预填账号信息）">误判申诉</button>
+      </div>
+      <div class="pop-status" data-report-status hidden></div>`
       : `
       <h4>手动处理</h4>
       <div style="color:var(--muted);line-height:1.55">
-        未命中公共名单与官方规则。确认是垃圾/骚扰账号时，可手动处理（5 秒内可撤销）。</div>
-      <div class="acts">
-        <button data-b>${esc(verb)}</button>
-        ${verb !== "隐藏" && a.onHideLocal ? `<button data-h>隐藏</button>` : ""}
-      </div>`;
-    pop.querySelector("[data-b]")?.addEventListener("click", a.onHide);
-    pop.querySelector("[data-h]")?.addEventListener("click", () => a.onHideLocal?.());
+        未命中公共名单与官方规则。确认是垃圾/骚扰账号时，可手动处理（5 秒内可撤销），或举报给公共名单。</div>
+      <div class="acts">${ladder}${reportBtn}</div>
+      <div class="pop-status" data-report-status hidden></div>`;
+    for (const b of pop.querySelectorAll<HTMLElement>("[data-act]"))
+      b.addEventListener("click", () => a.onAct(b.dataset.act as ActionMode));
     pop.querySelector("[data-a]")?.addEventListener("click", a.onAppeal);
+    // 举报: stays open to show the inline result, so it is NOT wired to close.
+    const reportEl = pop.querySelector<HTMLButtonElement>("[data-report]");
+    if (reportEl && a.onReport) {
+      const onReport = a.onReport;
+      reportEl.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        cancelHide();
+        const statusEl = pop?.querySelector<HTMLElement>("[data-report-status]");
+        reportEl.disabled = true;
+        reportEl.textContent = "举报中…";
+        setPopStatus(statusEl, "正在提交举报…", "info");
+        let res: { ok: boolean; message: string };
+        try {
+          res = await onReport();
+        } catch {
+          res = { ok: false, message: "举报失败，请稍后重试" };
+        }
+        if (!pop) return; // popover closed while the request was in flight
+        setPopStatus(statusEl, res.message, res.ok ? "ok" : "err");
+        reportEl.textContent = res.ok ? "已举报" : "举报为spam";
+        reportEl.disabled = res.ok;
+        // Let the result read, then fold.
+        clearTimeout(hideTimer);
+        hideTimer = setTimeout(close, res.ok ? 2600 : 3600);
+      });
+    }
+    // Any OTHER action click ends the popover's job: the flow continues in the
+    // inline ⏳撤销 pending badge (or a new tab, for 误判). Leaving it open
+    // strands a fixed panel over whatever row slides in after the layout
+    // shifts. Registered AFTER the action handlers so those run first.
+    for (const b of pop.querySelectorAll("button:not([data-report])"))
+      b.addEventListener("click", close);
     // Keep the popover open while the cursor is over it, so its buttons are
     // actually reachable.
     pop.addEventListener("mouseenter", cancelHide);
@@ -1644,14 +1810,34 @@ export function createBadge(
     // then measure and place: clamp to the viewport's right edge, flip
     // above the badge when there is no room below.
     overlay().appendChild(pop);
-    const r = el.getBoundingClientRect();
-    const W = pop.offsetWidth || 260;
-    const H = pop.offsetHeight || 120;
-    const left = Math.min(Math.max(8, r.left), window.innerWidth - W - 8);
-    const below = r.bottom + 6;
-    const top = below + H > window.innerHeight - 8 ? Math.max(8, r.top - H - 6) : below;
-    pop.style.left = `${left}px`;
-    pop.style.top = `${top}px`;
+    const place = (r: DOMRect) => {
+      if (!pop) return;
+      const W = pop.offsetWidth || 260;
+      const H = pop.offsetHeight || 120;
+      const left = Math.min(Math.max(8, r.left), window.innerWidth - W - 8);
+      const below = r.bottom + 6;
+      const top = below + H > window.innerHeight - 8 ? Math.max(8, r.top - H - 6) : below;
+      pop.style.left = `${left}px`;
+      pop.style.top = `${top}px`;
+    };
+    place(el.getBoundingClientRect());
+    // The page reflows under an open popover without any scroll event —
+    // the auto queue collapses a tweet above, a pending badge changes the
+    // row's width, X re-virtualizes cells. Track the badge every frame
+    // while open: follow it through layout shifts, and die with it the
+    // moment it leaves the DOM (action clicked → badge replaced) or its
+    // container is hidden. Runs only while a popover exists.
+    const track = () => {
+      if (!pop) return;
+      const r = el.getBoundingClientRect();
+      if (!el.isConnected || (!r.width && !r.height)) {
+        close();
+        return;
+      }
+      place(r);
+      raf = requestAnimationFrame(track);
+    };
+    raf = requestAnimationFrame(track);
     window.addEventListener("scroll", onScroll, { capture: true, passive: true });
   };
   el.addEventListener("mouseenter", show);

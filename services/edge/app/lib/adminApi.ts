@@ -55,6 +55,11 @@ export interface Account {
   verdict_label?: string;
   confidence?: number;
   reporters?: number;
+  /** How this row entered the queue: 'report'/'block' = a user acted on it
+   *  (manual 举报 / X 屏蔽 confirm); 'auto_scan'/'auto_keyword_mention' = the
+   *  passive AI/rule pipeline. Drives the 来源 chip so a maintainer can tell a
+   *  user report apart from an automated flag. */
+  source?: string;
   account_created_at?: string;
   account_age_days?: number;
   followers_count?: number;

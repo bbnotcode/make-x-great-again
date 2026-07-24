@@ -212,7 +212,7 @@ export async function getStoredWhitelist(): Promise<StoredWhitelist | null> {
   }
 }
 
-async function edgeBase(): Promise<string> {
+export async function edgeBase(): Promise<string> {
   const s = await getSettings();
   return (s.edgeBase || BRAND.edgeBase).replace(/\/+$/, "");
 }

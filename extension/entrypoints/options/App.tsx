@@ -32,7 +32,31 @@ import type { Label } from "../../lib/types";
 const REPO = BRAND.repo;
 const EDGE_DEFAULT = BRAND.edgeBase;
 
-const when = (ts: number) => new Date(ts).toLocaleString("zh-CN", { hour12: false });
+/** Pre-filled GitHub false-positive appeal for a listed account — matches the
+ *  content-script's openAppeal so both entries land on the same filled form. */
+function appealUrl(handle: string, userId?: string): string {
+  const p = new URLSearchParams();
+  p.set("handle", `@${handle}`);
+  if (userId && /^\d+$/.test(userId)) p.set("userid", userId);
+  p.set("title", `[Appeal] @${handle} wrongly listed`);
+  return `${BRAND.appealNewIssue}&${p.toString()}`;
+}
+
+const whenFull = (ts: number) => new Date(ts).toLocaleString("zh-CN", { hour12: false });
+/** Table-cell timestamp: current-year dates drop the year, no seconds —
+ *  keeps the 时间 column narrow; hover (title=whenFull) has the rest. */
+const when = (ts: number) => {
+  const d = new Date(ts);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleString("zh-CN", {
+    hour12: false,
+    ...(sameYear ? {} : { year: "numeric" }),
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
 const idTail = (id: string, h: string) =>
   /^\d+$/.test(id) && id !== h && !/^\d+$/.test(h) ? ` · ${id}` : "";
 
@@ -265,7 +289,7 @@ const Page = ({
   sub,
   children,
 }: { title: string; sub?: string; children?: React.ReactNode }) => (
-  <main className="max-w-[1100px] flex-1 px-9 py-8">
+  <main className="min-w-0 max-w-[1160px] flex-1 px-5 py-6 md:px-9 md:py-8">
     <h1 className="text-[26px] font-semibold tracking-[-0.015em] text-fg">{title}</h1>
     {sub && <div className="mb-7 mt-1.5 text-[13px] text-fg-3">{sub}</div>}
     {children}
@@ -279,7 +303,7 @@ const SectionH = ({ children }: { children: React.ReactNode }) => (
 );
 
 const td = "border-b border-border px-3 py-2.5 align-middle whitespace-nowrap";
-const th = `${td} text-[10.5px] font-semibold uppercase tracking-[0.06em] text-fg-3`;
+const th = `${td} text-left text-[10.5px] font-semibold uppercase tracking-[0.06em] text-fg-3`;
 const trHover = "transition hover:bg-card-hi";
 
 const CAT_COLOR: Record<string, string> = {
@@ -431,11 +455,11 @@ function Overview() {
     ["o", "other"],
   ];
   return (
-    <Page title="概览" sub="本地统计 · 数据仅存于本机，无 PII">
+    <Page title="概览" sub="本地统计 · 数据仅存于本机，不含个人隐私信息">
       {ls && <ListStatusCard ls={ls} onRefreshed={loadLists} />}
-      <div className="mb-8 grid grid-cols-4 gap-px overflow-hidden rounded-lg border border-border bg-border">
+      <div className="mb-8 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border lg:grid-cols-4">
         <Card n={s.detections} l="AI 检测总数" />
-        <Card n={s.cacheHits} l="缓存命中 · 省下的 LLM 调用" />
+        <Card n={s.cacheHits} l="缓存命中 · 省下的 AI 判定" />
         <Card n={bl} l={autoBl ? `已处理账号 · 其中自动 ${autoBl.toLocaleString("zh-CN")}` : "已处理账号"} />
         <Card n={(d.spam ?? 0) + (d.porn_bot ?? 0)} l="判定为垃圾/色情bot" />
       </div>
@@ -472,7 +496,7 @@ function Overview() {
       {st && (
         <div className="mb-8">
           <div className="flex items-baseline justify-between">
-            <SectionH>分级策略</SectionH>
+            <SectionH>自动处理策略</SectionH>
             <a href="?tab=settings" className="text-[12px] text-fg-3 hover:text-fg">
               调整 →
             </a>
@@ -544,13 +568,18 @@ function Blocklist() {
       ),
     [list, q],
   );
-  const src: Record<string, string> = {
-    manual: "手动",
-    auto: "分级策略",
-    regex: "正则静音",
-    block_all: "一键全部",
-    list_hit: "公榜命中",
-    cache_hit: "缓存命中",
+  // 来源 answers "这条处理是谁触发的" — plain words, config jargon stays in
+  // the tooltip. block_all/list_hit/cache_hit only appear on legacy records.
+  const src: Record<string, { label: string; hint: string }> = {
+    manual: { label: "手动处理", hint: "你在页面上手动点了隐藏 / 静音 / 拉黑" },
+    auto: {
+      label: "自动处理",
+      hint: "命中公共黑名单或官方规则，按「设置 → 自动处理策略」自动执行",
+    },
+    regex: { label: "正则静音", hint: "命中你在设置页保存的本地正则表达式" },
+    block_all: { label: "一键处理", hint: "在气泡面板一键处理了本页全部命中（旧版记录）" },
+    list_hit: { label: "名单命中", hint: "命中公共黑名单（旧版记录）" },
+    cache_hit: { label: "缓存命中", hint: "命中本地检测缓存（旧版记录）" },
   };
   return (
     <Page
@@ -562,10 +591,11 @@ function Blocklist() {
         value={q}
         onChange={(e) => setQ(e.target.value)}
         placeholder="搜索 @handle / 显示名 / 理由"
-        className="mb-4 w-[320px] rounded-md border border-border-2 bg-transparent px-3 py-2 text-[13px] outline-none transition focus:border-accent"
+        className="mb-4 w-full max-w-[320px] rounded-md border border-border-2 bg-transparent px-3 py-2 text-[13px] outline-none transition focus:border-accent"
       />
-      <div className="overflow-hidden rounded-lg border border-border">
-        <table className="w-full border-collapse text-[13px]">
+      {/* overflow-x-auto（而非 hidden）：窄窗口下表格横向滚动，操作列不再被裁掉 */}
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full min-w-[880px] border-collapse text-[13px]">
           <thead className="bg-card">
             <tr>
               <th className={th}>账号</th>
@@ -623,7 +653,7 @@ function Blocklist() {
                         title={r.tweetText ? `触发内容：${r.tweetText}` : "查看触发这次处理的推文"}
                         className="whitespace-nowrap text-[11px] text-fg-3 underline decoration-dotted underline-offset-2 transition hover:text-accent"
                       >
-                        现场 ↗
+                        查看推文 ↗
                       </a>
                     )}
                   </div>
@@ -636,18 +666,39 @@ function Blocklist() {
                     </div>
                   )}
                 </td>
-                <td className={`${td} text-fg-3`}>{src[r.source]}</td>
-                <td className={`${td} font-mono text-[12px] text-fg-3`}>{when(r.ts)}</td>
-                <td className={td}>
-                  <Btn
-                    size="sm"
-                    onClick={async () => {
-                      await removeBlock(r.id);
-                      load();
-                    }}
+                <td className={`${td} text-fg-3`}>
+                  <span
+                    title={src[r.source]?.hint ?? ""}
+                    className="inline-flex cursor-help items-center rounded-full border border-border-2 bg-card px-2 py-0.5 text-[11px] text-fg-2"
                   >
-                    恢复显示
-                  </Btn>
+                    {src[r.source]?.label ?? r.source}
+                  </span>
+                </td>
+                <td className={`${td} font-mono text-[12px] text-fg-3`} title={whenFull(r.ts)}>
+                  {when(r.ts)}
+                </td>
+                <td className={td}>
+                  {/* 纵向堆叠：横排两个操作是表格在 1440 视口下溢出的主因 */}
+                  <div className="flex flex-col items-start gap-1">
+                    <Btn
+                      size="sm"
+                      onClick={async () => {
+                        await removeBlock(r.id);
+                        load();
+                      }}
+                    >
+                      恢复显示
+                    </Btn>
+                    <a
+                      href={appealUrl(r.handle, r.id)}
+                      target="_blank"
+                      rel="noopener"
+                      title="账号被误列？提交申诉（已预填账号信息）"
+                      className="whitespace-nowrap text-[11px] text-fg-3 underline decoration-dotted underline-offset-2 transition hover:text-warn"
+                    >
+                      误判申诉 ↗
+                    </a>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -665,10 +716,10 @@ function Cache() {
   return (
     <Page
       title="检测缓存"
-      sub={`共 ${rows.length} 条 · 同账号再出现直接用缓存，0 次 LLM`}
+      sub={`共 ${rows.length} 条 · 同一账号再次出现时直接复用判定结果，不再调用 AI`}
     >
-      <div className="overflow-hidden rounded-lg border border-border">
-        <table className="w-full border-collapse text-[13px]">
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full min-w-[760px] border-collapse text-[13px]">
           <thead className="bg-card">
             <tr>
               <th className={th}>账号</th>
@@ -717,7 +768,9 @@ function Cache() {
                   <ReasonChip reasons={c.verdict.reasons} />
                 </td>
                 <td className={`${td} font-mono text-[12px] text-fg-3`}>{c.model}</td>
-                <td className={`${td} font-mono text-[12px] text-fg-3`}>{when(c.ts)}</td>
+                <td className={`${td} font-mono text-[12px] text-fg-3`} title={whenFull(c.ts)}>
+                  {when(c.ts)}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -915,6 +968,19 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
   const [statusHandle, setStatusHandle] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  // Already ON the official whitelist (locally-synced copy)? The apply/status
+  // endpoint only knows about APPLICATIONS — an account whitelisted directly
+  // (maintainer add, appeal) has no request row and would read 尚未申请,
+  // prompting a pointless application. The local list answers instantly.
+  const [wlHit, setWlHit] = useState(false);
+  useEffect(() => {
+    if (!ownHandle) return;
+    void getStoredWhitelist().then((wl) => {
+      if (!wl) return;
+      const h = ownHandle.toLowerCase().replace(/^@+/, "");
+      setWlHit(wl.entries.some((e) => String(e[1] ?? "").toLowerCase() === h));
+    });
+  }, [ownHandle]);
 
   const fetchStatus = async (tok: string) => {
     try {
@@ -1118,7 +1184,7 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
         error?: string;
       };
       if (res.ok && j.status === "already_whitelisted") {
-        setMsg({ text: "该账号已在官方白名单中，无需申请。", ok: true });
+        setWlHit(true); // flip straight into the 已在白名单 success panel
       } else if (res.ok && j.ok) {
         setStatus("pending");
         setStatusHandle(h);
@@ -1135,15 +1201,89 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
 
   const input =
     "w-full rounded-md border border-border-2 bg-transparent px-3 py-2 text-[13px] outline-none transition focus:border-accent";
-  const [statusZh, statusCls] = status ? APPLY_STATUS_ZH[status] : ["", ""];
+
+  const identityLine = login && (
+    <p className="text-[12px] text-fg-3">
+      GitHub 身份：<b className="text-fg-2">@{login}</b>
+    </p>
+  );
+
+  // ---- Terminal states render as a status panel, not the apply form ----
+  // 已在白名单（本地名单命中 / 申请已批准）：再展示三步引导 + 申请按钮
+  // 就是在骗用户做无用功。
+  if (wlHit || status === "approved") {
+    const h = (wlHit ? ownHandle : statusHandle) ?? ownHandle ?? statusHandle;
+    return (
+      <section className="space-y-3">
+        <div className="flex items-start gap-3 rounded-lg border border-ok/40 bg-ok/[0.07] p-4">
+          <span className="mt-0.5 flex h-5 w-5 flex-none items-center justify-center rounded-full bg-ok text-[12px] font-bold text-white">
+            ✓
+          </span>
+          <div>
+            <div className="text-[14px] font-semibold text-ok">
+              {h ? `@${h} ` : "你的账号"}已在官方白名单
+            </div>
+            <div className="mt-1 text-[12px] leading-relaxed text-fg-2">
+              白名单账号永不会被本扩展检测、标记、自动处理或上榜。
+              {status === "approved" && !wlHit
+                ? " 你的申请已获批准，名单每 6 小时同步到本机。"
+                : ""}
+            </div>
+          </div>
+        </div>
+        {identityLine}
+      </section>
+    );
+  }
+  if (status === "pending") {
+    return (
+      <section className="space-y-3">
+        <div className="rounded-lg border border-warn/40 bg-warn/[0.07] p-4">
+          <div className="text-[14px] font-semibold text-warn">
+            申请审核中{statusHandle ? ` · @${statusHandle}` : ""}
+          </div>
+          <div className="mt-1 text-[12px] leading-relaxed text-fg-2">
+            维护者审核通过后自动生效（名单每 6 小时同步到本机），无需重复提交。
+          </div>
+        </div>
+        {identityLine}
+        {msg && <p className={`text-[12px] ${msg.ok ? "text-ok" : "text-danger"}`}>{msg.text}</p>}
+      </section>
+    );
+  }
+
+  // ---- Apply flow: the pitch is a LIVE checklist, not a static blurb ----
+  const Step = ({ done, n, children }: { done: boolean; n: number; children: React.ReactNode }) => (
+    <li className="flex items-center gap-2.5">
+      <span
+        className={`flex h-5 w-5 flex-none items-center justify-center rounded-full text-[11px] font-bold ${
+          done ? "bg-ok text-white" : "border border-border-2 text-fg-3"
+        }`}
+      >
+        {done ? "✓" : n}
+      </span>
+      <span className={done ? "text-fg-3" : "text-fg-2"}>{children}</span>
+    </li>
+  );
 
   return (
     <section>
-      <p className="mb-3 text-[13px] leading-relaxed text-fg-2">
-        三步：<b className="text-fg">GitHub 登录</b>（账号需注册满 90 天，防滥用）→
-        扩展自动识别<b className="text-fg">你登录的 X 账号</b> → 提交申请，维护者审核。
-        <span className="text-fg-3">凭证只存本机，仅用于身份验证。</span>
-      </p>
+      <ol className="mb-4 space-y-1.5 text-[13px]">
+        <Step done={!!login} n={1}>
+          GitHub 登录（账号需注册满 90 天，防滥用；凭证只存本机）
+        </Step>
+        <Step done={!!ownHandle} n={2}>
+          扩展自动识别你登录的 X 账号
+        </Step>
+        <Step done={false} n={3}>
+          提交申请，等维护者审核
+        </Step>
+      </ol>
+      {status === "rejected" && (
+        <p className="mb-3 text-[12px] text-danger">
+          上次申请被驳回{statusHandle ? `（@${statusHandle}）` : ""}——可补充附言说明后重新提交。
+        </p>
+      )}
       <div className="space-y-2.5">
         {!login && !ghFlow && (
           <div className="flex items-center gap-3">
@@ -1185,11 +1325,7 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
             </div>
           </div>
         )}
-        {login && (
-          <p className="text-[12px] text-fg-3">
-            GitHub 身份：<b className="text-fg-2">@{login}</b>
-          </p>
-        )}
+        {identityLine}
         <details className="text-[12px] text-fg-3">
           <summary className="cursor-pointer select-none">
             高级：手动粘贴 GitHub Token（无需勾选任何权限）
@@ -1209,14 +1345,14 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
             </Btn>
           </div>
         </details>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div
             className={`${input} flex items-center gap-2 ${ownHandle ? "" : "text-fg-3"}`}
             title="由你当前登录的 x.com 会话自动识别，不可手填——只能为自己的账号申请"
           >
             {ownHandle ? (
               <>
-                <span className="text-fg-3">申请账号（自动识别）</span>
+                <span className="flex-none whitespace-nowrap text-fg-3">申请账号（自动识别）</span>
                 <b className="text-fg">@{ownHandle}</b>
               </>
             ) : (
@@ -1234,14 +1370,8 @@ function WhitelistApplySection({ edgeBase }: { edgeBase: string }) {
         </div>
         <div className="flex items-center gap-3">
           <Btn tier="primary" onClick={apply} disabled={busy || !token.trim() || !ownHandle}>
-            {busy ? "提交中…" : "申请把我的 X 账号加入白名单"}
+            {busy ? "提交中…" : status === "rejected" ? "重新提交申请" : "申请把我的 X 账号加入白名单"}
           </Btn>
-          {status && (
-            <span className={`text-[12px] ${statusCls}`}>
-              申请状态：{statusZh}
-              {statusHandle ? ` · @${statusHandle}` : ""}
-            </span>
-          )}
         </div>
         {msg && <p className={`text-[12px] ${msg.ok ? "text-ok" : "text-danger"}`}>{msg.text}</p>}
       </div>
@@ -1350,7 +1480,7 @@ function Settings() {
           <section>
             <SectionH>手动处理方式</SectionH>
             <p className="mb-3 text-[12px] text-fg-3">
-              你手动点按钮时执行的动作。X 静音 / 拉黑走你自己的登录态，不经过我们的服务器；与自动分级互相独立。
+              你手动点按钮时执行的动作。X 静音 / 拉黑走你自己的登录态，不经过我们的服务器；与下方的自动处理策略互相独立。
             </p>
             <div className="space-y-2">
               {ACTION_MODES.map((m) => {
@@ -1391,7 +1521,7 @@ function Settings() {
 
         {st && (
           <section>
-            <SectionH>自动分级策略</SectionH>
+            <SectionH>自动处理策略</SectionH>
             <p className="mb-3 text-[12px] leading-relaxed text-fg-3">
               命中<b className="text-fg-2">公共黑名单或官方规则</b>的账号按类别自动处理，其余只挂角标。
               总开关在气泡里；规则命中只在评论区自动执行；白名单账号永不处理；一切可在「处理记录」撤销。
@@ -1442,7 +1572,7 @@ function Settings() {
             <div className="mb-4">
               <div className="mb-1.5 text-[12px] font-semibold text-fg">自动收录条目</div>
               <p className="mb-2 text-[12px] leading-relaxed text-fg-3">
-                公榜条目分两级：<b className="text-fg-2">人工确认</b>（维护者复核过，始终按下方分级策略完整执行）和
+                公榜条目分两级：<b className="text-fg-2">人工确认</b>（维护者复核过，始终按下方各类别的动作完整执行）和
                 <b className="text-fg-2">自动收录</b>（AI/规则判定自动上榜，占榜单大多数）。这里决定自动收录条目能自动处理到什么程度。
               </p>
               <div className="grid grid-cols-1 gap-2">
@@ -1451,12 +1581,12 @@ function Settings() {
                     {
                       v: "full",
                       label: "完整执行（默认）",
-                      hint: "上榜即处理：与人工确认条目同权，按分级策略执行包括 X 静音/拉黑。误判可在「处理记录」恢复并申诉。",
+                      hint: "上榜即处理：与人工确认条目同权，按各类别设定的动作执行（包括 X 静音/拉黑）。误判可在「处理记录」恢复并申诉。",
                     },
                     {
                       v: "hide",
                       label: "封顶为自动隐藏",
-                      hint: "按分级策略执行，但封顶为本地隐藏——零联网、一键恢复；X 静音/拉黑仍只对人工确认条目执行。",
+                      hint: "按各类别设定的动作执行，但封顶为本地隐藏——零联网、一键恢复；X 静音/拉黑仍只对人工确认条目执行。",
                     },
                     {
                       v: "badge",
@@ -1597,7 +1727,7 @@ function Settings() {
         <section>
           <SectionH>数据与隐私</SectionH>
           <p className="mb-3 text-[13px] text-fg-2">
-            检测缓存、处理记录、统计均仅存于本机；除公开 X 数字 ID 外不存 PII。
+            检测缓存、处理记录、统计均仅存于本机；除公开的 X 数字 ID 外不存任何个人信息。
           </p>
           <div className="flex items-center gap-3">
             <Btn tier="danger" onClick={() => setClearOpen(true)}>
@@ -1680,7 +1810,7 @@ const About = () => (
         </div>
       </div>
       <p className="text-[12px] text-fg-3">
-        隐私：除公开的 X 数字 ID 外不存储任何 PII，数据默认仅在本机。AI 判定永不自动公开，须人工或社区共识（≥3 个独立 GitHub 上报人）确认。
+        隐私：除公开的 X 数字 ID 外不存储任何个人信息，数据默认仅在本机。AI 判定永不自动公开，须人工或社区共识（≥3 个独立 GitHub 上报人）确认。
       </p>
     </div>
   </Page>
@@ -1708,7 +1838,7 @@ function WhitelistPage() {
     getSettings().then(setSt);
   }, []);
   return (
-    <Page title="保护我的账号" sub="加入官方白名单 · 永不被检测、标记或上榜">
+    <Page title="保护我的账号" sub="官方白名单 · 名单内账号永不被检测、标记或上榜">
       <div className="max-w-[680px]">{st && <WhitelistApplySection edgeBase={st.edgeBase} />}</div>
     </Page>
   );
@@ -1751,8 +1881,10 @@ export function App() {
     setTabUrl(id);
   };
   return (
-    <div className="flex min-h-screen">
-      <aside className="sticky top-0 flex h-screen w-[220px] flex-none flex-col gap-6 border-r border-border px-4 py-6">
+    // 窄屏（手机 / 窄窗口）侧边栏折叠为顶栏 + 横向可换行导航，避免整页
+    // 横向滚动；md 及以上恢复左侧固定栏。
+    <div className="flex min-h-screen flex-col md:flex-row">
+      <aside className="flex w-full flex-none flex-col gap-3 border-b border-border px-4 py-4 md:sticky md:top-0 md:h-screen md:w-[220px] md:gap-6 md:border-b-0 md:border-r md:py-6">
         <div className="flex items-center gap-2.5 px-1 text-[15px] font-semibold tracking-[-0.005em]">
           <Mascot />
           <span className="flex flex-col gap-px leading-tight">
@@ -1760,7 +1892,7 @@ export function App() {
             <span className="text-[10px] font-medium uppercase tracking-[0.08em] text-fg-4">{BRAND.name}</span>
           </span>
         </div>
-        <nav className="flex flex-col gap-0.5" aria-label="管理面板导航">
+        <nav className="flex flex-row flex-wrap gap-0.5 md:flex-col" aria-label="管理面板导航">
           {TABS.map(([id, label]) => (
             <button
               key={id}
@@ -1776,7 +1908,7 @@ export function App() {
             </button>
           ))}
         </nav>
-        <div className="mt-auto space-y-1.5 text-[11px] text-fg-3">
+        <div className="mt-auto hidden space-y-1.5 text-[11px] text-fg-3 md:block">
           <a
             href={`${EDGE_DEFAULT}/list`}
             target="_blank"

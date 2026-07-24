@@ -104,6 +104,36 @@ export default defineBackground(() => {
             sendResponse({ ok: true, data: await ghStart() });
           } else if (msg.type === "gh_poll") {
             sendResponse({ ok: true, data: await ghPoll(msg.deviceCode) });
+          } else if (msg.type === "open_options") {
+            chrome.runtime.openOptionsPage();
+            sendResponse({ ok: true });
+          } else if (msg.type === "report") {
+            // Authenticated POST /v1/report from the SHARED extension origin
+            // (same path the whitelist-apply flow uses), not the content
+            // script — x.com's CORS/CSP would otherwise block it.
+            const { getGhToken } = await import("../lib/auth");
+            const { edgeBase } = await import("../lib/list-sync");
+            const token = await getGhToken();
+            if (!token) {
+              sendResponse({ ok: false, error: "no_token" });
+            } else {
+              const base = await edgeBase();
+              const res = await fetch(`${base}/v1/report`, {
+                method: "POST",
+                headers: {
+                  authorization: `Bearer ${token}`,
+                  "content-type": "application/json",
+                },
+                body: JSON.stringify(msg.sig),
+              });
+              let body: unknown = {};
+              try {
+                body = await res.json();
+              } catch {
+                /* non-JSON error page */
+              }
+              sendResponse({ ok: true, data: { status: res.status, body } });
+            }
           } else {
             sendResponse({ ok: false, error: "unknown message" });
           }

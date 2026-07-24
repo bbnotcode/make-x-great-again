@@ -23,7 +23,15 @@ import {
   setSetting,
 } from "../lib/settings";
 import { bumpStat } from "../lib/stats";
-import { addBlockRecord, bumpStats, updateBlockRecord } from "../lib/store";
+import {
+  type PendingXAction,
+  addBlockRecord,
+  addPendingAction,
+  bumpStats,
+  clearPendingAction,
+  getPendingActions,
+  updateBlockRecord,
+} from "../lib/store";
 import type { Signals, Verdict } from "../lib/types";
 import { performXAction, retryDelayForAttempt } from "../lib/x-action";
 import {
@@ -35,10 +43,89 @@ import {
   createBubble,
 } from "../lib/ui";
 
-/** "误判申诉" — opens the GitHub appeal issue template. Zero remote requests
- *  from the extension itself; the user files the appeal on GitHub. */
-function openAppeal(): void {
-  window.open(BRAND.appealNewIssue, "_blank", "noopener");
+/** "误判申诉" — opens the GitHub appeal issue template, PRE-FILLED with the
+ *  account's handle / user id / title so the user only writes the reason and
+ *  submits. Zero remote requests from the extension itself; the appeal is
+ *  filed on GitHub (the template field ids are handle / userid). */
+function openAppeal(appeal?: { handle: string; userId?: string }): void {
+  let url = BRAND.appealNewIssue;
+  if (appeal?.handle) {
+    const p = new URLSearchParams();
+    p.set("handle", `@${appeal.handle}`);
+    if (appeal.userId) p.set("userid", appeal.userId);
+    p.set("title", `[Appeal] @${appeal.handle} wrongly listed`);
+    url += `&${p.toString()}`;
+  }
+  window.open(url, "_blank", "noopener");
+}
+
+/** Cap on how many interrupted (queue-died) X-actions we resume per load, so a
+ *  huge backlog can't fire a burst of X calls at once. The global x-action
+ *  lock still paces each one; anything beyond the cap settles on later loads. */
+const RESUME_MAX = 50;
+
+/** Report an unlisted account to the public review queue. GitHub-authed
+ *  contribution: the token gates who can report (server enforces a 90-day
+ *  account-age floor, 10/hour rate limit, one-vote-per-target dedup, reporter
+ *  bans, and — auto-publish being off — every report just queues for a
+ *  maintainer to confirm). The extension only surfaces the outcome; it never
+ *  auto-lists anything. Returns a short line for the popover to show inline. */
+async function reportSpam(sig: Signals): Promise<{ ok: boolean; message: string }> {
+  // The POST runs in the BACKGROUND (see BgRequest "report"): a content-script
+  // fetch to the edge Worker is bound by x.com's CORS/CSP; the SW shares the
+  // extension origin the whitelist-apply flow already reports from.
+  let resp:
+    | { ok: boolean; error?: string; data?: { status: number; body: ReportBody } }
+    | undefined;
+  try {
+    resp = await chrome.runtime.sendMessage({ type: "report", sig });
+  } catch {
+    return { ok: false, message: "网络错误，举报未提交" };
+  }
+  if (!resp || !resp.ok) {
+    if (resp?.error === "no_token") {
+      try {
+        chrome.runtime.sendMessage({ type: "open_options" });
+      } catch {
+        /* best-effort */
+      }
+      return { ok: false, message: "举报需先在设置页用 GitHub 授权（已为你打开设置）" };
+    }
+    return { ok: false, message: "网络错误，举报未提交" };
+  }
+  const { status, body } = resp.data ?? { status: 0, body: {} as ReportBody };
+  if (status >= 200 && status < 300 && body.ok) {
+    if (body.duplicate) return { ok: true, message: "你已举报过该账号，感谢" };
+    if (body.status === "whitelisted")
+      return { ok: true, message: "该账号已被官方列入白名单，举报已忽略" };
+    if (body.status === "viewer_ignored")
+      return { ok: true, message: "这是你自己的账号，举报已忽略" };
+    return { ok: true, message: "已举报，进入人工审核队列，感谢贡献" };
+  }
+  switch (status) {
+    case 401:
+      try {
+        chrome.runtime.sendMessage({ type: "open_options" });
+      } catch {
+        /* best-effort */
+      }
+      return { ok: false, message: "GitHub 授权已失效，请在设置页重新授权" };
+    case 403:
+      return { ok: false, message: "你的举报权限已被限制" };
+    case 429:
+      return { ok: false, message: "举报过于频繁，请稍后再试" };
+    case 503:
+      return { ok: false, message: "服务暂未就绪，请稍后再试" };
+    default:
+      return { ok: false, message: "举报失败，请稍后重试" };
+  }
+}
+
+interface ReportBody {
+  ok?: boolean;
+  status?: string;
+  duplicate?: boolean;
+  error?: string;
 }
 
 function articleOf(node: Element | null): HTMLElement | null {
@@ -144,26 +231,6 @@ function restoreRegexHidden(): void {
   }
 }
 
-/** Animated hide for the visible auto queue: quick fade + shrink, then
- *  display:none. Height stays untouched — X's virtualized timeline owns row
- *  geometry, and animating it fights the virtualizer. Falls back to the
- *  instant hide under prefers-reduced-motion. */
-function collapseTweet(node: Element | null) {
-  const cell =
-    node?.closest('[data-testid="cellInnerDiv"]') ?? node?.closest("article");
-  if (!(cell instanceof HTMLElement)) return;
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    cell.style.display = "none";
-    return;
-  }
-  cell.style.transition = "opacity .3s ease, transform .3s ease";
-  cell.style.opacity = "0";
-  cell.style.transform = "scale(.985)";
-  setTimeout(() => {
-    cell.style.display = "none";
-  }, 320);
-}
-
 /** Each inline badge gets its own shadow host so X CSS can't touch it. */
 function mountBadge(anchor: HTMLElement, build: () => HTMLElement) {
   const host = document.createElement("span");
@@ -257,6 +324,9 @@ export default defineContentScript({
     let settings = await getSettings();
     let regexRules = compileRegexRules(settings.regexRules).compiled;
     if (!settings.enabled) return; // master off → don't init (applies next load)
+    // Build marker — confirms which content-script build is live in this tab
+    // (reloading the unpacked extension does NOT refresh already-open tabs).
+    console.info("[MXGA] content script ready · build 2026-07-22 (nav-carryover)");
     onSettingsChange((s) => {
       const modeChanged = s.actionMode !== settings.actionMode;
       const regexChanged =
@@ -416,10 +486,23 @@ export default defineContentScript({
         ? anchor
         : document.querySelector(`[data-xss-key="${CSS.escape(key)}"]`);
       if (target) hideTweet(target);
+      // If this account is a live bubble finding (a listed hit the user chose
+      // to handle from the badge popover rather than the batch panel), drive
+      // its row to "done" so it stops offering an actionable button and joins
+      // the 已处理 record — otherwise the row stalls at "待处理" forever and is
+      // dropped on the next SPA navigation.
+      bubbleApi?.markManual(key, actionVerb(mode));
+      // Track the not-yet-fired X action so a mid-batch navigation/reload can
+      // resume it rather than leave the account locally-hidden-only (same
+      // guarantee as the auto queue). Local mode makes no X call — skip.
+      if (mode === "mute" || mode === "block") {
+        void addPendingAction({ id: key, handle: sig.handle, action: mode, ts: Date.now() });
+      }
       // Mirror the auto path: when the native X action fails, the 处理记录
       // row must say so — the user clicked 拉黑/静音 and only got a local
       // hide, and the record is the one place that can state it honestly.
       return applyXAction(mode, sig).then((ok) => {
+        if (mode === "mute" || mode === "block") void clearPendingAction(key);
         if (!ok) {
           void updateBlockRecord(key, {
             reason: `手动${actionVerb(mode)}（X 动作失败，仅本地隐藏）`,
@@ -494,7 +577,7 @@ export default defineContentScript({
     }
 
     function enqueueAuto(it: AutoItem) {
-      if (autoActing.has(it.key)) return;
+      if (autoActing.has(it.key) || isFollowProtected(it.sig)) return;
       autoActing.add(it.key);
       // Record FIRST — the protection survives navigation even if the
       // animation never gets to play.
@@ -518,6 +601,18 @@ export default defineContentScript({
         source: "auto",
         ts: Date.now(),
       });
+      // Track the not-yet-fired X action separately (see PendingXAction): a
+      // mid-queue reload can then tell a queued account apart from a completed
+      // one — resuming it instead of falsely counting it as 已处理. Local-only
+      // hides need no X call, so nothing to track.
+      if (it.action === "mute" || it.action === "block") {
+        void addPendingAction({
+          id: it.key,
+          handle: it.sig.handle,
+          action: it.action,
+          ts: Date.now(),
+        });
+      }
       void bumpStats({ blocks: 1 });
       void bumpStat("blocked");
       anchorByKey.set(it.key, it.anchor);
@@ -578,13 +673,21 @@ export default defineContentScript({
           // Even the instant local-hide mode dwells long enough to be SEEN.
           const dwell = AUTO_MIN_ACT_MS - (Date.now() - t0);
           if (dwell > 0) await sleep(dwell);
-          collapseTweet(autoTarget(it));
-          // The record itself was written at enqueue time; only the X-action
-          // outcome needs reconciling here.
-          if (!xOk) {
-            void updateBlockRecord(it.key, {
-              reason: `${it.categoryZh} · 自动${it.verb}（X 动作失败，仅本地隐藏）`,
-            });
+          // Hide the real tweet INSTANTLY — the processing theater (fade /
+          // shrink / fly-into-chip) belongs to the corner bubble; animating
+          // the page's own DOM competes with X's scroll/virtualizer and reads
+          // as jank on the timeline.
+          hideTweet(autoTarget(it));
+          // The action has now SETTLED (attempted) — drop its pending marker so
+          // it stops being a resume candidate; only items whose queue died
+          // before this point stay pending. On X failure, annotate the record.
+          if (it.action === "mute" || it.action === "block") {
+            void clearPendingAction(it.key);
+            if (!xOk) {
+              void updateBlockRecord(it.key, {
+                reason: `${it.categoryZh} · 自动${it.verb}（X 动作失败，仅本地隐藏）`,
+              });
+            }
           }
           bubbleApi?.markAuto(it.key, xOk ? "done" : "failed", it.verb);
         } catch (e) {
@@ -598,6 +701,42 @@ export default defineContentScript({
           autoActing.delete(it.key);
         }
         await sleep(AUTO_SETTLE_MS);
+      }
+    }
+
+    /** Resume mute/block actions whose paced queue died with a previous page
+     *  (mid-queue navigation / reload / tab close). Their local hide + record
+     *  persisted, but the X-action never fired — re-run it best-effort (the
+     *  x-action lock paces these across tabs), then settle the pending marker
+     *  so it stops being a resume candidate. Runs once per load; each entry is
+     *  attempted at most once, then cleared regardless of outcome. */
+    async function resumeInterrupted(pending: PendingXAction[]) {
+      // The user switched the mode to local (no more X actions) — honor that:
+      // just settle the markers so these move into the normal 已处理 history.
+      if (settings.actionMode === "local") {
+        for (const p of pending) void clearPendingAction(p.id);
+        return;
+      }
+      for (const p of pending.slice(0, RESUME_MAX)) {
+        if (p.action !== "mute" && p.action !== "block") {
+          void clearPendingAction(p.id);
+          continue;
+        }
+        const sig = {
+          handle: p.handle,
+          ...(/^\d+$/.test(p.id) ? { userId: p.id } : {}),
+        } as Signals;
+        if (isFollowProtected(sig)) {
+          void clearPendingAction(p.id);
+          continue;
+        }
+        const ok = await applyXAction(p.action, sig).catch(() => false);
+        if (!ok) {
+          void updateBlockRecord(p.id, {
+            reason: `自动${p.action === "block" ? "拉黑" : "静音"}（X 动作失败，仅本地隐藏）`,
+          });
+        }
+        void clearPendingAction(p.id);
       }
     }
 
@@ -654,13 +793,16 @@ export default defineContentScript({
         createBadge(
           v,
           {
-            onHide: () => scheduleHide(key, sig, anchor),
-            onHideLocal: () => scheduleHide(key, sig, anchor, "local"),
-            onAppeal: openAppeal,
+            // The popover exposes the full ladder; the clicked mode overrides
+            // settings.actionMode for this one account (default = configured).
+            onAct: (mode) => scheduleHide(key, sig, anchor, mode),
+            onAppeal: () =>
+              openAppeal({ handle: sig.handle, ...(sig.userId ? { userId: sig.userId } : {}) }),
+            onReport: () => reportSpam(sig),
           },
           note,
           source,
-          actionVerb(settings.actionMode),
+          settings.actionMode,
         ),
       );
     }
@@ -1018,6 +1160,9 @@ export default defineContentScript({
           onDismiss() {
             dismissed = true;
           },
+          onAppeal(appeal) {
+            openAppeal(appeal);
+          },
           onToggleAuto(v: boolean) {
             // Persist; the onSettingsChange listener updates `settings` (and
             // echoes the new state back into the bubble, a no-op here).
@@ -1032,6 +1177,20 @@ export default defineContentScript({
         container.appendChild(bubble.el);
         if (!settings.bubble) bubble.el.style.display = "none";
         bubbleApi = bubble;
+        // The bubble's 已处理 list is SESSION-scoped: it persists across SPA
+        // navigation (the content script and its in-memory archive live on),
+        // but a full reload / freshly-opened X must start clean — resurrecting
+        // the whole all-time history here read as "记录没清掉". The permanent
+        // audit trail lives in the options 处理记录 page, not the corner bubble.
+        //
+        // We still read the pending-actions key: an X mute/block whose paced
+        // queue died mid-flight (navigation / reload / tab close) never fired,
+        // so resume it best-effort. This is protection follow-through, NOT
+        // history display — resumed accounts are not seeded into 已处理.
+        void getPendingActions().then((pending) => {
+          refreshVisibleRelationships();
+          if (pending.length) void resumeInterrupted(pending);
+        });
         return bubble;
       },
     });

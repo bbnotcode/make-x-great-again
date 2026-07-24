@@ -36,6 +36,20 @@ export interface BlockRecord {
   ts: number;
 }
 
+/** An X mute/block that was committed locally (row hidden + id recorded) but
+ *  whose PACED X-action hasn't settled yet. Tracked in its OWN storage key —
+ *  NOT on the block record — because getBlocklist()'s legacy migration
+ *  synthesizes bare records from the fast-path id set and would strip a field
+ *  living on the record. A leftover entry after a page load means the in-queue
+ *  died before the X call fired: the account got only a local hide, must not
+ *  be shown as 已处理, and must be resumed. */
+export interface PendingXAction {
+  id: string;
+  handle: string;
+  action: "mute" | "block";
+  ts: number;
+}
+
 /** Permalink of the triggering tweet, when recorded. */
 export function tweetUrl(r: Pick<BlockRecord, "handle" | "tweetId">): string | null {
   return r.tweetId
@@ -53,6 +67,7 @@ export interface Stats {
 const K_BLOCK = "xss:blocklist:v2";
 const K_BLOCK_LEGACY = "xss:blocked";
 const K_STATS = "xss:stats";
+const K_PENDING = "xss:pending-actions";
 
 async function get<T>(key: string, fallback: T): Promise<T> {
   try {
@@ -100,8 +115,48 @@ export async function updateBlockRecord(
   const i = list.findIndex((r) => r.id === id);
   const rec = list[i];
   if (!rec) return;
-  list[i] = { ...rec, ...patch };
+  const merged: BlockRecord = { ...rec, ...patch };
+  // A patch value of undefined means "clear this field" (e.g. settling
+  // pendingAction) — drop the key rather than persisting an undefined.
+  for (const k of Object.keys(patch) as (keyof typeof patch)[]) {
+    if (patch[k] === undefined) delete merged[k];
+  }
+  list[i] = merged;
   await set(K_BLOCK, list);
+}
+
+// Serialize read-modify-write on the pending-actions key. A page can enqueue
+// many auto-actions in one scan tick; unserialized void writes would race on
+// getPending→set and drop entries (a dropped entry = an account wrongly shown
+// as done instead of resumed). One in-context chain keeps them consistent.
+let pendingLock: Promise<unknown> = Promise.resolve();
+function withPendingLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = pendingLock.then(fn, fn);
+  pendingLock = run.catch(() => {});
+  return run;
+}
+
+export async function getPendingActions(): Promise<PendingXAction[]> {
+  return get<PendingXAction[]>(K_PENDING, []);
+}
+
+/** Record an X action that's been committed locally but not yet fired. */
+export async function addPendingAction(p: PendingXAction): Promise<void> {
+  return withPendingLock(async () => {
+    const list = await getPendingActions();
+    if (list.some((x) => x.id === p.id)) return;
+    list.push(p);
+    await set(K_PENDING, list);
+  });
+}
+
+/** Settle a pending X action (fired or abandoned) — remove it. */
+export async function clearPendingAction(id: string): Promise<void> {
+  return withPendingLock(async () => {
+    const list = await getPendingActions();
+    const next = list.filter((x) => x.id !== id);
+    if (next.length !== list.length) await set(K_PENDING, next);
+  });
 }
 
 export async function removeBlock(id: string): Promise<void> {
