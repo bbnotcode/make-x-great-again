@@ -1,0 +1,53 @@
+{
+  "goal": "Run two complete v0.5 browser-account regression rounds and prepare a verified Chrome Web Store ZIP only if both rounds pass",
+  "updatedAt": "2026-07-24T17:00:00+08:00",
+  "constraints": {
+    "browser": "User's existing signed-in Chrome profile",
+    "rounds": 2,
+    "nativeActionCapPerRound": {
+      "mute": 1,
+      "block": 1
+    },
+    "cleanup": "Restore every test-only setting and reversible X action before the round ends",
+    "packageGate": "Do not create the final store ZIP unless both browser rounds pass"
+  },
+  "tasks": [
+    {
+      "id": "baseline",
+      "task": "Confirm the clean v0.5 source baseline, installed-browser test surface, strategy matrix, and release commands",
+      "verify": "Git state, package/manifest version, existing tests, build scripts, installed extension state, and signed-in X page are all directly inspected",
+      "passes": false,
+      "evidence": []
+    },
+    {
+      "id": "browser-round-1",
+      "task": "Run browser-account regression round 1 across master enablement, bubble/position, scope, auto tier, badge, local hide/undo, X mute, X block, options navigation, and responsive/dark interaction states",
+      "verify": "Each strategy produces its documented result on a real X page, console has no new extension errors, and desktop/mobile screenshots are captured",
+      "passes": false,
+      "evidence": []
+    },
+    {
+      "id": "browser-round-2",
+      "task": "Repeat the complete strategy and interaction regression independently after restoring the baseline",
+      "verify": "The same matrix passes a second time with fresh page state, no retained test-only setting/action, no new console errors, and new screenshots",
+      "passes": false,
+      "evidence": []
+    },
+    {
+      "id": "store-package",
+      "task": "Build the final Chrome Web Store ZIP from the exact twice-tested source state",
+      "verify": "Compile, extension tests, production build, package command, ZIP listing, manifest policy fields, size, SHA-256, and secret scan all pass",
+      "passes": false,
+      "evidence": []
+    },
+    {
+      "id": "final-adversarial-review",
+      "task": "Attempt to falsify every prior pass before declaring store readiness",
+      "verify": "Re-run critical tests, inspect evidence files, compare packaged manifest to source policy, confirm clean Git diff, and verify the ZIP can be opened",
+      "passes": false,
+      "evidence": []
+    }
+  ],
+  "findings": [],
+  "needsUserAction": []
+}
