@@ -17,7 +17,7 @@ Object.assign(globalThis, {
   HTMLElement: window.HTMLElement,
 });
 
-const { hideAccountSurface } = await import("../lib/account-surface");
+const { hideAccountSurface, showAccountSurface } = await import("../lib/account-surface");
 
 test("manual local hide removes the visible profile header surface", () => {
   const anchor = document.querySelector("#badge-anchor");
@@ -25,4 +25,13 @@ test("manual local hide removes the visible profile header surface", () => {
 
   assert.equal(hideAccountSurface(anchor), true);
   assert.equal(profileSurface?.style.display, "none");
+});
+
+test("protected accounts restore the visible profile header surface", () => {
+  const anchor = document.querySelector("#badge-anchor");
+  const profileSurface = document.querySelector<HTMLElement>("#profile-surface");
+
+  profileSurface?.style.setProperty("display", "none");
+  assert.equal(showAccountSurface(anchor), true);
+  assert.notEqual(profileSurface?.style.display, "none");
 });

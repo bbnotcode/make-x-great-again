@@ -48,6 +48,9 @@ export interface PendingXAction {
   id: string;
   handle: string;
   action: "mute" | "block";
+  /** Regex mutes are independent of the user's manual action mode. Legacy
+   * entries without a source are automatic category actions. */
+  source?: "auto" | "regex";
   ts: number;
 }
 
@@ -180,6 +183,23 @@ export async function removeBlock(id: string): Promise<void> {
   // by — otherwise un-hiding never takes effect on X pages.
   await removeBlocked(id);
   if (handle) await removeBlocked(`h:${handle.toLowerCase()}`);
+}
+
+/** Cancel an automatic action that became protected after it was queued.
+ * Unlike removeBlock(), this must not create a permanent local allow entry:
+ * following can later be undone, at which point normal filtering may resume. */
+export async function cancelAutomaticBlock(id: string, handle?: string): Promise<void> {
+  const list = await getBlocklist();
+  const normalized = handle?.toLowerCase();
+  await set(
+    K_BLOCK,
+    list.filter(
+      (r) => r.id !== id && (!normalized || r.handle.toLowerCase() !== normalized),
+    ),
+  );
+  await clearPendingAction(id);
+  await removeBlocked(id);
+  if (normalized) await removeBlocked(`h:${normalized}`);
 }
 
 export async function blockedIdSet(): Promise<Set<string>> {

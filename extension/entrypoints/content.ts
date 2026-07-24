@@ -1,4 +1,4 @@
-import { hideAccountSurface } from "../lib/account-surface";
+import { hideAccountSurface, showAccountSurface } from "../lib/account-surface";
 import { autoEligible, capAutoTierAction, viewerProtected } from "../lib/auto-policy";
 import { addBlocked, isBlockedSync, warm as warmBlocklist } from "../lib/blocklist";
 import { BRAND } from "../lib/brand";
@@ -30,6 +30,7 @@ import {
   addBlockRecord,
   addPendingAction,
   bumpStats,
+  cancelAutomaticBlock,
   clearPendingAction,
   getPendingActions,
   updateBlockRecord,
@@ -400,12 +401,23 @@ export default defineContentScript({
         });
         void bumpStats({ blocks: 1 });
         void bumpStat("blocked");
-        const ok = await applyXAction("mute", sig);
+        // Persist before entering the shared paced queue. If this page closes
+        // while the queue waits on another tab/cooldown, the next page load
+        // can resume the promised native mute instead of leaving it local-only.
+        await addPendingAction({
+          id: key,
+          handle: sig.handle,
+          action: "mute",
+          source: "regex",
+          ts: Date.now(),
+        });
+        const ok = await applyXAction("mute", sig).catch(() => false);
         await updateBlockRecord(key, {
           reason: ok
             ? `正则命中 · X 原生静音成功 · ${rule.slice(0, 80)}`
             : `正则命中 · X 静音失败，仅本地隐藏 · ${rule.slice(0, 80)}`,
         });
+        await clearPendingAction(key);
       } finally {
         regexMuteInFlight.delete(key);
       }
@@ -631,6 +643,7 @@ export default defineContentScript({
           id: it.key,
           handle: it.sig.handle,
           action: it.action,
+          source: "auto",
           ts: Date.now(),
         });
       }
@@ -681,6 +694,18 @@ export default defineContentScript({
         // One broken item (dead DOM node, render error) must not strand the
         // rest of the queue — fail it and move on.
         try {
+          // Protection state can change after enqueue while the gather window
+          // or earlier paced actions are running. Recheck at the last safe
+          // point before any native X mutation or local hide.
+          refreshVisibleRelationships();
+          if (isFollowProtected(it.sig) || isWhitelisted(it.sig.userId, it.sig.handle)) {
+            const protectedTarget = autoTarget(it) ?? it.anchor;
+            await cancelAutomaticBlock(it.key, it.sig.handle);
+            showAccountSurface(protectedTarget);
+            showTweet(articleOf(protectedTarget));
+            markViewerProtected(protectedTarget, it.key);
+            continue;
+          }
           const t0 = Date.now();
           const acting = autoTarget(it);
           if (acting) mountActing(acting, it.verb, false);
@@ -732,13 +757,16 @@ export default defineContentScript({
      *  so it stops being a resume candidate. Runs once per load; each entry is
      *  attempted at most once, then cleared regardless of outcome. */
     async function resumeInterrupted(pending: PendingXAction[]) {
-      // The user switched the mode to local (no more X actions) — honor that:
-      // just settle the markers so these move into the normal 已处理 history.
+      // The user switched the manual/automatic action mode to local — settle
+      // those markers. Regex rules have their own explicit mute switch, so a
+      // queued regex mute remains resumable regardless of actionMode.
       if (settings.actionMode === "local") {
-        for (const p of pending) void clearPendingAction(p.id);
-        return;
+        for (const p of pending) {
+          if (p.source !== "regex") void clearPendingAction(p.id);
+        }
       }
       for (const p of pending.slice(0, RESUME_MAX)) {
+        if (settings.actionMode === "local" && p.source !== "regex") continue;
         if (p.action !== "mute" && p.action !== "block") {
           void clearPendingAction(p.id);
           continue;
@@ -748,11 +776,17 @@ export default defineContentScript({
           ...(/^\d+$/.test(p.id) ? { userId: p.id } : {}),
         } as Signals;
         if (isFollowProtected(sig) || isWhitelisted(sig.userId, sig.handle)) {
-          void clearPendingAction(p.id);
+          await cancelAutomaticBlock(p.id, p.handle);
           continue;
         }
         const ok = await applyXAction(p.action, sig).catch(() => false);
-        if (!ok) {
+        if (p.source === "regex") {
+          void updateBlockRecord(p.id, {
+            reason: ok
+              ? "正则命中 · X 原生静音成功（恢复队列）"
+              : "正则命中 · X 静音失败，仅本地隐藏（恢复队列）",
+          });
+        } else if (!ok) {
           void updateBlockRecord(p.id, {
             reason: `自动${p.action === "block" ? "拉黑" : "静音"}（X 动作失败，仅本地隐藏）`,
           });
@@ -939,6 +973,7 @@ export default defineContentScript({
         //    hidden followed account becomes visible again. A neutral mount
         //    also prevents repeat scans without exposing list membership.
         if (isFollowProtected(sig) || isWhitelisted(sig.userId, sig.handle)) {
+          showAccountSurface(anchor);
           showTweet(articleOf(anchor));
           markViewerProtected(anchor, key);
           return;
