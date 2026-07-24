@@ -42,6 +42,9 @@ export type AutoScope = "replies" | "all";
  *  - "badge": mark only — the most conservative stance */
 export type AutoTierMode = "badge" | "hide" | "full";
 
+/** Where user-authored regular-expression rules hide matching post text. */
+export type RegexScope = "replies" | "all";
+
 export interface Settings {
   enabled: boolean; // master: passive detection on/off
   bubble: boolean; // show the corner bubble
@@ -52,6 +55,9 @@ export interface Settings {
   autoScope: AutoScope; // where auto actions may fire (replies-only by default)
   autoTierMode: AutoTierMode; // how far auto-published (non-human) list hits may auto-act
   autoExpand: boolean; // pop the bubble card open when auto-processing starts (off = pill pulse only; better on narrow/mobile viewports)
+  regexEnabled: boolean; // local regex match + paced X-native mute
+  regexScope: RegexScope; // replies-only by default to reduce false positives
+  regexRules: string[]; // one JavaScript regex per entry; rules never uploaded
   edgeBase: string; // advanced: override the service base URL — list/whitelist sync source, whitelist-apply backend AND outbound links
 }
 
@@ -76,6 +82,9 @@ export const DEFAULTS: Settings = {
   autoScope: "replies",
   autoTierMode: "full",
   autoExpand: true,
+  regexEnabled: false,
+  regexScope: "replies",
+  regexRules: [],
   edgeBase: "",
 };
 

@@ -4,6 +4,11 @@ import { BRAND } from "../../lib/brand";
 import { CATEGORY_ZH, SPAM_CATEGORIES, type SpamCategory } from "../../lib/category";
 import { categorizeReason, categorizeReasons } from "../../lib/reason-category";
 import {
+  MAX_REGEX_LENGTH,
+  MAX_REGEX_RULES,
+  compileRegexRules,
+} from "../../lib/regex-filter";
+import {
   type ActionMode,
   type CategoryAction,
   type Settings,
@@ -542,6 +547,7 @@ function Blocklist() {
   const src: Record<string, string> = {
     manual: "手动",
     auto: "分级策略",
+    regex: "正则静音",
     block_all: "一键全部",
     list_hit: "公榜命中",
     cache_hit: "缓存命中",
@@ -1249,8 +1255,14 @@ function Settings() {
   const [st, setSt] = useState<Settings | null>(null);
   const [ls, setLs] = useState<ListState | null>(null);
   const [permDenied, setPermDenied] = useState(false);
+  const [regexPermDenied, setRegexPermDenied] = useState(false);
+  const [regexDraft, setRegexDraft] = useState("");
+  const [regexSaved, setRegexSaved] = useState(false);
   useEffect(() => {
-    getSettings().then(setSt);
+    getSettings().then((value) => {
+      setSt(value);
+      setRegexDraft(value.regexRules.join("\n"));
+    });
     // Loaded once so each 分级策略 row can show how many synced public-list
     // accounts fall into its category. No list yet → counts stay hidden.
     readListState().then(setLs);
@@ -1283,6 +1295,27 @@ function Settings() {
     setSt((p) =>
       p ? { ...p, categoryActions: { ...p.categoryActions, [cat]: action } } : p,
     );
+  };
+  const regexLines = regexDraft.split(/\r?\n/).map((r) => r.trim()).filter(Boolean);
+  const regexValidation = compileRegexRules(regexLines);
+  const saveRegexRules = async () => {
+    if (regexValidation.errors.length > 0) return;
+    const normalized = [...new Set(regexLines)].slice(0, MAX_REGEX_RULES);
+    await save("regexRules", normalized);
+    setRegexDraft(normalized.join("\n"));
+    setRegexSaved(true);
+    setTimeout(() => setRegexSaved(false), 1800);
+  };
+  const changeRegexEnabled = async (enabled: boolean) => {
+    if (enabled) {
+      const ok = await ensureXPermission();
+      if (!ok) {
+        setRegexPermDenied(true);
+        return;
+      }
+    }
+    setRegexPermDenied(false);
+    await save("regexEnabled", enabled);
   };
   return (
     <Page title="设置" sub="配置仅存于本机">
@@ -1469,6 +1502,94 @@ function Settings() {
                 />
               ))}
             </div>
+          </section>
+        )}
+
+        {st && (
+          <section>
+            <SectionH>正则表达式屏蔽</SectionH>
+            <p className="mb-3 text-[12px] leading-relaxed text-fg-3">
+              每行一条 JavaScript 正则。命中后立即隐藏当前帖子，并通过你的 X 登录态原生静音发布者；
+              X 请求不经过我们的服务器，规则也不会上传。普通文本默认使用
+              <code className="mx-1 text-fg-2">iu</code>
+              标志，也可写成 <code className="text-fg-2">/表达式/flags</code>。
+            </p>
+            <Toggle
+              on={st.regexEnabled}
+              onChange={changeRegexEnabled}
+              label="启用正则匹配并自动静音"
+              hint={
+                st.regexRules.length
+                  ? `已保存 ${st.regexRules.length} 条规则 · 命中后调用 X 原生静音`
+                  : "请先添加并保存规则"
+              }
+            />
+            {regexPermDenied && (
+              <p className="mt-1 text-[12px] text-danger">
+                未授权访问 x.com，正则自动静音未启用。该权限只用于调用 X 自己的静音接口。
+              </p>
+            )}
+            <div className="mb-3 mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {(
+                [
+                  { v: "replies", label: "仅评论区（推荐）", hint: "不影响主页和普通信息流" },
+                  { v: "all", label: "所有帖子", hint: "评论区、信息流和主页全部过滤" },
+                ] as const
+              ).map((o) => {
+                const active = st.regexScope === o.v;
+                return (
+                  <button
+                    key={o.v}
+                    type="button"
+                    onClick={() => save("regexScope", o.v)}
+                    className={`rounded-lg border p-3 text-left transition ${
+                      active ? "border-fg bg-card-hi" : "border-border-2 hover:border-fg-3"
+                    }`}
+                  >
+                    <span className="block text-[13px] font-medium text-fg">{o.label}</span>
+                    <span className="block text-[12px] text-fg-3">{o.hint}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <textarea
+              aria-label="正则表达式屏蔽规则"
+              value={regexDraft}
+              onChange={(e) => {
+                setRegexDraft(e.target.value);
+                setRegexSaved(false);
+              }}
+              rows={8}
+              spellCheck={false}
+              placeholder={"加我.*私聊\n(?:同城|空降).{0,8}(?:妹妹|少妇)\n/t\\.me\\/[A-Za-z0-9_]+/i"}
+              className="w-full resize-y rounded-lg border border-border-2 bg-card px-3 py-2 font-mono text-[12px] leading-6 text-fg outline-none transition focus:border-fg-3"
+            />
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <Btn
+                tier="primary"
+                onClick={saveRegexRules}
+                disabled={regexValidation.errors.length > 0}
+              >
+                保存规则
+              </Btn>
+              <span className="text-[12px] text-fg-3">
+                {regexLines.length}/{MAX_REGEX_RULES} 条 · 每条最多 {MAX_REGEX_LENGTH} 字符
+              </span>
+              {regexSaved && <span className="text-[12px] text-ok">已保存并立即生效</span>}
+            </div>
+            {regexValidation.errors.length > 0 && (
+              <div className="mt-3 rounded-lg border border-danger/40 bg-danger/5 p-3 text-[12px] text-danger">
+                {regexValidation.errors.slice(0, 5).map((e, i) => (
+                  <div key={`${e.rule}-${i}`}>
+                    第 {Math.max(1, regexLines.indexOf(e.rule) + 1)} 行：{e.message}
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="mt-2 text-[11px] leading-5 text-fg-3">
+              为避免恶意表达式拖慢 X，反向引用、嵌套无限重复、超长规则会被拒绝。静音动作会跨标签页串行限速并在
+              429 时自动退避；短时间大量命中仍可能触发 X 风控。
+            </p>
           </section>
         )}
 

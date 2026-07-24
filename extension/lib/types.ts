@@ -29,6 +29,9 @@ export interface Signals {
   accountAgeDays?: number;
   followersCount?: number;
   followingCount?: number;
+  /** True when this post belongs to the currently signed-in X account.
+   *  Automatic account actions must always skip it. */
+  viewerIsSelf?: true;
   /** The tweet texts above are X machine-translations, not the author's own
    *  words (original unavailable in the DOM). Consumers must not treat the
    *  surface language as an author signal. */

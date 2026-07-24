@@ -12,6 +12,7 @@ import { CATEGORY_ZH } from "../lib/category";
 import { LIST_KEY, WL_KEY } from "../lib/list-sync";
 import { type IndexEntry, isWhitelisted, lookupLocal, warmLocalIndex } from "../lib/local-index";
 import { matchLocalRules } from "../lib/local-rules";
+import { compileRegexRules, matchRegexText } from "../lib/regex-filter";
 import {
   type ActionMode,
   type CategoryAction,
@@ -116,6 +117,22 @@ function hideTweet(node: Element | null) {
   if (cell instanceof HTMLElement) cell.style.display = "none";
 }
 
+const REGEX_HIDDEN_ATTR = "data-mxga-regex-hidden";
+
+function regexCell(art: HTMLElement): HTMLElement {
+  return (
+    (art.closest('[data-testid="cellInnerDiv"]') as HTMLElement | null) ?? art
+  );
+}
+
+function restoreRegexHidden(): void {
+  for (const cell of document.querySelectorAll<HTMLElement>(`[${REGEX_HIDDEN_ATTR}]`)) {
+    cell.style.removeProperty("display");
+    cell.removeAttribute(REGEX_HIDDEN_ATTR);
+    cell.removeAttribute("data-mxga-regex-rule");
+  }
+}
+
 /** Animated hide for the visible auto queue: quick fade + shrink, then
  *  display:none. Height stays untouched — X's virtualized timeline owns row
  *  geometry, and animating it fights the virtualizer. Falls back to the
@@ -191,10 +208,19 @@ export default defineContentScript({
     const hitPublicSeen = new Set<string>(); // hitPublic stat: once per account
 
     let settings = await getSettings();
+    let regexRules = compileRegexRules(settings.regexRules).compiled;
     if (!settings.enabled) return; // master off → don't init (applies next load)
     onSettingsChange((s) => {
       const modeChanged = s.actionMode !== settings.actionMode;
+      const regexChanged =
+        s.regexEnabled !== settings.regexEnabled ||
+        s.regexScope !== settings.regexScope ||
+        s.regexRules.join("\n") !== settings.regexRules.join("\n");
       settings = s;
+      if (regexChanged) {
+        regexRules = compileRegexRules(s.regexRules).compiled;
+        restoreRegexHidden();
+      }
       // Keep the bubble's 自动处理 switch + hint in sync (options page or
       // another tab may have flipped it).
       bubbleApi?.setAutoProcess(s.autoProcess, autoCategoryCount(s), s.autoScope === "all");
@@ -211,6 +237,7 @@ export default defineContentScript({
         }
         scan();
       }
+      if (regexChanged) scan();
     });
 
     // Warm local data structures
@@ -218,6 +245,50 @@ export default defineContentScript({
     await warmLocalIndex();
 
     const keyOf = (s: Signals) => s.userId || `h:${s.handle}`;
+    const regexMuteInFlight = new Set<string>();
+
+    /** A regex hit is hidden immediately, then the author is muted through
+     *  X's own endpoint using the existing globally paced action queue. The
+     *  local block record is written first so a tab close or failed X call
+     *  never loses the audit/recovery trail. */
+    async function muteRegexHit(sig: Signals, rule: string, tweetId?: string): Promise<void> {
+      const key = keyOf(sig);
+      if (
+        regexMuteInFlight.has(key) ||
+        isBlockedSync(key) ||
+        (sig.userId && isBlockedSync(sig.userId)) ||
+        isBlockedSync(`h:${sig.handle}`)
+      ) {
+        return;
+      }
+      regexMuteInFlight.add(key);
+      const tweetText = sig.triggeringComment || sig.recentTweets[0];
+      try {
+        await addBlocked(key);
+        if (sig.userId) await addBlocked(sig.userId);
+        await addBlockRecord({
+          id: key,
+          handle: sig.handle,
+          ...(sig.displayName ? { displayName: sig.displayName } : {}),
+          ...(sig.avatarUrl ? { avatarUrl: sig.avatarUrl } : {}),
+          ...(tweetId ? { tweetId } : {}),
+          ...(tweetText ? { tweetText } : {}),
+          reason: `正则命中 · X 原生静音处理中 · ${rule.slice(0, 80)}`,
+          source: "regex",
+          ts: Date.now(),
+        });
+        void bumpStats({ blocks: 1 });
+        void bumpStat("blocked");
+        const ok = await applyXAction("mute", sig);
+        await updateBlockRecord(key, {
+          reason: ok
+            ? `正则命中 · X 原生静音成功 · ${rule.slice(0, 80)}`
+            : `正则命中 · X 静音失败，仅本地隐藏 · ${rule.slice(0, 80)}`,
+        });
+      } finally {
+        regexMuteInFlight.delete(key);
+      }
+    }
 
     /** Schedule a hide action with a 5-second undo window. `mode` overrides
      *  settings.actionMode for this one action (popover 隐藏 → "local"). */
@@ -793,6 +864,28 @@ export default defineContentScript({
         nodeHandle.set(art, handle);
         const sid = focal ? articleStatusId(art) : null;
         const ctx: ScanContext = focal && sid && sid !== focal ? "reply" : "feed";
+        const cell = regexCell(art);
+        const regexApplies =
+          settings.regexEnabled &&
+          regexRules.length > 0 &&
+          !info.viewerIsSelf &&
+          !isWhitelisted(info.userId, info.handle) &&
+          (settings.regexScope === "all" || ctx === "reply");
+        const regexHit = regexApplies
+          ? matchRegexText(info.triggeringComment ?? "", regexRules)
+          : null;
+        if (regexHit) {
+          cell.setAttribute(REGEX_HIDDEN_ATTR, "");
+          cell.setAttribute("data-mxga-regex-rule", regexHit.source.slice(0, 120));
+          cell.style.display = "none";
+          void muteRegexHit(info, regexHit.source, articleStatusId(art) ?? undefined);
+          continue;
+        }
+        if (cell.hasAttribute(REGEX_HIDDEN_ATTR)) {
+          cell.style.removeProperty("display");
+          cell.removeAttribute(REGEX_HIDDEN_ATTR);
+          cell.removeAttribute("data-mxga-regex-rule");
+        }
         void process(info, nameBlock, ctx);
       }
     }
