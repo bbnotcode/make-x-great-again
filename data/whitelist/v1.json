@@ -1,8 +1,63 @@
 {
   "schema": 1,
-  "generatedAt": 1785153663278,
-  "count": 2048,
+  "generatedAt": 1785175264612,
+  "count": 2059,
   "list": [
+    {
+      "handle": "revenuecat",
+      "x_user_id": "244793637",
+      "last_scored": 1785160267477
+    },
+    {
+      "handle": "houmantop",
+      "x_user_id": null,
+      "last_scored": 1785157877111
+    },
+    {
+      "handle": "yinuocn",
+      "x_user_id": null,
+      "last_scored": 1785157866349
+    },
+    {
+      "handle": "zheng_she",
+      "x_user_id": null,
+      "last_scored": 1785157860748
+    },
+    {
+      "handle": "zheng_she",
+      "x_user_id": "4892692851",
+      "last_scored": 1785157860748
+    },
+    {
+      "handle": "gangg2021",
+      "x_user_id": null,
+      "last_scored": 1785157854739
+    },
+    {
+      "handle": "gangg2021",
+      "x_user_id": null,
+      "last_scored": 1785157854739
+    },
+    {
+      "handle": "bestiseth",
+      "x_user_id": null,
+      "last_scored": 1785157847082
+    },
+    {
+      "handle": "bestiseth",
+      "x_user_id": "1354446986611552258",
+      "last_scored": 1785157847082
+    },
+    {
+      "handle": "0x88ffa357",
+      "x_user_id": null,
+      "last_scored": 1785157841400
+    },
+    {
+      "handle": "0x88ffa357",
+      "x_user_id": "1422919666305888264",
+      "last_scored": 1785157841400
+    },
     {
       "handle": "teakowa",
       "x_user_id": null,
