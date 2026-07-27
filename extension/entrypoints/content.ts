@@ -16,6 +16,11 @@ import { LOCAL_ALLOWLIST_KEY } from "../lib/local-allowlist";
 import { type IndexEntry, isWhitelisted, lookupLocal, warmLocalIndex } from "../lib/local-index";
 import { matchLocalRules } from "../lib/local-rules";
 import { compileRegexRules, matchRegexText } from "../lib/regex-filter";
+import { type QuickXAction, mountQuickActions } from "../lib/quick-actions";
+import {
+  rememberVisibleRelationship,
+  verifyXFollowing,
+} from "../lib/follow-verifier";
 import {
   type ActionMode,
   type CategoryAction,
@@ -323,6 +328,7 @@ export default defineContentScript({
           if (rel.following) followedKeys.add(key);
           else followedKeys.delete(key);
         }
+        if (rel.handle) rememberVisibleRelationship(rel.handle, rel.following);
       }
     }
 
@@ -331,7 +337,7 @@ export default defineContentScript({
     if (!settings.enabled) return; // master off → don't init (applies next load)
     // Build marker — confirms which content-script build is live in this tab
     // (reloading the unpacked extension does NOT refresh already-open tabs).
-    console.info("[MXGA] content script ready · build 2026-07-24 (profile-pending-settle)");
+    console.info("[MXGA] content script ready · build 2026-07-27 (quick-native-actions)");
     onSettingsChange((s) => {
       const modeChanged = s.actionMode !== settings.actionMode;
       const regexChanged =
@@ -368,6 +374,66 @@ export default defineContentScript({
 
     const keyOf = (s: Signals) => s.userId || `h:${s.handle}`;
     const regexMuteInFlight = new Set<string>();
+    const regexDecisionInFlight = new Set<string>();
+    const quickActionInFlight = new Set<string>();
+
+    /** Explicit post-header shortcut. Unlike automatic list/rule handling,
+     * this intentionally does not apply followed-account protection: the user
+     * made a direct, account-specific choice. The logged-in viewer is still
+     * protected from accidental self-action. */
+    async function runQuickAction(
+      action: QuickXAction,
+      sig: Signals,
+      article: HTMLElement,
+    ): Promise<{ ok: boolean; message?: string }> {
+      const viewer = viewerHandle()?.toLowerCase();
+      if (viewer && viewer === sig.handle.toLowerCase()) {
+        return { ok: false, message: "不能对自己的账号执行此操作" };
+      }
+      const key = keyOf(sig);
+      const flightKey = `${action}:${key}`;
+      if (quickActionInFlight.has(flightKey)) {
+        return { ok: false, message: "此操作正在处理中" };
+      }
+      quickActionInFlight.add(flightKey);
+      try {
+        await addPendingAction({
+          id: key,
+          handle: sig.handle,
+          action,
+          source: "quick",
+          ts: Date.now(),
+        });
+        const ok = await applyXAction(action, sig).catch(() => false);
+        if (!ok) {
+          await clearPendingAction(key);
+          return { ok: false, message: `X 原生${action === "block" ? "拉黑" : "静音"}失败` };
+        }
+        await addBlocked(key);
+        if (sig.userId) await addBlocked(sig.userId);
+        await addBlockRecord({
+          id: key,
+          handle: sig.handle,
+          ...(sig.displayName ? { displayName: sig.displayName } : {}),
+          ...(sig.avatarUrl ? { avatarUrl: sig.avatarUrl } : {}),
+          ...(articleStatusId(article) ? { tweetId: articleStatusId(article) ?? undefined } : {}),
+          ...(sig.triggeringComment ? { tweetText: sig.triggeringComment } : {}),
+          reason: `帖子快捷按钮 · X 原生${action === "block" ? "拉黑" : "静音"}成功`,
+          source: "manual",
+          ts: Date.now(),
+        });
+        await clearPendingAction(key);
+        void bumpStats({ blocks: 1 });
+        void bumpStat("blocked");
+        hideAccountSurface(article);
+        return {
+          ok: true,
+          message: action === "block" ? "已用 X 原生功能拉黑" : "已用 X 原生功能静音",
+        };
+      } finally {
+        quickActionInFlight.delete(flightKey);
+      }
+    }
 
     /** A regex hit is hidden immediately, then the author is muted through
      *  X's own endpoint using the existing globally paced action queue. The
@@ -420,6 +486,56 @@ export default defineContentScript({
         await clearPendingAction(key);
       } finally {
         regexMuteInFlight.delete(key);
+      }
+    }
+
+    async function protectDetectedFollow(
+      sig: Signals,
+      anchor: HTMLElement,
+      key: string,
+    ): Promise<boolean> {
+      if (isFollowProtected(sig)) {
+        showAccountSurface(anchor);
+        showTweet(articleOf(anchor));
+        markViewerProtected(anchor, key);
+        return true;
+      }
+      const following = await verifyXFollowing(sig.handle);
+      if (!following) return false;
+      sig.viewerFollowing = true;
+      rememberFollowed(sig);
+      showAccountSurface(anchor);
+      showTweet(articleOf(anchor));
+      markViewerProtected(anchor, key);
+      return true;
+    }
+
+    async function handleRegexCandidate(
+      art: HTMLElement,
+      anchor: HTMLElement,
+      cell: HTMLElement,
+      sig: Signals,
+      rule: string,
+    ): Promise<void> {
+      const key = keyOf(sig);
+      if (regexDecisionInFlight.has(key)) return;
+      regexDecisionInFlight.add(key);
+      try {
+        if (
+          isWhitelisted(sig.userId, sig.handle) ||
+          (await protectDetectedFollow(sig, anchor, key))
+        ) {
+          cell.style.removeProperty("display");
+          cell.removeAttribute(REGEX_HIDDEN_ATTR);
+          cell.removeAttribute("data-mxga-regex-rule");
+          return;
+        }
+        cell.setAttribute(REGEX_HIDDEN_ATTR, "");
+        cell.setAttribute("data-mxga-regex-rule", rule.slice(0, 120));
+        cell.style.display = "none";
+        await muteRegexHit(sig, rule, articleStatusId(art) ?? undefined);
+      } finally {
+        regexDecisionInFlight.delete(key);
       }
     }
 
@@ -757,16 +873,21 @@ export default defineContentScript({
      *  so it stops being a resume candidate. Runs once per load; each entry is
      *  attempted at most once, then cleared regardless of outcome. */
     async function resumeInterrupted(pending: PendingXAction[]) {
-      // The user switched the manual/automatic action mode to local — settle
-      // those markers. Regex rules have their own explicit mute switch, so a
-      // queued regex mute remains resumable regardless of actionMode.
+      // The user switched the default action mode to local — settle automatic
+      // markers. Regex and explicitly clicked quick actions remain resumable
+      // because neither derives its action from the default mode.
       if (settings.actionMode === "local") {
         for (const p of pending) {
-          if (p.source !== "regex") void clearPendingAction(p.id);
+          if (p.source !== "regex" && p.source !== "quick") void clearPendingAction(p.id);
         }
       }
       for (const p of pending.slice(0, RESUME_MAX)) {
-        if (settings.actionMode === "local" && p.source !== "regex") continue;
+        if (
+          settings.actionMode === "local" &&
+          p.source !== "regex" &&
+          p.source !== "quick"
+        )
+          continue;
         if (p.action !== "mute" && p.action !== "block") {
           void clearPendingAction(p.id);
           continue;
@@ -775,7 +896,10 @@ export default defineContentScript({
           handle: p.handle,
           ...(/^\d+$/.test(p.id) ? { userId: p.id } : {}),
         } as Signals;
-        if (isFollowProtected(sig) || isWhitelisted(sig.userId, sig.handle)) {
+        if (
+          p.source !== "quick" &&
+          (isFollowProtected(sig) || isWhitelisted(sig.userId, sig.handle))
+        ) {
           await cancelAutomaticBlock(p.id, p.handle);
           continue;
         }
@@ -786,7 +910,16 @@ export default defineContentScript({
               ? "正则命中 · X 原生静音成功（恢复队列）"
               : "正则命中 · X 静音失败，仅本地隐藏（恢复队列）",
           });
-        } else if (!ok) {
+        } else if (p.source === "quick" && ok) {
+          await addBlocked(p.id);
+          await addBlockRecord({
+            id: p.id,
+            handle: p.handle,
+            reason: `帖子快捷按钮 · X 原生${p.action === "block" ? "拉黑" : "静音"}成功（恢复队列）`,
+            source: "manual",
+            ts: Date.now(),
+          });
+        } else if (!ok && p.source !== "quick") {
           void updateBlockRecord(p.id, {
             reason: `自动${p.action === "block" ? "拉黑" : "静音"}（X 动作失败，仅本地隐藏）`,
           });
@@ -1011,6 +1144,7 @@ export default defineContentScript({
         //    must not demote it to mark-only (cache never auto-acts).
         const entry = lookupLocal(sig.userId, sig.handle);
         if (entry) {
+          if (await protectDetectedFollow(sig, anchor, key)) return;
           renderLocalIndex(anchor, key, sig, entry, "list", ctx);
           return;
         }
@@ -1022,6 +1156,7 @@ export default defineContentScript({
         if (cached) {
           const spammy = ["spam", "porn_bot", "likely_spam"].includes(cached.verdict.label);
           if (spammy || cached.signalsHash === signalsHash(sig)) {
+            if (spammy && (await protectDetectedFollow(sig, anchor, key))) return;
             renderCached(anchor, key, sig, cached);
             void bumpStats({ cacheHits: 1 });
             return;
@@ -1034,6 +1169,7 @@ export default defineContentScript({
         // at step 2.
         const ruleHit = matchLocalRules(sig);
         if (ruleHit) {
+          if (await protectDetectedFollow(sig, anchor, key)) return;
           renderLocalIndex(
             anchor,
             key,
@@ -1117,7 +1253,10 @@ export default defineContentScript({
         const nameBlock = art.querySelector<HTMLElement>('[data-testid="User-Name"]');
         if (!handle || !nameBlock) continue;
         const hasMount = !!nameBlock.querySelector(":scope > .xss-mount");
-        if (nodeHandle.get(art) === handle && hasMount) continue;
+        const hasQuickActions =
+          art.querySelector<HTMLElement>("[data-mxga-quick-actions]")?.dataset.mxgaHandle ===
+          handle.toLowerCase();
+        if (nodeHandle.get(art) === handle && hasMount && hasQuickActions) continue;
         const info = extractFromArticle(art);
         if (!info) continue;
         if (topic && !info.threadTopic) info.threadTopic = topic;
@@ -1136,10 +1275,7 @@ export default defineContentScript({
           ? matchRegexText(info.triggeringComment ?? "", regexRules)
           : null;
         if (regexHit) {
-          cell.setAttribute(REGEX_HIDDEN_ATTR, "");
-          cell.setAttribute("data-mxga-regex-rule", regexHit.source.slice(0, 120));
-          cell.style.display = "none";
-          void muteRegexHit(info, regexHit.source, articleStatusId(art) ?? undefined);
+          void handleRegexCandidate(art, nameBlock, cell, info, regexHit.source);
           continue;
         }
         if (cell.hasAttribute(REGEX_HIDDEN_ATTR)) {
@@ -1148,6 +1284,27 @@ export default defineContentScript({
           cell.removeAttribute("data-mxga-regex-rule");
         }
         void process(info, nameBlock, ctx);
+      }
+    }
+
+    /** Quick controls are layout UI, so mount them in the same mutation turn
+     * that reveals a virtualized X article. Waiting for the full 600 ms spam
+     * scan made Grok/More visibly jump when the user navigated back. Signals
+     * are extracted only if the user clicks, keeping this immediate pass
+     * cheap and recycling-safe. */
+    function mountVisibleQuickActions() {
+      for (const art of document.querySelectorAll<HTMLElement>(
+        'article[data-testid="tweet"]',
+      )) {
+        const handle = handleFromArticle(art);
+        if (!handle) continue;
+        mountQuickActions(art, handle, (action) => {
+          const current = extractFromArticle(art);
+          if (!current || current.handle.toLowerCase() !== handle.toLowerCase()) {
+            return Promise.resolve({ ok: false, message: "帖子已刷新，请重新操作" });
+          }
+          return runQuickAction(action, current, art);
+        });
       }
     }
 
@@ -1263,6 +1420,7 @@ export default defineContentScript({
 
     let debounce: ReturnType<typeof setTimeout> | undefined;
     const observer = new MutationObserver(() => {
+      mountVisibleQuickActions();
       clearTimeout(debounce);
       debounce = setTimeout(scan, 600);
     });
@@ -1297,6 +1455,7 @@ export default defineContentScript({
     } catch {
       /* non-fatal */
     }
+    mountVisibleQuickActions();
     scan();
   },
 });

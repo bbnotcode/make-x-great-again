@@ -48,9 +48,10 @@ export interface PendingXAction {
   id: string;
   handle: string;
   action: "mute" | "block";
-  /** Regex mutes are independent of the user's manual action mode. Legacy
-   * entries without a source are automatic category actions. */
-  source?: "auto" | "regex";
+  /** Regex and explicitly clicked quick actions are independent of the
+   * user's default manual action mode. Legacy entries without a source are
+   * automatic category actions. */
+  source?: "auto" | "regex" | "quick";
   ts: number;
 }
 
