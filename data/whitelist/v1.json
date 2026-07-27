@@ -1,8 +1,18 @@
 {
   "schema": 1,
-  "generatedAt": 1785002449934,
-  "count": 287,
+  "generatedAt": 1785132006264,
+  "count": 289,
   "list": [
+    {
+      "handle": "ytwang_13",
+      "x_user_id": "1194057638893346816",
+      "last_scored": 1785120034909
+    },
+    {
+      "handle": "mizorewww",
+      "x_user_id": "1987888073292881921",
+      "last_scored": 1785119949719
+    },
     {
       "handle": "tsrukr",
       "x_user_id": null,
