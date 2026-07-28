@@ -1,8 +1,68 @@
 {
   "schema": 1,
-  "generatedAt": 1785175264612,
-  "count": 2059,
+  "generatedAt": 1785218459269,
+  "count": 2071,
   "list": [
+    {
+      "handle": "edishena0",
+      "x_user_id": null,
+      "last_scored": 1785214860738
+    },
+    {
+      "handle": "zhangshuha0",
+      "x_user_id": null,
+      "last_scored": 1785214852756
+    },
+    {
+      "handle": "xphone18pro",
+      "x_user_id": null,
+      "last_scored": 1785214846364
+    },
+    {
+      "handle": "zeroclover",
+      "x_user_id": null,
+      "last_scored": 1785214839063
+    },
+    {
+      "handle": "usercomingsoon",
+      "x_user_id": null,
+      "last_scored": 1785214822665
+    },
+    {
+      "handle": "usercomingsoon",
+      "x_user_id": "1914952655446880256",
+      "last_scored": 1785214822665
+    },
+    {
+      "handle": "yokina204207",
+      "x_user_id": null,
+      "last_scored": 1785214815038
+    },
+    {
+      "handle": "jetsanix",
+      "x_user_id": null,
+      "last_scored": 1785214807845
+    },
+    {
+      "handle": "yiming9876",
+      "x_user_id": null,
+      "last_scored": 1785214795369
+    },
+    {
+      "handle": "yiming9876",
+      "x_user_id": "1765989284275007488",
+      "last_scored": 1785214795369
+    },
+    {
+      "handle": "xfengtalk",
+      "x_user_id": null,
+      "last_scored": 1785208935578
+    },
+    {
+      "handle": "xfengtalk",
+      "x_user_id": "54063118",
+      "last_scored": 1785208935578
+    },
     {
       "handle": "revenuecat",
       "x_user_id": "244793637",
