@@ -1,8 +1,73 @@
 {
   "schema": 1,
-  "generatedAt": 1785218459269,
-  "count": 2071,
+  "generatedAt": 1785240061796,
+  "count": 2084,
   "list": [
+    {
+      "handle": "l_eacc",
+      "x_user_id": null,
+      "last_scored": 1785239818511
+    },
+    {
+      "handle": "l_eacc",
+      "x_user_id": "1471310582070464512",
+      "last_scored": 1785239818511
+    },
+    {
+      "handle": "effenditsang",
+      "x_user_id": null,
+      "last_scored": 1785239812176
+    },
+    {
+      "handle": "barrybarrywu",
+      "x_user_id": null,
+      "last_scored": 1785239805605
+    },
+    {
+      "handle": "barrybarrywu",
+      "x_user_id": "365364664",
+      "last_scored": 1785239805605
+    },
+    {
+      "handle": "laureatem",
+      "x_user_id": null,
+      "last_scored": 1785239799747
+    },
+    {
+      "handle": "yeafel",
+      "x_user_id": null,
+      "last_scored": 1785239794970
+    },
+    {
+      "handle": "latteinfra",
+      "x_user_id": null,
+      "last_scored": 1785239788702
+    },
+    {
+      "handle": "LatteInfra",
+      "x_user_id": "1810960510902489151",
+      "last_scored": 1785239788702
+    },
+    {
+      "handle": "m4a1_sss",
+      "x_user_id": null,
+      "last_scored": 1785239777240
+    },
+    {
+      "handle": "roveim",
+      "x_user_id": null,
+      "last_scored": 1785239771688
+    },
+    {
+      "handle": "withxat",
+      "x_user_id": null,
+      "last_scored": 1785239764046
+    },
+    {
+      "handle": "withxat",
+      "x_user_id": "815524247569186817",
+      "last_scored": 1785239764046
+    },
     {
       "handle": "edishena0",
       "x_user_id": null,
