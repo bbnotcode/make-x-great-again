@@ -1,8 +1,18 @@
 {
   "schema": 1,
-  "generatedAt": 1785304860569,
-  "count": 2099,
+  "generatedAt": 1785326461646,
+  "count": 2101,
   "list": [
+    {
+      "handle": "ha_wthorne",
+      "x_user_id": "1686679432604295170",
+      "last_scored": 1785321565873
+    },
+    {
+      "handle": "ceolei",
+      "x_user_id": "1724078090073354240",
+      "last_scored": 1785314122770
+    },
     {
       "handle": "perryyeh",
       "x_user_id": null,
