@@ -1,8 +1,38 @@
 {
   "schema": 1,
-  "generatedAt": 1785391263274,
-  "count": 2111,
+  "generatedAt": 1785434469300,
+  "count": 2117,
   "list": [
+    {
+      "handle": "hexguu",
+      "x_user_id": null,
+      "last_scored": 1785420900703
+    },
+    {
+      "handle": "maxqiqiqi",
+      "x_user_id": null,
+      "last_scored": 1785420899517
+    },
+    {
+      "handle": "jamin_ye",
+      "x_user_id": null,
+      "last_scored": 1785420891698
+    },
+    {
+      "handle": "kitaikuyo315",
+      "x_user_id": null,
+      "last_scored": 1785420881043
+    },
+    {
+      "handle": "xds2000",
+      "x_user_id": null,
+      "last_scored": 1785420859161
+    },
+    {
+      "handle": "xds2000",
+      "x_user_id": "16400791",
+      "last_scored": 1785420859161
+    },
     {
       "handle": "_zhangsanx",
       "x_user_id": null,
