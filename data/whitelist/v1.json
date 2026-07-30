@@ -1,8 +1,58 @@
 {
   "schema": 1,
-  "generatedAt": 1785326461646,
-  "count": 2101,
+  "generatedAt": 1785391263274,
+  "count": 2111,
   "list": [
+    {
+      "handle": "_zhangsanx",
+      "x_user_id": null,
+      "last_scored": 1785388332936
+    },
+    {
+      "handle": "imzuocc",
+      "x_user_id": null,
+      "last_scored": 1785388327277
+    },
+    {
+      "handle": "iceflam56835911",
+      "x_user_id": null,
+      "last_scored": 1785388319616
+    },
+    {
+      "handle": "iceflam56835911",
+      "x_user_id": "1448937008202612743",
+      "last_scored": 1785388319616
+    },
+    {
+      "handle": "luckoutcoffee",
+      "x_user_id": null,
+      "last_scored": 1785388311780
+    },
+    {
+      "handle": "luckoutcoffee",
+      "x_user_id": "140112926",
+      "last_scored": 1785388311780
+    },
+    {
+      "handle": "haha1897",
+      "x_user_id": null,
+      "last_scored": 1785388306465
+    },
+    {
+      "handle": "zaprobest",
+      "x_user_id": null,
+      "last_scored": 1785388295626
+    },
+    {
+      "handle": "zaprobest",
+      "x_user_id": "1894964938491469825",
+      "last_scored": 1785388295626
+    },
+    {
+      "handle": "zaprobest",
+      "x_user_id": "139757655",
+      "last_scored": 1785388295626
+    },
     {
       "handle": "ha_wthorne",
       "x_user_id": "1686679432604295170",
