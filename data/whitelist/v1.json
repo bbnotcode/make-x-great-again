@@ -1,8 +1,28 @@
 {
   "schema": 1,
-  "generatedAt": 1785434469300,
-  "count": 2117,
+  "generatedAt": 1785499271369,
+  "count": 2121,
   "list": [
+    {
+      "handle": "sino_go_global",
+      "x_user_id": null,
+      "last_scored": 1785488750526
+    },
+    {
+      "handle": "sino_go_global",
+      "x_user_id": "718712613312401408",
+      "last_scored": 1785488750526
+    },
+    {
+      "handle": "sino_go_global",
+      "x_user_id": "420175982",
+      "last_scored": 1785488750526
+    },
+    {
+      "handle": "ak1raq_love",
+      "x_user_id": "1663066129923981312",
+      "last_scored": 1785488717939
+    },
     {
       "handle": "hexguu",
       "x_user_id": null,
