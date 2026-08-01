@@ -1,8 +1,53 @@
 {
   "schema": 1,
-  "generatedAt": 1785499271369,
-  "count": 2121,
+  "generatedAt": 1785564065248,
+  "count": 2130,
   "list": [
+    {
+      "handle": "atri_5201314",
+      "x_user_id": null,
+      "last_scored": 1785545844128
+    },
+    {
+      "handle": "atri_5201314",
+      "x_user_id": "1567670093550858242",
+      "last_scored": 1785545844128
+    },
+    {
+      "handle": "adkinscath18691",
+      "x_user_id": null,
+      "last_scored": 1785545842130
+    },
+    {
+      "handle": "lukexluo",
+      "x_user_id": null,
+      "last_scored": 1785545837105
+    },
+    {
+      "handle": "ushuz__",
+      "x_user_id": null,
+      "last_scored": 1785545831102
+    },
+    {
+      "handle": "ushuz__",
+      "x_user_id": "1905793983584088064",
+      "last_scored": 1785545831102
+    },
+    {
+      "handle": "icqfindme",
+      "x_user_id": null,
+      "last_scored": 1785545824982
+    },
+    {
+      "handle": "ichralpha",
+      "x_user_id": null,
+      "last_scored": 1785545818980
+    },
+    {
+      "handle": "ichralpha",
+      "x_user_id": "1211984209058779136",
+      "last_scored": 1785545818980
+    },
     {
       "handle": "sino_go_global",
       "x_user_id": null,
