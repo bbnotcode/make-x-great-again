@@ -1,8 +1,23 @@
 {
   "schema": 1,
-  "generatedAt": 1785672064075,
-  "count": 2019,
+  "generatedAt": 1785693667356,
+  "count": 2022,
   "list": [
+    {
+      "handle": "kiroar688",
+      "x_user_id": "2077656548004732928",
+      "last_scored": 1785692263416
+    },
+    {
+      "handle": "tinkoliu",
+      "x_user_id": null,
+      "last_scored": 1785686935689
+    },
+    {
+      "handle": "taibaili3",
+      "x_user_id": "1324265839168663552",
+      "last_scored": 1785686927048
+    },
     {
       "handle": "nande198900",
       "x_user_id": "1840008766135103488",
