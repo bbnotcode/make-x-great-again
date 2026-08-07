@@ -210,17 +210,11 @@ function articleStatusId(art: HTMLElement): string | null {
   return null;
 }
 
-function hideTweet(node: Element | null) {
-  const cell =
-    node?.closest('[data-testid="cellInnerDiv"]') ?? node?.closest("article");
-  if (cell instanceof HTMLElement) cell.style.display = "none";
-}
-
 function showTweet(node: Element | null) {
   const cell =
     node?.closest('[data-testid="cellInnerDiv"]') ?? node?.closest("article");
   if (cell instanceof HTMLElement) {
-    cell.style.removeProperty("display");
+    showAccountSurface(cell);
     cell.removeAttribute(REGEX_HIDDEN_ATTR);
     cell.removeAttribute("data-mxga-regex-rule");
   }
@@ -236,7 +230,7 @@ function regexCell(art: HTMLElement): HTMLElement {
 
 function restoreRegexHidden(): void {
   for (const cell of document.querySelectorAll<HTMLElement>(`[${REGEX_HIDDEN_ATTR}]`)) {
-    cell.style.removeProperty("display");
+    showAccountSurface(cell);
     cell.removeAttribute(REGEX_HIDDEN_ATTR);
     cell.removeAttribute("data-mxga-regex-rule");
   }
@@ -525,14 +519,14 @@ export default defineContentScript({
           isWhitelisted(sig.userId, sig.handle) ||
           (await protectDetectedFollow(sig, anchor, key))
         ) {
-          cell.style.removeProperty("display");
+          showAccountSurface(cell);
           cell.removeAttribute(REGEX_HIDDEN_ATTR);
           cell.removeAttribute("data-mxga-regex-rule");
           return;
         }
         cell.setAttribute(REGEX_HIDDEN_ATTR, "");
         cell.setAttribute("data-mxga-regex-rule", rule.slice(0, 120));
-        cell.style.display = "none";
+        hideAccountSurface(cell);
         await muteRegexHit(sig, rule, articleStatusId(art) ?? undefined);
       } finally {
         regexDecisionInFlight.delete(key);
@@ -1260,7 +1254,12 @@ export default defineContentScript({
         const info = extractFromArticle(art);
         if (!info) continue;
         if (topic && !info.threadTopic) info.threadTopic = topic;
-        if (nodeHandle.get(art) !== handle) clearMounts(nameBlock); // recycled node
+        if (nodeHandle.get(art) !== handle) {
+          // A hidden virtual row may be recycled for a different author. The
+          // new account must not inherit the old row's opacity/inert state.
+          showAccountSurface(art);
+          clearMounts(nameBlock);
+        }
         nodeHandle.set(art, handle);
         const sid = focal ? articleStatusId(art) : null;
         const ctx: ScanContext = focal && sid && sid !== focal ? "reply" : "feed";
@@ -1279,7 +1278,7 @@ export default defineContentScript({
           continue;
         }
         if (cell.hasAttribute(REGEX_HIDDEN_ATTR)) {
-          cell.style.removeProperty("display");
+          showAccountSurface(cell);
           cell.removeAttribute(REGEX_HIDDEN_ATTR);
           cell.removeAttribute("data-mxga-regex-rule");
         }

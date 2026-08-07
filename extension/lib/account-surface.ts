@@ -10,12 +10,33 @@ function profileHeaderSurface(node: Element | null): HTMLElement | null {
 }
 
 export function hideAccountSurface(node: Element | null): boolean {
-  const surface =
+  const timelineSurface =
     node?.closest<HTMLElement>('[data-testid="cellInnerDiv"]') ??
-    node?.closest<HTMLElement>("article") ??
-    profileHeaderSurface(node);
+    node?.closest<HTMLElement>("article");
+  const surface = timelineSurface ?? profileHeaderSurface(node);
   if (!surface) return false;
-  surface.style.display = "none";
+  if (timelineSurface) {
+    // X's timeline is an absolutely-positioned virtual list. display:none
+    // makes ResizeObserver report a zero-height row; hiding many replies then
+    // collapses the list's estimated height and clamps scrollY (often to the
+    // top). Keep the measured box in the virtualizer while making its content
+    // inert and invisible.
+    if (!surface.hasAttribute("data-mxga-surface-hidden")) {
+      const previousAria = surface.getAttribute("aria-hidden");
+      if (previousAria !== null) {
+        surface.setAttribute("data-mxga-previous-aria-hidden", previousAria);
+      }
+    }
+    surface.setAttribute("data-mxga-surface-hidden", "");
+    surface.setAttribute("aria-hidden", "true");
+    surface.style.removeProperty("display"); // migrate rows hidden by older builds
+    surface.style.setProperty("opacity", "0", "important");
+    surface.style.setProperty("pointer-events", "none", "important");
+    surface.style.setProperty("user-select", "none", "important");
+  } else {
+    // Profile headers are ordinary flow layout, not virtual-list rows.
+    surface.style.display = "none";
+  }
   return true;
 }
 
@@ -28,5 +49,15 @@ export function showAccountSurface(node: Element | null): boolean {
     profileHeaderSurface(node);
   if (!surface) return false;
   surface.style.removeProperty("display");
+  if (surface.hasAttribute("data-mxga-surface-hidden")) {
+    surface.style.removeProperty("opacity");
+    surface.style.removeProperty("pointer-events");
+    surface.style.removeProperty("user-select");
+    const previousAria = surface.getAttribute("data-mxga-previous-aria-hidden");
+    if (previousAria === null) surface.removeAttribute("aria-hidden");
+    else surface.setAttribute("aria-hidden", previousAria);
+    surface.removeAttribute("data-mxga-previous-aria-hidden");
+    surface.removeAttribute("data-mxga-surface-hidden");
+  }
   return true;
 }
