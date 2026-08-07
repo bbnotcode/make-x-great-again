@@ -1251,15 +1251,16 @@ export default defineContentScript({
           art.querySelector<HTMLElement>("[data-mxga-quick-actions]")?.dataset.mxgaHandle ===
           handle.toLowerCase();
         if (nodeHandle.get(art) === handle && hasMount && hasQuickActions) continue;
-        const info = extractFromArticle(art);
-        if (!info) continue;
-        if (topic && !info.threadTopic) info.threadTopic = topic;
         if (nodeHandle.get(art) !== handle) {
-          // A hidden virtual row may be recycled for a different author. The
-          // new account must not inherit the old row's opacity/inert state.
+          // Restore a recycled virtual row before signal extraction. Hidden
+          // elements have no innerText, so waiting until after extraction can
+          // leave the new author's row permanently collapsed.
           showAccountSurface(art);
           clearMounts(nameBlock);
         }
+        const info = extractFromArticle(art);
+        if (!info) continue;
+        if (topic && !info.threadTopic) info.threadTopic = topic;
         nodeHandle.set(art, handle);
         const sid = focal ? articleStatusId(art) : null;
         const ctx: ScanContext = focal && sid && sid !== focal ? "reply" : "feed";

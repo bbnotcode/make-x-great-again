@@ -30,14 +30,12 @@ test("manual local hide removes the visible profile header surface", () => {
   assert.equal(profileSurface?.style.display, "none");
 });
 
-test("timeline hide keeps X virtual-row geometry instead of display:none", () => {
+test("timeline hide collapses the virtual row without deleting X positioning", () => {
   const anchor = document.querySelector("#timeline-anchor");
   const cell = document.querySelector<HTMLElement>("#timeline-cell");
 
   assert.equal(hideAccountSurface(anchor), true);
-  assert.notEqual(cell?.style.display, "none");
-  assert.equal(cell?.style.opacity, "0");
-  assert.equal(cell?.style.pointerEvents, "none");
+  assert.equal(cell?.style.display, "none");
   assert.equal(cell?.getAttribute("data-mxga-surface-hidden"), "");
   assert.match(cell?.getAttribute("style") ?? "", /translateY\(400px\)/);
 
