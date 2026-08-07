@@ -37,6 +37,7 @@ import {
   bumpStats,
   cancelAutomaticBlock,
   clearPendingAction,
+  getBlocklist,
   getPendingActions,
   updateBlockRecord,
 } from "../lib/store";
@@ -365,6 +366,12 @@ export default defineContentScript({
     // Warm local data structures
     await warmBlocklist();
     await warmLocalIndex();
+
+    // Handles from the audit records let the mutation fast-path recognize an
+    // account without walking X's React fiber for its numeric user id.
+    let blockedHandles = new Set(
+      (await getBlocklist()).map((record) => record.handle.toLowerCase()),
+    );
 
     const keyOf = (s: Signals) => s.userId || `h:${s.handle}`;
     const regexMuteInFlight = new Set<string>();
@@ -1287,6 +1294,30 @@ export default defineContentScript({
       }
     }
 
+    /** Hide accounts that this user has already processed in the same
+     * MutationObserver turn that X inserts/recycles their article. The full
+     * scan intentionally waits for the DOM to settle, but that 600 ms delay
+     * otherwise lets a known-hidden reply paint briefly while scrolling. */
+    function concealKnownBlockedRows(root: ParentNode | HTMLElement = document): void {
+      const articles: HTMLElement[] = [];
+      if (root instanceof HTMLElement && root.matches('article[data-testid="tweet"]')) {
+        articles.push(root);
+      }
+      articles.push(
+        ...root.querySelectorAll<HTMLElement>('article[data-testid="tweet"]'),
+      );
+      for (const article of articles) {
+        const handle = handleFromArticle(article)?.toLowerCase();
+        if (!handle) continue;
+        const handleKey = `h:${handle}`;
+        if (!blockedHandles.has(handle) && !isBlockedSync(handleKey)) continue;
+        // The viewer's explicit follow/allow decisions still outrank the
+        // local processed list, including in this pre-paint fast-path.
+        if (followedKeys.has(handleKey) || isWhitelisted(undefined, handle)) continue;
+        hideAccountSurface(article);
+      }
+    }
+
     /** Quick controls are layout UI, so mount them in the same mutation turn
      * that reveals a virtualized X article. Waiting for the full 600 ms spam
      * scan made Grok/More visibly jump when the user navigated back. Signals
@@ -1419,7 +1450,12 @@ export default defineContentScript({
     });
 
     let debounce: ReturnType<typeof setTimeout> | undefined;
-    const observer = new MutationObserver(() => {
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (node instanceof HTMLElement) concealKnownBlockedRows(node);
+        }
+      }
       mountVisibleQuickActions();
       clearTimeout(debounce);
       debounce = setTimeout(scan, 600);
@@ -1440,6 +1476,12 @@ export default defineContentScript({
     // page against the fresh list. Pending/hidden rows are untouched.
     try {
       chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === "local" && (changes["xss:blocklist:v2"] || changes["xss:blocked"])) {
+          void getBlocklist().then((records) => {
+            blockedHandles = new Set(records.map((record) => record.handle.toLowerCase()));
+            concealKnownBlockedRows();
+          });
+        }
         if (
           area !== "local" ||
           (!changes[LIST_KEY] && !changes[WL_KEY] && !changes[LOCAL_ALLOWLIST_KEY])
