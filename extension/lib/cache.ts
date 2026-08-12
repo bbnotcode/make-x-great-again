@@ -4,12 +4,13 @@
 // reply / session. This is the dominant cost saver.
 import type { Verdict } from "./types";
 
-const PREFIX = "xss:v1:";
+export const CACHE_PREFIX = "xss:v1:";
+export const BIO_RULE_MODEL = "local-bio-rule-v2";
 const DAY = 86_400_000;
 
 // TTL by outcome: spam doesn't reform quickly; uncertain should re-evaluate
 // sooner in case more signal appears.
-function ttl(label: Verdict["label"]): number {
+export function cacheTtl(label: Verdict["label"]): number {
   if (label === "spam" || label === "porn_bot") return 30 * DAY;
   if (label === "likely_spam") return 14 * DAY;
   if (label === "legit") return 14 * DAY;
@@ -48,7 +49,12 @@ export function signalsHash(parts: {
   return h.toString(36);
 }
 
-const key = (id: string) => PREFIX + id;
+export function cacheExpired(c: Cached, now = Date.now()): boolean {
+  if (!c?.verdict || typeof c.verdict.label !== "string") return true;
+  return !Number.isFinite(c.ts) || now - c.ts > cacheTtl(c.verdict.label);
+}
+
+const key = (id: string) => CACHE_PREFIX + id;
 
 export async function cacheGet(id: string): Promise<Cached | null> {
   try {
@@ -56,7 +62,13 @@ export async function cacheGet(id: string): Promise<Cached | null> {
     const got = await chrome.storage.local.get(k);
     const c = got[k] as Cached | undefined;
     if (!c) return null;
-    if (Date.now() - c.ts > ttl(c.verdict.label)) {
+    // Bio rules are intentionally versioned: weakening/removing a rule must
+    // invalidate old local detections instead of preserving them for 30 days.
+    if (c.model.startsWith("local-bio-rule-") && c.model !== BIO_RULE_MODEL) {
+      void chrome.storage.local.remove(k);
+      return null;
+    }
+    if (cacheExpired(c)) {
       void chrome.storage.local.remove(k);
       return null;
     }

@@ -10,6 +10,14 @@ otherwise.
 
 ### Added
 
+- High-precision profile-bio template detection using only profile data X has already
+  exposed during a natural hover; it does not synthesize hovers or fetch profiles.
+- A durable native-action queue shared by automatic matches and manual quick actions;
+  work survives SPA navigation, tab changes, reloads, and worker restarts.
+- Queue diagnostics and source filters for manual, regex, profile-bio, and public-list
+  tasks, including per-source cancellation of work that has not started.
+- Daily transient-cache cleanup, storage diagnostics, and list/index recovery after
+  browser extension data is cleared.
 - iOS / iPadOS 18+ Safari Web Extension container with a SwiftUI setup guide,
   Simulator build script, shared MV3 resources, and iPhone/iPad icons.
 - Touch-first badge popovers plus an iOS hamburger drawer, single-column dashboard cards,
@@ -19,11 +27,30 @@ otherwise.
 
 ### Changed
 
+- Native X actions use bounded retries with backoff and pause on authentication,
+  permission, or explicit rate-limit failures instead of continuing blindly.
+- Automatic decisions atomically persist their local record and pending X action, so
+  navigating away between detection and enqueue no longer drops work.
+- Bio-rule audits retain only a versioned irreversible hash after URLs and promoted
+  handles are redacted; full profile biographies are not stored.
+- Timeline fallback scans are viewport-bounded and local-list lookups are batched through
+  the background index, reducing work on long virtualized timelines.
+- Followed and locally allowlisted users remain the highest-priority protection for all
+  automatic sources, while manual quick actions remain explicit overrides.
 - Consolidated the macOS and iOS containers and Safari extensions into one Xcode project with
   four platform-specific targets; deployment baselines are now macOS 15 and iOS 18.
 - Safari's in-page blacklist index now retains compact lite rows and expands display data only
   on a hit, reducing the measured retained heap for the current 134k snapshot from roughly
   55 MB to 32 MB per page context.
+
+### Fixed
+
+- Recover the current X tab from an invalidated content-script context after reloading an
+  unpacked extension, without requiring a full browser restart.
+- Prevent hidden virtual timeline rows from leaving large blank placeholders or causing
+  scroll-position jumps, and keep quick-action ordering stable beside X/Grok controls.
+- Continue queued native actions after leaving the originating status page while preventing
+  duplicate execution across tabs through storage coordination and per-account locks.
 
 ## [0.5.0] - 2026-07-18
 

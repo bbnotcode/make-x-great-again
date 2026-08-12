@@ -3,6 +3,9 @@ export type QuickXAction = "mute" | "block";
 export interface QuickActionResult {
   ok: boolean;
   message?: string;
+  /** Present when the click was accepted into the durable queue. The first
+   * result acknowledges enqueueing; completion reports the eventual X call. */
+  completion?: Promise<Omit<QuickActionResult, "completion">>;
 }
 
 type QuickActionHandler = (action: QuickXAction) => Promise<QuickActionResult>;
@@ -44,12 +47,19 @@ export function mountQuickActions(
 ): boolean {
   const normalized = handle.trim().replace(/^@+/, "").toLowerCase();
   const previous = article.querySelector<HTMLElement>(`:scope [${HOST_ATTR}]`);
-  if (previous?.dataset.mxgaHandle === normalized) return true;
-  previous?.remove();
-
   const reference = placementReference(article);
   const parent = reference?.parentElement;
   if (!reference || !parent) return false;
+  if (previous?.dataset.mxgaHandle === normalized) {
+    // X often renders More first and inserts Grok later. The first mount then
+    // correctly lands before More, but must be moved again once Grok exists;
+    // an idempotent early return left mixed Grok/MXGA ordering between rows.
+    if (previous.parentElement !== parent || previous.nextElementSibling !== reference) {
+      parent.insertBefore(previous, reference);
+    }
+    return true;
+  }
+  previous?.remove();
 
   const host = document.createElement("span");
   host.setAttribute(HOST_ATTR, "");
@@ -70,6 +80,7 @@ export function mountQuickActions(
     button[data-action="block"]:hover { color:rgb(244,33,46); background:rgba(244,33,46,.1); }
     button:disabled { cursor:wait; opacity:.55; }
     button[data-state="success"] { color:rgb(0,186,124); }
+    button[data-state="queued"] { color:rgb(255,173,31); }
     button[data-state="error"] { color:rgb(244,33,46); }
     svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.9;
       stroke-linecap:round; stroke-linejoin:round; }
@@ -98,11 +109,11 @@ export function mountQuickActions(
         for (const item of buttons) item.disabled = true;
         button.dataset.state = "working";
         button.title = action === "mute" ? "正在静音…" : "正在拉黑…";
-        const result = await onAction(action).catch(() => ({
+        const result: QuickActionResult = await onAction(action).catch(() => ({
           ok: false,
           message: "操作失败，请稍后重试",
         }));
-        button.dataset.state = result.ok ? "success" : "error";
+        button.dataset.state = result.ok ? (result.completion ? "queued" : "success") : "error";
         button.title =
           result.message ??
           (result.ok
@@ -112,6 +123,22 @@ export function mountQuickActions(
             : "操作失败，请稍后重试");
         if (!result.ok) {
           for (const item of buttons) item.disabled = false;
+        } else if (result.completion) {
+          const completed = await result.completion.catch(() => ({
+            ok: false,
+            message: "后台操作失败，请重试",
+          }));
+          button.dataset.state = completed.ok ? "success" : "error";
+          button.title =
+            completed.message ??
+            (completed.ok
+              ? action === "mute"
+                ? "已用 X 原生功能静音"
+                : "已用 X 原生功能拉黑"
+              : "后台操作失败，请重试");
+          if (!completed.ok) {
+            for (const item of buttons) item.disabled = false;
+          }
         }
       })();
     });
@@ -121,4 +148,3 @@ export function mountQuickActions(
   parent.insertBefore(host, reference);
   return true;
 }
-

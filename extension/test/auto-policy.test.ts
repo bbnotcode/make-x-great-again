@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { autoEligible, capAutoTierAction, viewerProtected } from "../lib/auto-policy";
+import {
+  autoEligible,
+  automaticActionDisposition,
+  capAutoTierAction,
+  capUnverifiedFollowingAction,
+  viewerProtected,
+} from "../lib/auto-policy";
 
 test("viewer follow choice protects an account before every filter source", () => {
   assert.equal(viewerProtected({ viewerFollowing: true }), true);
@@ -119,4 +125,33 @@ test("cache and fresh verdicts never auto-act", () => {
       false,
     );
   }
+});
+
+test("unknown follow state caps automatic X actions at local hide", () => {
+  for (const action of ["mute", "block"] as const) {
+    assert.equal(capUnverifiedFollowingAction(action, "unknown"), "hide");
+    assert.equal(capUnverifiedFollowingAction(action, "following"), "hide");
+    assert.equal(capUnverifiedFollowingAction(action, "not_following"), action);
+  }
+  assert.equal(capUnverifiedFollowingAction("hide", "unknown"), "hide");
+  assert.equal(capUnverifiedFollowingAction("badge", "unknown"), "badge");
+});
+
+test("preview mode reports planned actions without executing them", () => {
+  assert.equal(
+    automaticActionDisposition("mute", { autoProcess: true, previewMode: true }),
+    "preview",
+  );
+  assert.equal(
+    automaticActionDisposition("hide", { autoProcess: true, previewMode: false }),
+    "execute",
+  );
+  assert.equal(
+    automaticActionDisposition("block", { autoProcess: false, previewMode: true }),
+    "badge",
+  );
+  assert.equal(
+    automaticActionDisposition("badge", { autoProcess: true, previewMode: false }),
+    "badge",
+  );
 });

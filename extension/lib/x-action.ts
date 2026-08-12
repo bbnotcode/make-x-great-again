@@ -13,11 +13,66 @@
 
 export type XActionKind = "mute" | "block";
 
+import { isXPageHealthyForExtensionApi } from "./x-health";
+
 export interface XActionAttempt {
   ok: boolean;
   status?: number;
   retryable?: boolean;
   retryAfterMs?: number;
+}
+
+export type XActionFailureKind =
+  | "network"
+  | "auth"
+  | "rate_limit"
+  | "not_found"
+  | "server"
+  | "rejected";
+
+export function classifyXActionFailure(attempt: XActionAttempt): {
+  kind: XActionFailureKind;
+  message: string;
+  shouldPauseQueue: boolean;
+} {
+  if (attempt.status === 401) {
+    return {
+      kind: "auth",
+      message: "X 登录状态或网站权限已失效",
+      shouldPauseQueue: true,
+    };
+  }
+  if (attempt.status === 429) {
+    return {
+      kind: "rate_limit",
+      message: "X 请求过于频繁，已触发限流",
+      shouldPauseQueue: true,
+    };
+  }
+  // X uses 403 for several account/action-specific rejections too (including
+  // already-settled or policy-restricted targets). Do not freeze the entire
+  // queue and claim the viewer was logged out based on one ambiguous row.
+  if (attempt.status === 403) {
+    return {
+      kind: "rejected",
+      message: "X 拒绝了此账号的操作（403）",
+      shouldPauseQueue: false,
+    };
+  }
+  if (attempt.status === 404) {
+    return { kind: "not_found", message: "账号不存在、已注销或用户名已变化", shouldPauseQueue: false };
+  }
+  if (attempt.status !== undefined && attempt.status >= 500) {
+    return { kind: "server", message: `X 服务暂时异常（${attempt.status}）`, shouldPauseQueue: false };
+  }
+  if (attempt.status === undefined && attempt.retryable) {
+    return { kind: "network", message: "网络连接失败或请求超时", shouldPauseQueue: false };
+  }
+  return {
+    kind: "rejected",
+    message: attempt.status ? `X 拒绝了请求（${attempt.status}）` : "X 请求失败",
+    shouldPauseQueue: false,
+  };
 }
 
 // X web's long-standing public bearer (same one the site itself sends).
@@ -31,7 +86,7 @@ const ENDPOINT: Record<XActionKind, string> = {
 
 // Pacing — shared across both action kinds (both are write actions against
 // the same account-mutation rate budget).
-const ACTION_DELAY_MS = 1200;
+const ACTION_DELAY_MS = 1_200;
 const ACTION_JITTER_MS = 700;
 const SHORT_COOLDOWN_EVERY = 45;
 const SHORT_COOLDOWN_MS = 8_000;
@@ -159,6 +214,10 @@ function recordSuccess() {
 
 async function waitForSlot() {
   while (true) {
+    if (!isXPageHealthyForExtensionApi()) {
+      await sleep(5_000);
+      continue;
+    }
     const round = readRound();
     const cooldownRemaining = round.cooldownUntil - Date.now();
     if (cooldownRemaining > 0) {
@@ -171,6 +230,8 @@ async function waitForSlot() {
     if (remaining <= 0) break;
     await sleep(Math.min(1000, remaining));
   }
+  // The page may have entered its error state during the pacing wait.
+  if (!isXPageHealthyForExtensionApi()) return waitForSlot();
   setStorageNumber(LS_LAST_ACTION, Date.now());
 }
 

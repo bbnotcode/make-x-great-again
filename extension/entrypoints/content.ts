@@ -1,8 +1,16 @@
 import { hideAccountSurface, showAccountSurface } from "../lib/account-surface";
-import { autoEligible, capAutoTierAction, viewerProtected } from "../lib/auto-policy";
+import {
+  type FollowVerification,
+  automaticActionDisposition,
+  autoEligible,
+  capAutoTierAction,
+  capUnverifiedFollowingAction,
+  viewerProtected,
+} from "../lib/auto-policy";
 import { addBlocked, isBlockedSync, warm as warmBlocklist } from "../lib/blocklist";
 import { BRAND } from "../lib/brand";
-import { type Cached, cacheGet, signalsHash } from "../lib/cache";
+import { BIO_RULE_MODEL, type Cached, cacheGet, cacheSet, signalsHash } from "../lib/cache";
+import { BIO_RULE_VERSION, bioEvidenceHash, matchStrongPornBio } from "../lib/bio-rules";
 import {
   extractFromArticle,
   extractProfile,
@@ -13,10 +21,18 @@ import {
 import { CATEGORY_ZH } from "../lib/category";
 import { LIST_KEY, WL_KEY } from "../lib/list-sync";
 import { LOCAL_ALLOWLIST_KEY } from "../lib/local-allowlist";
-import { type IndexEntry, isWhitelisted, lookupLocal, warmLocalIndex } from "../lib/local-index";
+import {
+  type IndexEntry,
+  isWhitelisted,
+  warmLocalProtections,
+} from "../lib/local-index";
 import { matchLocalRules } from "../lib/local-rules";
 import { compileRegexRules, matchRegexText } from "../lib/regex-filter";
-import { type QuickXAction, mountQuickActions } from "../lib/quick-actions";
+import {
+  type QuickActionResult,
+  type QuickXAction,
+  mountQuickActions,
+} from "../lib/quick-actions";
 import {
   rememberVisibleRelationship,
   verifyXFollowing,
@@ -31,15 +47,21 @@ import {
 } from "../lib/settings";
 import { bumpStat } from "../lib/stats";
 import {
-  type PendingXAction,
+  K_QUEUE_CONTROL,
   addBlockRecord,
   addPendingAction,
   bumpStats,
   cancelAutomaticBlock,
   clearPendingAction,
+  commitAutomaticDecision,
   getBlocklist,
   getPendingActions,
+  getQueueControl,
+  isIndependentPendingSource,
+  pauseQueue,
+  setQueuePaused,
   updateBlockRecord,
+  updatePendingAction,
 } from "../lib/store";
 import type { Signals, Verdict } from "../lib/types";
 import {
@@ -67,10 +89,40 @@ function openAppeal(appeal?: { handle: string; userId?: string }): void {
   window.open(url, "_blank", "noopener");
 }
 
-/** Cap on how many interrupted (queue-died) X-actions we resume per load, so a
- *  huge backlog can't fire a burst of X calls at once. The global x-action
- *  lock still paces each one; anything beyond the cap settles on later loads. */
-const RESUME_MAX = 50;
+const PENDING_RESUME_LOCK = "mxga-pending-resume";
+const queueSucceededIds = new Set<string>();
+const queueFailedIds = new Set<string>();
+const queueProtectedIds = new Set<string>();
+
+/** Chrome leaves an old content-script world alive when an unpacked extension
+ * is reloaded. Its DOM observers/timers can still run, but every extension API
+ * call then throws "Extension context invalidated" until the page is rebuilt.
+ * Detect two consecutive invalid checks, wait for Chrome to finish loading the
+ * new worker, and refresh this X tab once. sessionStorage prevents loops. */
+function installContextReloadRecovery(): void {
+  const RECOVERY_KEY = "mxga:context-reload-recovery";
+  let misses = 0;
+  const timer = window.setInterval(() => {
+    try {
+      chrome.runtime.getManifest();
+      misses = 0;
+      return;
+    } catch {
+      misses++;
+    }
+    if (misses < 2) return;
+    window.clearInterval(timer);
+    try {
+      const last = Number(sessionStorage.getItem(RECOVERY_KEY) || 0);
+      if (Date.now() - last < 15_000) return;
+      sessionStorage.setItem(RECOVERY_KEY, String(Date.now()));
+    } catch {
+      /* sessionStorage blocked — a single timer still guarantees one reload */
+    }
+    // Let Chrome finish starting the replacement extension context first.
+    window.setTimeout(() => location.reload(), 800);
+  }, 750);
+}
 
 /** Report an unlisted account to the public review queue. GitHub-authed
  *  contribution: the token gates who can report (server enforces a 90-day
@@ -151,25 +203,130 @@ function autoCategoryCount(s: Settings): number {
   return Object.values(s.categoryActions).filter((a) => a !== "badge").length;
 }
 
+/** Sleep without polling storage. Any queue-control or pending-list change
+ * wakes the waiter immediately; the post-registration read closes the small
+ * check→listen race between tabs. */
+async function waitForQueueChange(pendingId: string): Promise<void> {
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      chrome.storage.onChanged.removeListener(onChanged);
+      resolve();
+    };
+    const onChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (
+        area === "local" &&
+        (changes[K_QUEUE_CONTROL] || changes["xss:pending-actions"])
+      )
+        finish();
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    void Promise.all([getQueueControl(), getPendingActions()]).then(
+      ([control, tasks]) => {
+        if (!control.paused || !tasks.some((item) => item.id === pendingId)) finish();
+      },
+      finish,
+    );
+  });
+}
+
 /** Fire X's native mute/block (best-effort, paced) with one retry. The local
  *  hide/record is applied separately and always — the X call rides on top.
  *  Returns false only when the native X action definitively failed (used by
  *  the bubble's batch panel to surface a per-row 重试 state). */
-async function applyXAction(mode: ActionMode, sig: Signals): Promise<boolean> {
+async function applyXAction(
+  mode: ActionMode,
+  sig: Signals,
+  pendingId?: string,
+): Promise<boolean> {
   if (mode === "local") return true;
-
-  // Load the mutation client only after the user explicitly chooses a native
-  // X action and grants the optional host permission.
-  const { performXAction, retryDelayForAttempt } = await import("../lib/x-action");
-  const attempt = await performXAction(mode, sig.userId, sig.handle);
-  if (attempt.ok) return true;
-  const delay = retryDelayForAttempt(attempt, 1);
-  if (delay > 0) {
-    await new Promise((r) => setTimeout(r, delay));
-    const second = await performXAction(mode, sig.userId, sig.handle); // one best-effort retry
-    return second.ok;
-  }
-  return false;
+  const execute = async () => {
+    // Load the mutation client only after the user explicitly chooses a native
+    // X action and grants the optional host permission.
+    const { classifyXActionFailure, performXAction, retryDelayForAttempt } = await import(
+      "../lib/x-action"
+    );
+    let lastAttempt: Awaited<ReturnType<typeof performXAction>> | undefined;
+    let attempts = 0;
+    for (let tries = 1; tries <= 3; tries++) {
+      attempts = tries;
+      const attempt = await performXAction(mode, sig.userId, sig.handle);
+      lastAttempt = attempt;
+      if (attempt.ok) return { ok: true as const, attempts: tries };
+      const delay = retryDelayForAttempt(attempt, tries);
+      if (!delay || tries === 3) break;
+      await new Promise((r) => setTimeout(r, delay));
+    }
+    const failure = classifyXActionFailure(lastAttempt ?? { ok: false, retryable: true });
+    return { ok: false as const, attempts, failure };
+  };
+  if (!pendingId) return execute().then((result) => result.ok);
+  const runOnce = async () => {
+    while ((await getQueueControl()).paused) {
+      // Cancellation must take effect even while the whole queue is paused.
+      // Previously this loop waited forever until the user resumed, leaving
+      // a cancelled quick-action button stuck in the queued state.
+      if (!(await getPendingActions()).some((item) => item.id === pendingId)) return false;
+      await waitForQueueChange(pendingId);
+    }
+    const row = (await getPendingActions()).find((item) => item.id === pendingId);
+    if (!row) return false; // cancelled while waiting (or already settled elsewhere)
+    await updatePendingAction(pendingId, {
+      status: "running",
+      attempts: row.attempts ?? 0,
+      lastError: undefined,
+      nextAttemptAt: undefined,
+    });
+    let result: Awaited<ReturnType<typeof execute>>;
+    try {
+      result = await execute();
+    } catch (error) {
+      queueFailedIds.add(pendingId);
+      await updatePendingAction(pendingId, {
+        status: "failed",
+        attempts: (row.attempts ?? 0) + 1,
+        lastError: `扩展内部异常：${error instanceof Error ? error.message : String(error)}`,
+      });
+      return false;
+    }
+    if (result.ok) {
+      queueSucceededIds.add(pendingId);
+      queueFailedIds.delete(pendingId);
+      await clearPendingAction(pendingId);
+    }
+    else {
+      const attempts = (row.attempts ?? 0) + result.attempts;
+      const retryable =
+        (result.failure.kind === "network" || result.failure.kind === "server") &&
+        attempts < 9;
+      const nextAttemptAt = retryable
+        ? Date.now() + Math.min(30 * 60_000, 15_000 * 2 ** Math.floor(attempts / 3))
+        : undefined;
+      await updatePendingAction(pendingId, {
+        status: retryable ? "queued" : "failed",
+        attempts,
+        nextAttemptAt,
+        lastError: retryable
+          ? `${result.failure.message}（将在后台自动重试）`
+          : `${result.failure.message}（本轮尝试 ${result.attempts} 次）`,
+      });
+      if (!retryable) queueFailedIds.add(pendingId);
+      if (result.failure.shouldPauseQueue) {
+        await pauseQueue(`${result.failure.message}；请检查后再继续队列`);
+      }
+    }
+    return result.ok;
+  };
+  const locks = (
+    navigator as Navigator & {
+      locks?: { request<T>(name: string, callback: () => Promise<T>): Promise<T> };
+    }
+  ).locks;
+  return locks
+    ? locks.request(`mxga-pending-account:${pendingId}`, runOnce)
+    : runOnce();
 }
 
 /** Cheap author handle from the User-Name link href — no fiber walk, no
@@ -183,6 +340,14 @@ function handleFromArticle(art: HTMLElement): string | undefined {
     if (s.length === 1 && /^[A-Za-z0-9_]{1,15}$/.test(s[0] ?? "")) return s[0];
   }
   return undefined;
+}
+
+/** X virtualizes long timelines, but can retain a buffer of detached-looking
+ * rows well outside the viewport. Full fallback scans only need a generous
+ * two-screen margin; MutationObserver still handles newly inserted rows. */
+function isNearViewport(el: HTMLElement, margin = Math.max(900, innerHeight * 2)): boolean {
+  const rect = el.getBoundingClientRect();
+  return rect.bottom >= -margin && rect.top <= innerHeight + margin;
 }
 
 /** Where a scanned account was seen. Auto actions are scoped by this:
@@ -281,7 +446,38 @@ export default defineContentScript({
   matches: ["https://x.com/*", "https://twitter.com/*"],
   cssInjectionMode: "ui",
   async main(ctx) {
+    installContextReloadRecovery();
     let bubbleApi: ReturnType<typeof createBubble> | null = null;
+    async function syncQueueBubble(): Promise<void> {
+      const [tasks, control] = await Promise.all([getPendingActions(), getQueueControl()]);
+      const now = Date.now();
+      const nextRetryAt = tasks
+        .map((task) => task.nextAttemptAt)
+        .filter((at): at is number => typeof at === "number" && at > now)
+        .sort((a, b) => a - b)[0];
+      const active = tasks.filter((task) => task.status !== "failed").length;
+      // Failed rows remain persisted so the user can inspect/retry them, but
+      // they are not active work. Counting every stored row made the pill
+      // spin forever as “后台处理 1” after a failed request/cache reset.
+      bubbleApi?.setQueueStatus(active, control.paused, control.reason, {
+        quick: tasks.filter((task) => task.source === "quick").length,
+        regex: tasks.filter((task) => task.source === "regex").length,
+        bio: tasks.filter((task) => task.source === "bio_rule").length,
+        auto: tasks.filter((task) => !["quick", "regex", "bio_rule"].includes(task.source ?? "auto")).length,
+        running: tasks.filter((task) => task.status === "running").length,
+        failed: tasks.filter((task) => task.status === "failed").length,
+        retrying: tasks.filter((task) => (task.nextAttemptAt ?? 0) > now).length,
+        succeeded: queueSucceededIds.size,
+        protectedSkipped: queueProtectedIds.size,
+        estimatedMs: active * 1_900 + Math.max(0, (nextRetryAt ?? now) - now),
+        ...(nextRetryAt ? { nextRetryAt } : {}),
+      });
+    }
+
+    function recordProtectedSkip(key: string) {
+      queueProtectedIds.add(key);
+      void syncQueueBubble();
+    }
     let dismissed = false;
     const anchorByKey = new Map<string, HTMLElement>();
     const nodeHandle = new WeakMap<HTMLElement, string>(); // virtualization-safe
@@ -290,6 +486,125 @@ export default defineContentScript({
     const inFlight = new Set<string>(); // keys currently in process()
     const hitPublicSeen = new Set<string>(); // hitPublic stat: once per account
     const followedKeys = new Set<string>();
+    const learnedBioHandles = new Set<string>();
+
+    async function handleStrongBio(sig: Signals, anchor: HTMLElement): Promise<boolean> {
+      if (!settings.botDetectionEnabled) return false;
+      const hit = matchStrongPornBio(sig.bio);
+      if (!hit) return false;
+      const key = keyOf(sig);
+      if (isWhitelisted(sig.userId, sig.handle)) return true;
+      if ((await protectDetectedFollow(sig, anchor, key)) === "following") return true;
+      const verdict: Verdict = { label: hit.label, confidence: 0.99, reasons: hit.reasons };
+      const evidenceHash = bioEvidenceHash(sig.bio);
+      const cached: Cached = {
+        verdict,
+        signalsHash: signalsHash(sig),
+        model: BIO_RULE_MODEL,
+        ts: Date.now(),
+        handle: sig.handle,
+        ...(sig.displayName ? { displayName: sig.displayName } : {}),
+        ...(sig.avatarUrl ? { avatarUrl: sig.avatarUrl } : {}),
+      };
+      await Promise.all([
+        cacheSet(key, cached),
+        ...(key !== `h:${sig.handle}` ? [cacheSet(`h:${sig.handle}`, cached)] : []),
+      ]);
+      learnedBioHandles.add(sig.handle.toLowerCase());
+      pushFinding(sig, verdict, "bio-rule", {
+        categoryZh: "色情引流简介",
+        ...(articleStatusId(articleOf(anchor)!) ? { tweetId: articleStatusId(articleOf(anchor)!) ?? undefined } : {}),
+      });
+      let action = settings.autoProcess ? settings.botDetectionAction : "badge";
+      // A handle can be renamed or later re-registered. Irreversible block
+      // requires the immutable X user id; without it, safely degrade to mute.
+      const downgradedBlock = action === "block" && !sig.userId;
+      if (downgradedBlock) action = "mute";
+      if (action === "badge") {
+        badgeFor(anchor, key, sig, verdict, `个人简介：${hit.rule} · 已在本机记住此账号`, "bio-rule");
+      } else {
+        // enqueueAuto persists the blocked record AND unfinished native task
+        // before its visual queue starts. Leaving this post immediately can
+        // therefore never cancel or lose a mute/block promised here.
+        enqueueAuto({
+          key,
+          sig,
+          action,
+          verb: action === "hide" ? "隐藏" : actionVerb(action),
+          anchor,
+          verdict,
+          categoryZh: downgradedBlock ? "色情引流简介 · 无数字 ID，拉黑已降级为静音" : "色情引流简介",
+          badgeSource: "bio-rule",
+          pendingSource: "bio_rule",
+          ruleVersion: BIO_RULE_VERSION,
+          evidenceHash,
+          ...(articleStatusId(articleOf(anchor)!)
+            ? { tweetId: articleStatusId(articleOf(anchor)!) ?? undefined }
+            : {}),
+        });
+      }
+      return true;
+    }
+
+    /** X creates this card only after a natural user hover. Read it passively,
+     * associate it by the profile link, then enrich every visible reply by
+     * that account. No synthetic pointer events and no network requests. */
+    function learnVisibleHoverCards(root: ParentNode = document): void {
+      const candidates = new Set<HTMLElement>();
+      const addCandidate = (el: HTMLElement) => {
+        // X currently renders hover cards in a portal without a stable
+        // UserDescription/HoverCard test id. Inspect only newly-added,
+        // reasonably-sized floating subtrees whose text matches our exact
+        // template; ordinary timeline articles are explicitly excluded.
+        if (el.closest('article[data-testid="tweet"], [data-testid="primaryColumn"]')) return;
+        let candidate: HTMLElement | null = el;
+        // A mutation is often the bio <span>, while the owner profile link is
+        // several wrappers above it. Walk only this short portal branch until
+        // both the fixed template and an owner-style /handle link coexist.
+        for (let depth = 0; candidate && depth < 8; depth++, candidate = candidate.parentElement) {
+          if (candidate.closest('article[data-testid="tweet"], [data-testid="primaryColumn"]')) break;
+          const text = candidate.innerText?.trim() ?? "";
+          const hasProfileLink = [...candidate.querySelectorAll<HTMLAnchorElement>('a[href^="/"]')]
+            .some((a) => /^\/[A-Za-z0-9_]{1,15}$/.test((a.getAttribute("href") ?? "").split(/[?#]/)[0] ?? ""));
+          if (text.length >= 20 && text.length <= 1200 && hasProfileLink && matchStrongPornBio(text)) {
+            candidates.add(candidate);
+            break;
+          }
+        }
+      };
+      if (root instanceof HTMLElement) {
+        addCandidate(root);
+        for (const el of root.querySelectorAll<HTMLElement>('[data-testid="UserDescription"], [role="dialog"], [data-testid="HoverCard"]')) addCandidate(el);
+      } else {
+        for (const el of root.querySelectorAll<HTMLElement>('[data-testid="UserDescription"], [role="dialog"], [data-testid="HoverCard"]')) addCandidate(el);
+      }
+      for (const card of candidates) {
+        const bio = card.innerText.trim();
+        const visibleAuthors = new Set(
+          [...document.querySelectorAll<HTMLElement>('article[data-testid="tweet"]')]
+            .map((article) => handleFromArticle(article)?.toLowerCase())
+            .filter((handle): handle is string => !!handle),
+        );
+        const linkedAuthors = new Set(
+          [...card.querySelectorAll<HTMLAnchorElement>('a[href^="/"]')]
+            .map((a) => (a.getAttribute("href") ?? "").split(/[?#]/)[0] ?? "")
+            .filter((path) => /^\/[A-Za-z0-9_]{1,15}$/.test(path))
+            .map((path) => path.slice(1).toLowerCase())
+            .filter((handle) => visibleAuthors.has(handle)),
+        );
+        // A bio may advertise another @account. Only one profile-link handle
+        // may also be a visible reply author; ambiguity means no auto action.
+        if (linkedAuthors.size !== 1) continue;
+        const handle = [...linkedAuthors][0];
+        if (!handle || learnedBioHandles.has(handle)) continue;
+        for (const article of document.querySelectorAll<HTMLElement>('article[data-testid="tweet"]')) {
+          if (handleFromArticle(article)?.toLowerCase() !== handle.toLowerCase()) continue;
+          const anchor = article.querySelector<HTMLElement>('[data-testid="User-Name"]');
+          const sig = extractFromArticle(article);
+          if (anchor && sig) void handleStrongBio({ ...sig, bio }, anchor);
+        }
+      }
+    }
 
     function followedKeyForHandle(handle: string): string {
       return `h:${handle.trim().replace(/^@+/, "").toLowerCase()}`;
@@ -333,13 +648,22 @@ export default defineContentScript({
     // Build marker — confirms which content-script build is live in this tab
     // (reloading the unpacked extension does NOT refresh already-open tabs).
     console.info("[MXGA] content script ready · build 2026-07-27 (quick-native-actions)");
-    onSettingsChange((s) => {
+    const unsubscribeSettings = onSettingsChange((s) => {
       const modeChanged = s.actionMode !== settings.actionMode;
+      const bioActionChanged = s.botDetectionAction !== settings.botDetectionAction;
+      const previewChanged = s.previewMode !== settings.previewMode;
       const regexChanged =
         s.regexEnabled !== settings.regexEnabled ||
         s.regexScope !== settings.regexScope ||
         s.regexRules.join("\n") !== settings.regexRules.join("\n");
       settings = s;
+      if (bioActionChanged) {
+        void getPendingActions().then((tasks) => {
+          if (tasks.some((task) => task.source === "bio_rule" && task.status !== "failed")) {
+            return pauseQueue("简介处理方式已改变；为避免按旧设置执行，队列已暂停，请检查后继续");
+          }
+        }).then(() => syncQueueBubble());
+      }
       if (regexChanged) {
         regexRules = compileRegexRules(s.regexRules).compiled;
         restoreRegexHidden();
@@ -360,12 +684,19 @@ export default defineContentScript({
         }
         scan();
       }
+      if (previewChanged) {
+        for (const host of document.querySelectorAll<HTMLElement>(".xss-mount")) {
+          if (host.shadowRoot?.querySelector(".xss-badge.pending")) continue;
+          host.remove();
+        }
+        scan();
+      }
       if (regexChanged) scan();
     });
 
     // Warm local data structures
     await warmBlocklist();
-    await warmLocalIndex();
+    await warmLocalProtections();
 
     // Handles from the audit records let the mutation fast-path recognize an
     // account without walking X's React fiber for its numeric user id.
@@ -374,6 +705,69 @@ export default defineContentScript({
     );
 
     const keyOf = (s: Signals) => s.userId || `h:${s.handle}`;
+    const listLookupCache = new Map<string, IndexEntry | null>();
+    const LIST_LOOKUP_CACHE_MAX = 1_000;
+    const LIST_LOOKUP_BATCH_MAX = 100;
+    type LookupResult = IndexEntry | null | undefined;
+    const pendingListLookups = new Map<
+      string,
+      { sig: Signals; resolve: Array<(entry: LookupResult) => void> }
+    >();
+    let listLookupTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function rememberListLookup(cacheKey: string, entry: IndexEntry | null): void {
+      listLookupCache.set(cacheKey, entry);
+      if (listLookupCache.size <= LIST_LOOKUP_CACHE_MAX) return;
+      const oldest = listLookupCache.keys().next().value as string | undefined;
+      if (oldest) listLookupCache.delete(oldest);
+    }
+
+    function scheduleListLookupBatch(): void {
+      if (listLookupTimer) return;
+      listLookupTimer = setTimeout(() => void flushListLookupBatch(), 30);
+    }
+
+    async function flushListLookupBatch(): Promise<void> {
+      listLookupTimer = undefined;
+      const batch = [...pendingListLookups.entries()].slice(0, LIST_LOOKUP_BATCH_MAX);
+      for (const [cacheKey] of batch) pendingListLookups.delete(cacheKey);
+      if (!batch.length) return;
+      let results: Array<IndexEntry | null> | undefined;
+      try {
+        const response = (await chrome.runtime.sendMessage({
+          type: "list-lookup-batch",
+          identities: batch.map(([, item]) => ({
+            ...(item.sig.userId ? { userId: item.sig.userId } : {}),
+            handle: item.sig.handle,
+          })),
+        })) as { ok?: boolean; data?: Array<IndexEntry | null> } | undefined;
+        if (response?.ok && Array.isArray(response.data) && response.data.length === batch.length) {
+          results = response.data;
+        }
+      } catch {
+        // The periodic recovery scan retries after the background wakes.
+      }
+      batch.forEach(([cacheKey, item], index) => {
+        const entry = results?.[index];
+        if (entry !== undefined) rememberListLookup(cacheKey, entry);
+        for (const resolve of item.resolve) resolve(entry);
+      });
+      if (pendingListLookups.size) scheduleListLookupBatch();
+    }
+
+    function lookupPublicList(sig: Signals): Promise<LookupResult> {
+      if (isWhitelisted(sig.userId, sig.handle)) return Promise.resolve(null);
+      const cacheKey = `${sig.userId ?? ""}|${sig.handle.toLowerCase()}`;
+      if (listLookupCache.has(cacheKey)) {
+        return Promise.resolve(listLookupCache.get(cacheKey) ?? null);
+      }
+      return new Promise((resolve) => {
+        const pending = pendingListLookups.get(cacheKey);
+        if (pending) pending.resolve.push(resolve);
+        else pendingListLookups.set(cacheKey, { sig, resolve: [resolve] });
+        scheduleListLookupBatch();
+      });
+    }
     const regexMuteInFlight = new Set<string>();
     const regexDecisionInFlight = new Set<string>();
     const quickActionInFlight = new Set<string>();
@@ -386,7 +780,7 @@ export default defineContentScript({
       action: QuickXAction,
       sig: Signals,
       article: HTMLElement,
-    ): Promise<{ ok: boolean; message?: string }> {
+    ): Promise<QuickActionResult> {
       const viewer = viewerHandle()?.toLowerCase();
       if (viewer && viewer === sig.handle.toLowerCase()) {
         return { ok: false, message: "不能对自己的账号执行此操作" };
@@ -398,40 +792,78 @@ export default defineContentScript({
       }
       quickActionInFlight.add(flightKey);
       try {
-        await addPendingAction({
+        const accepted = await addPendingAction({
           id: key,
           handle: sig.handle,
           action,
           source: "quick",
           ts: Date.now(),
         });
-        const ok = await applyXAction(action, sig).catch(() => false);
-        if (!ok) {
-          await clearPendingAction(key);
-          return { ok: false, message: `X 原生${action === "block" ? "拉黑" : "静音"}失败` };
+        if (!accepted) {
+          quickActionInFlight.delete(flightKey);
+          return { ok: false, message: "队列已达 200 条并自动暂停，请先处理队列" };
         }
-        await addBlocked(key);
-        if (sig.userId) await addBlocked(sig.userId);
-        await addBlockRecord({
-          id: key,
-          handle: sig.handle,
-          ...(sig.displayName ? { displayName: sig.displayName } : {}),
-          ...(sig.avatarUrl ? { avatarUrl: sig.avatarUrl } : {}),
-          ...(articleStatusId(article) ? { tweetId: articleStatusId(article) ?? undefined } : {}),
-          ...(sig.triggeringComment ? { tweetText: sig.triggeringComment } : {}),
-          reason: `帖子快捷按钮 · X 原生${action === "block" ? "拉黑" : "静音"}成功`,
-          source: "manual",
-          ts: Date.now(),
-        });
-        await clearPendingAction(key);
+        // Queue first, acknowledge immediately. performXAction's global Web
+        // Lock puts this request behind only the currently-running action;
+        // the automatic loop cannot request its next item until that action
+        // settles, so an explicitly clicked task naturally jumps ahead of the
+        // remaining automatic backlog without interrupting an in-flight call.
+        const completion = finishQuickAction(action, sig, article, accepted, flightKey);
+        return {
+          ok: true,
+          message: action === "block" ? "已加入拉黑队列" : "已加入静音队列",
+          completion,
+        };
+      } catch {
+        quickActionInFlight.delete(flightKey);
+        return { ok: false, message: "加入队列失败，请稍后重试" };
+      }
+    }
+
+    async function finishQuickAction(
+      action: QuickXAction,
+      sig: Signals,
+      article: HTMLElement,
+      key: string,
+      flightKey: string,
+    ): Promise<{ ok: boolean; message: string }> {
+      try {
+        const ok = await applyXAction(action, sig, key).catch(() => false);
+        if (!ok) {
+          return {
+            ok: false,
+            message: `X 原生${action === "block" ? "拉黑" : "静音"}失败，请重试`,
+          };
+        }
+        await Promise.all([
+          addBlocked(key),
+          ...(sig.userId ? [addBlocked(sig.userId)] : []),
+          addBlockRecord({
+            id: key,
+            handle: sig.handle,
+            ...(sig.displayName ? { displayName: sig.displayName } : {}),
+            ...(sig.avatarUrl ? { avatarUrl: sig.avatarUrl } : {}),
+            ...(articleStatusId(article)
+              ? { tweetId: articleStatusId(article) ?? undefined }
+              : {}),
+            ...(sig.triggeringComment ? { tweetText: sig.triggeringComment } : {}),
+            reason: `帖子快捷按钮 · X 原生${action === "block" ? "拉黑" : "静音"}成功`,
+            source: "manual",
+            ts: Date.now(),
+          }),
+        ]);
         void bumpStats({ blocks: 1 });
         void bumpStat("blocked");
         hideAccountSurface(article);
         return {
           ok: true,
-          message: action === "block" ? "已用 X 原生功能拉黑" : "已用 X 原生功能静音",
+          message: action === "block" ? "X 原生拉黑成功" : "X 原生静音成功",
         };
+      } catch {
+        return { ok: false, message: "后台操作失败，请重试" };
       } finally {
+        // applyXAction settles the durable pending marker whether X succeeds
+        // or fails. The next click is then a fresh explicit request.
         quickActionInFlight.delete(flightKey);
       }
     }
@@ -440,7 +872,12 @@ export default defineContentScript({
      *  X's own endpoint using the existing globally paced action queue. The
      *  local block record is written first so a tab close or failed X call
      *  never loses the audit/recovery trail. */
-    async function muteRegexHit(sig: Signals, rule: string, tweetId?: string): Promise<void> {
+    async function muteRegexHit(
+      sig: Signals,
+      rule: string,
+      tweetId: string | undefined,
+      allowNative: boolean,
+    ): Promise<void> {
       const key = keyOf(sig);
       if (
         regexMuteInFlight.has(key) ||
@@ -462,29 +899,37 @@ export default defineContentScript({
           ...(sig.avatarUrl ? { avatarUrl: sig.avatarUrl } : {}),
           ...(tweetId ? { tweetId } : {}),
           ...(tweetText ? { tweetText } : {}),
-          reason: `正则命中 · X 原生静音处理中 · ${rule.slice(0, 80)}`,
+          reason: allowNative
+            ? `正则命中 · X 原生静音处理中 · ${rule.slice(0, 80)}`
+            : `正则命中 · 关注关系无法确认，仅本地隐藏 · ${rule.slice(0, 80)}`,
           source: "regex",
           ts: Date.now(),
         });
         void bumpStats({ blocks: 1 });
         void bumpStat("blocked");
+        if (!allowNative) return;
         // Persist before entering the shared paced queue. If this page closes
         // while the queue waits on another tab/cooldown, the next page load
         // can resume the promised native mute instead of leaving it local-only.
-        await addPendingAction({
+        const accepted = await addPendingAction({
           id: key,
           handle: sig.handle,
           action: "mute",
           source: "regex",
           ts: Date.now(),
         });
-        const ok = await applyXAction("mute", sig).catch(() => false);
+        if (!accepted) {
+          await updateBlockRecord(key, {
+            reason: `正则命中 · 队列容量保护，仅本地隐藏 · ${rule.slice(0, 80)}`,
+          });
+          return;
+        }
+        const ok = await applyXAction("mute", sig, accepted).catch(() => false);
         await updateBlockRecord(key, {
           reason: ok
             ? `正则命中 · X 原生静音成功 · ${rule.slice(0, 80)}`
             : `正则命中 · X 静音失败，仅本地隐藏 · ${rule.slice(0, 80)}`,
         });
-        await clearPendingAction(key);
       } finally {
         regexMuteInFlight.delete(key);
       }
@@ -494,21 +939,24 @@ export default defineContentScript({
       sig: Signals,
       anchor: HTMLElement,
       key: string,
-    ): Promise<boolean> {
+    ): Promise<FollowVerification> {
       if (isFollowProtected(sig)) {
+        recordProtectedSkip(key);
         showAccountSurface(anchor);
         showTweet(articleOf(anchor));
         markViewerProtected(anchor, key);
-        return true;
+        return "following";
       }
       const following = await verifyXFollowing(sig.handle);
-      if (!following) return false;
+      if (following === null) return "unknown";
+      if (!following) return "not_following";
+      recordProtectedSkip(key);
       sig.viewerFollowing = true;
       rememberFollowed(sig);
       showAccountSurface(anchor);
       showTweet(articleOf(anchor));
       markViewerProtected(anchor, key);
-      return true;
+      return "following";
     }
 
     async function handleRegexCandidate(
@@ -522,19 +970,46 @@ export default defineContentScript({
       if (regexDecisionInFlight.has(key)) return;
       regexDecisionInFlight.add(key);
       try {
-        if (
-          isWhitelisted(sig.userId, sig.handle) ||
-          (await protectDetectedFollow(sig, anchor, key))
-        ) {
+        if (isWhitelisted(sig.userId, sig.handle)) {
           showAccountSurface(cell);
           cell.removeAttribute(REGEX_HIDDEN_ATTR);
           cell.removeAttribute("data-mxga-regex-rule");
           return;
         }
+        const relationship = await protectDetectedFollow(sig, anchor, key);
+        if (relationship === "following") return;
+        if (settings.previewMode) {
+          showAccountSurface(cell);
+          cell.removeAttribute(REGEX_HIDDEN_ATTR);
+          cell.removeAttribute("data-mxga-regex-rule");
+          const verdict: Verdict = {
+            label: "spam",
+            confidence: 1,
+            reasons: ["命中用户正则表达式"],
+          };
+          badgeFor(
+            anchor,
+            key,
+            sig,
+            verdict,
+            relationship === "unknown"
+              ? "安全预览：正则命中；关注关系无法确认，实际运行时仅本地隐藏"
+              : "安全预览：正则命中；原计划本地隐藏并使用 X 静音",
+          );
+          pushFinding(sig, verdict, "regex-preview", {
+            ...(articleStatusId(art) ? { tweetId: articleStatusId(art) ?? undefined } : {}),
+          });
+          return;
+        }
         cell.setAttribute(REGEX_HIDDEN_ATTR, "");
         cell.setAttribute("data-mxga-regex-rule", rule.slice(0, 120));
         hideAccountSurface(cell);
-        await muteRegexHit(sig, rule, articleStatusId(art) ?? undefined);
+        await muteRegexHit(
+          sig,
+          rule,
+          articleStatusId(art) ?? undefined,
+          relationship === "not_following",
+        );
       } finally {
         regexDecisionInFlight.delete(key);
       }
@@ -592,7 +1067,7 @@ export default defineContentScript({
      *  own session (best-effort, paced). Everything up to the X call runs
      *  synchronously; the returned promise resolves once the native action
      *  settled (true = local-only mode or X action succeeded). */
-    function executeHide(key: string, sig: Signals): Promise<boolean> {
+    async function executeHide(key: string, sig: Signals): Promise<boolean> {
       const pend = pendingActions.get(key);
       const mode = pend?.mode ?? settings.actionMode;
       // Triggering-tweet audit trail: prefer what scheduleHide captured live,
@@ -600,9 +1075,7 @@ export default defineContentScript({
       const fin = findings.find((x) => (x.userId || `h:${x.handle}`) === key);
       const tweetId = pend?.tweetId ?? fin?.tweetId;
       const tweetText = pend?.tweetText ?? fin?.snippet;
-      void addBlocked(key);
-      if (sig.userId) void addBlocked(sig.userId);
-      void addBlockRecord({
+      const record: Parameters<typeof addBlockRecord>[0] = {
         id: key,
         handle: sig.handle,
         ...(sig.displayName ? { displayName: sig.displayName } : {}),
@@ -611,7 +1084,12 @@ export default defineContentScript({
         ...(tweetText ? { tweetText } : {}),
         source: "manual",
         ts: Date.now(),
-      });
+      };
+      await Promise.all([
+        addBlocked(key),
+        ...(sig.userId ? [addBlocked(sig.userId)] : []),
+        addBlockRecord(record),
+      ]);
       void bumpStats({ blocks: 1 });
       void bumpStat("blocked");
       // X recycles article nodes: only hide via the captured anchor if it
@@ -641,13 +1119,27 @@ export default defineContentScript({
       // resume it rather than leave the account locally-hidden-only (same
       // guarantee as the auto queue). Local mode makes no X call — skip.
       if (mode === "mute" || mode === "block") {
-        void addPendingAction({ id: key, handle: sig.handle, action: mode, ts: Date.now() });
+        const accepted = await addPendingAction({
+          id: key,
+          handle: sig.handle,
+          action: mode,
+          source: "quick",
+          ts: Date.now(),
+        });
+        if (!accepted) return false;
+        return applyXAction(mode, sig, accepted).then((ok) => {
+          if (!ok) {
+            void updateBlockRecord(key, {
+              reason: `手动${actionVerb(mode)}（X 动作失败，仅本地隐藏）`,
+            });
+          }
+          return ok;
+        });
       }
       // Mirror the auto path: when the native X action fails, the 处理记录
       // row must say so — the user clicked 拉黑/静音 and only got a local
       // hide, and the record is the one place that can state it honestly.
-      return applyXAction(mode, sig).then((ok) => {
-        if (mode === "mute" || mode === "block") void clearPendingAction(key);
+      return applyXAction(mode, sig, key).then((ok) => {
         if (!ok) {
           void updateBlockRecord(key, {
             reason: `手动${actionVerb(mode)}（X 动作失败，仅本地隐藏）`,
@@ -696,6 +1188,11 @@ export default defineContentScript({
       anchor: HTMLElement;
       verdict: Verdict;
       categoryZh: string;
+      badgeSource: BadgeSource;
+      pendingSource?: "auto" | "bio_rule";
+      ruleVersion?: string;
+      evidenceHash?: string;
+      persisted: Promise<string | false | undefined>;
       tweetId?: string;
     }
     const autoQueue: AutoItem[] = [];
@@ -703,7 +1200,6 @@ export default defineContentScript({
     // animation is (about to be) playing on.
     const autoActing = new Set<string>();
     let autoDraining = false;
-
     function mountActing(anchor: HTMLElement, verb: string, queued: boolean) {
       clearMounts(anchor);
       mountBadge(anchor, () => createActingBadge(verb, queued));
@@ -721,7 +1217,7 @@ export default defineContentScript({
       );
     }
 
-    function enqueueAuto(it: AutoItem) {
+    function enqueueAuto(it: Omit<AutoItem, "persisted">) {
       if (
         autoActing.has(it.key) ||
         isFollowProtected(it.sig) ||
@@ -731,15 +1227,13 @@ export default defineContentScript({
       autoActing.add(it.key);
       // Record FIRST — the protection survives navigation even if the
       // animation never gets to play.
-      void addBlocked(it.key);
-      if (it.sig.userId) void addBlocked(it.sig.userId);
       // The 处理记录 row too: the id lands in xss:blocked above, and a record
       // is the only UI path back (恢复显示). Writing it after the paced X
       // action left a window (tab close mid-queue) that produced permanently
       // hidden accounts with no recover entry. The X-failure annotation is
       // patched in later by the drain loop.
       const tweetText = it.sig.triggeringComment || it.sig.recentTweets[0];
-      void addBlockRecord({
+      const record: Parameters<typeof addBlockRecord>[0] = {
         id: it.key,
         handle: it.sig.handle,
         ...(it.sig.displayName ? { displayName: it.sig.displayName } : {}),
@@ -748,29 +1242,40 @@ export default defineContentScript({
         ...(tweetText ? { tweetText } : {}),
         verdict: it.verdict,
         reason: `${it.categoryZh} · 自动${it.verb}`,
+        ...(it.ruleVersion ? { ruleVersion: it.ruleVersion } : {}),
+        ...(it.evidenceHash ? { evidenceHash: it.evidenceHash } : {}),
         source: "auto",
         ts: Date.now(),
-      });
+      };
       // Track the not-yet-fired X action separately (see PendingXAction): a
       // mid-queue reload can then tell a queued account apart from a completed
       // one — resuming it instead of falsely counting it as 已处理. Local-only
       // hides need no X call, so nothing to track.
-      if (it.action === "mute" || it.action === "block") {
-        void addPendingAction({
+      const pending =
+        it.action === "mute" || it.action === "block"
+          ? {
           id: it.key,
           handle: it.sig.handle,
           action: it.action,
-          source: "auto",
+          source: it.pendingSource ?? "auto",
           ts: Date.now(),
-        });
-      }
+            } as const
+          : undefined;
+      // Snapshot the detected account before the paced queue can mutate X.
+      // The promises keep running across SPA navigation; if the tab closes,
+      // xss:pending-actions lets the next X page resume unfinished work.
+      const persisted = commitAutomaticDecision({
+        record,
+        blockedIds: [it.key, ...(it.sig.userId ? [it.sig.userId] : [])],
+        ...(pending ? { pending } : {}),
+      });
       void bumpStats({ blocks: 1 });
       void bumpStat("blocked");
       anchorByKey.set(it.key, it.anchor);
       articleOf(it.anchor)?.setAttribute("data-xss-key", it.key);
       mountActing(it.anchor, it.verb, true);
       bubbleApi?.markAuto(it.key, "queued", it.verb);
-      autoQueue.push(it);
+      autoQueue.push({ ...it, persisted });
       scheduleDrain();
     }
 
@@ -811,6 +1316,8 @@ export default defineContentScript({
         // One broken item (dead DOM node, render error) must not strand the
         // rest of the queue — fail it and move on.
         try {
+          const pendingId = await it.persisted;
+          const queueAdmitted = pendingId !== false;
           // Protection state can change after enqueue while the gather window
           // or earlier paced actions are running. Recheck at the last safe
           // point before any native X mutation or local hide.
@@ -823,16 +1330,67 @@ export default defineContentScript({
             markViewerProtected(protectedTarget, it.key);
             continue;
           }
+          if (settings.previewMode) {
+            const target = autoTarget(it) ?? it.anchor;
+            await cancelAutomaticBlock(it.key, it.sig.handle);
+            showAccountSurface(target);
+            showTweet(articleOf(target));
+            badgeFor(
+              it.anchor,
+              it.key,
+              it.sig,
+              it.verdict,
+              `安全预览：原计划自动${it.verb}，本次未执行`,
+              it.badgeSource,
+            );
+            bubbleApi?.markAuto(it.key, "done", "预览（未执行）");
+            continue;
+          }
+          let effectiveAction = queueAdmitted ? it.action : "hide";
+          let effectiveVerb = queueAdmitted ? it.verb : "隐藏";
+          if (!queueAdmitted) {
+            await updateBlockRecord(it.key, {
+              reason: `${it.categoryZh} · 队列容量保护，仅本地隐藏`,
+            });
+          }
+          if (it.action === "mute" || it.action === "block") {
+            const latestFollowing = await verifyXFollowing(it.sig.handle, {
+              forceRefresh: true,
+            });
+            if (latestFollowing === true) {
+              recordProtectedSkip(it.key);
+              it.sig.viewerFollowing = true;
+              rememberFollowed(it.sig);
+              const protectedTarget = autoTarget(it) ?? it.anchor;
+              await cancelAutomaticBlock(it.key, it.sig.handle);
+              showAccountSurface(protectedTarget);
+              showTweet(articleOf(protectedTarget));
+              markViewerProtected(protectedTarget, it.key);
+              continue;
+            }
+            if (latestFollowing === null) {
+              effectiveAction = "hide";
+              effectiveVerb = "隐藏";
+              if (pendingId) await clearPendingAction(pendingId);
+              await updateBlockRecord(it.key, {
+                reason: `${it.categoryZh} · 关注关系无法确认，仅本地隐藏`,
+              });
+            }
+          }
           const t0 = Date.now();
           const acting = autoTarget(it);
-          if (acting) mountActing(acting, it.verb, false);
-          bubbleApi?.markAuto(it.key, "processing", it.verb);
+          if (acting) mountActing(acting, effectiveVerb, false);
+          bubbleApi?.markAuto(it.key, "processing", effectiveVerb);
           const xOk =
-            it.action === "mute" || it.action === "block"
-              ? await applyXAction(it.action, it.sig)
+            effectiveAction === "mute" || effectiveAction === "block"
+              ? await applyXAction(effectiveAction, it.sig, pendingId || it.key)
               : true;
           if (!xOk)
-            console.warn(`[MXGA] 自动${it.verb}：X 原生动作失败`, it.sig.handle, it.sig.userId);
+            console.warn(
+              `[MXGA] 自动${effectiveVerb}：X 原生动作失败`,
+              it.sig.handle,
+              it.sig.userId,
+            );
           // Even the instant local-hide mode dwells long enough to be SEEN.
           const dwell = AUTO_MIN_ACT_MS - (Date.now() - t0);
           if (dwell > 0) await sleep(dwell);
@@ -844,15 +1402,14 @@ export default defineContentScript({
           // The action has now SETTLED (attempted) — drop its pending marker so
           // it stops being a resume candidate; only items whose queue died
           // before this point stay pending. On X failure, annotate the record.
-          if (it.action === "mute" || it.action === "block") {
-            void clearPendingAction(it.key);
+          if (effectiveAction === "mute" || effectiveAction === "block") {
             if (!xOk) {
               void updateBlockRecord(it.key, {
-                reason: `${it.categoryZh} · 自动${it.verb}（X 动作失败，仅本地隐藏）`,
+                reason: `${it.categoryZh} · 自动${effectiveVerb}（X 动作失败，仅本地隐藏）`,
               });
             }
           }
-          bubbleApi?.markAuto(it.key, xOk ? "done" : "failed", it.verb);
+          bubbleApi?.markAuto(it.key, xOk ? "done" : "failed", effectiveVerb);
         } catch (e) {
           console.warn(`[MXGA] 自动${it.verb}处理异常`, it.sig.handle, e);
           try {
@@ -873,20 +1430,56 @@ export default defineContentScript({
      *  x-action lock paces these across tabs), then settle the pending marker
      *  so it stops being a resume candidate. Runs once per load; each entry is
      *  attempted at most once, then cleared regardless of outcome. */
-    async function resumeInterrupted(pending: PendingXAction[]) {
+    let resumeRunning = false;
+    let retryWakeTimer: ReturnType<typeof setTimeout> | undefined;
+    let retryWakeAt = 0;
+
+    function scheduleRetryWake(nextAttemptAt: number) {
+      if (!Number.isFinite(nextAttemptAt)) return;
+      if (retryWakeTimer && retryWakeAt <= nextAttemptAt) return;
+      clearTimeout(retryWakeTimer);
+      retryWakeAt = nextAttemptAt;
+      retryWakeTimer = setTimeout(
+        () => {
+          retryWakeTimer = undefined;
+          retryWakeAt = 0;
+          void resumeInterrupted();
+        },
+        Math.max(0, nextAttemptAt - Date.now()),
+      );
+    }
+
+    async function resumeInterrupted() {
+      if (resumeRunning) return;
+      resumeRunning = true;
+      const run = async () => {
+        // Read only after obtaining the cross-tab lock. A second X tab that
+        // queued behind this one then sees the already-settled list instead
+        // of replaying the same snapshot.
+        const pending = await getPendingActions();
       // The user switched the default action mode to local — settle automatic
       // markers. Regex and explicitly clicked quick actions remain resumable
       // because neither derives its action from the default mode.
       if (settings.actionMode === "local") {
         for (const p of pending) {
-          if (p.source !== "regex" && p.source !== "quick") void clearPendingAction(p.id);
+          if (!isIndependentPendingSource(p.source)) void clearPendingAction(p.id);
         }
       }
-      for (const p of pending.slice(0, RESUME_MAX)) {
+      for (const p of pending) {
+        if (p.status === "failed") continue;
+        if (p.nextAttemptAt && p.nextAttemptAt > Date.now()) {
+          scheduleRetryWake(p.nextAttemptAt);
+          continue;
+        }
+        // A live queue in another context may have settled this row while we
+        // waited for the paced X-action lock.
+        if (!(await getPendingActions()).some((row) => row.id === p.id)) continue;
+        if (settings.previewMode && p.source !== "quick") {
+          await cancelAutomaticBlock(p.id, p.handle);
+          continue;
+        }
         if (
-          settings.actionMode === "local" &&
-          p.source !== "regex" &&
-          p.source !== "quick"
+          settings.actionMode === "local" && !isIndependentPendingSource(p.source)
         )
           continue;
         if (p.action !== "mute" && p.action !== "block") {
@@ -904,7 +1497,22 @@ export default defineContentScript({
           await cancelAutomaticBlock(p.id, p.handle);
           continue;
         }
-        const ok = await applyXAction(p.action, sig).catch(() => false);
+        if (p.source !== "quick") {
+          const following = await verifyXFollowing(p.handle, { forceRefresh: true });
+          if (following === true) {
+            recordProtectedSkip(p.id);
+            await cancelAutomaticBlock(p.id, p.handle);
+            continue;
+          }
+          if (following === null) {
+            await clearPendingAction(p.id);
+            await updateBlockRecord(p.id, {
+              reason: `自动${p.action === "block" ? "拉黑" : "静音"}（恢复时无法确认关注关系，仅本地隐藏）`,
+            });
+            continue;
+          }
+        }
+        const ok = await applyXAction(p.action, sig, p.id).catch(() => false);
         if (p.source === "regex") {
           void updateBlockRecord(p.id, {
             reason: ok
@@ -925,7 +1533,18 @@ export default defineContentScript({
             reason: `自动${p.action === "block" ? "拉黑" : "静音"}（X 动作失败，仅本地隐藏）`,
           });
         }
-        void clearPendingAction(p.id);
+      }
+      };
+      try {
+        const locks = (
+          navigator as Navigator & {
+            locks?: { request<T>(name: string, callback: () => Promise<T>): Promise<T> };
+          }
+        ).locks;
+        if (locks) await locks.request(PENDING_RESUME_LOCK, run);
+        else await run();
+      } finally {
+        resumeRunning = false;
       }
     }
 
@@ -1022,7 +1641,11 @@ export default defineContentScript({
       entry: IndexEntry,
       badgeSource: BadgeSource = "list",
       ctx: ScanContext = "feed",
+      relationship: FollowVerification = "unknown",
     ) {
+      // This renderer is reserved for public-list/official-rule entries.
+      // Template inference uses its own conservative badge/local-hide path.
+      const policySource = badgeSource === "rule" ? "rule" : "list";
       if (!hitPublicSeen.has(key)) {
         hitPublicSeen.add(key);
         void bumpStat("hitPublic");
@@ -1044,7 +1667,7 @@ export default defineContentScript({
       // (Auto actions stay reversible from the 处理记录 tab, and mute/block
       // ride the user's own X session like the manual path.)
       const eligible = autoEligible({
-        source: badgeSource,
+        source: policySource,
         tier: entry.tier,
         inReply: ctx === "reply",
         autoScope: settings.autoScope,
@@ -1053,17 +1676,25 @@ export default defineContentScript({
       // Auto-published (non-human) list entries are capped by autoTierMode:
       // under the default "hide" they may auto-hide locally but never fire
       // the irreversible X mute/block with the user's session.
-      const action = eligible
+      const tierCappedAction = eligible
         ? capAutoTierAction(settings.categoryActions[entry.category] ?? "badge", {
-            source: badgeSource,
+            source: policySource,
             tier: entry.tier,
             autoTierMode: settings.autoTierMode,
           })
         : "badge";
+      const action = capUnverifiedFollowingAction(tierCappedAction, relationship);
+      const plannedVerb = action === "mute" ? "静音" : action === "block" ? "拉黑" : "隐藏";
+      const previewNote = settings.previewMode && settings.autoProcess && action !== "badge"
+        ? relationship === "unknown" && (tierCappedAction === "mute" || tierCappedAction === "block")
+          ? `安全预览：原计划自动${tierCappedAction === "mute" ? "静音" : "拉黑"}；关注关系无法确认时将降级为本地隐藏`
+          : `安全预览：原计划自动${plannedVerb}，本次未执行`
+        : undefined;
+      const disposition = automaticActionDisposition(action, settings);
       // 自动处理 master switch off → everything degrades to mark-only,
       // regardless of the per-category policy.
-      if (action === "badge" || !settings.autoProcess) {
-        badgeFor(anchor, key, sig, entry.verdict, undefined, badgeSource);
+      if (disposition !== "execute") {
+        badgeFor(anchor, key, sig, entry.verdict, previewNote, badgeSource);
         pushFinding(sig, entry.verdict, badgeSource === "rule" ? "local-rule" : "local-index", {
           categoryZh: CATEGORY_ZH[entry.category],
           ...(hitTweetId ? { tweetId: hitTweetId } : {}),
@@ -1079,7 +1710,7 @@ export default defineContentScript({
         ...(hitTweetId ? { tweetId: hitTweetId } : {}),
         ...(badgeSource === "list" ? { tier: entry.tier } : {}),
       });
-      const verb = action === "mute" ? "静音" : action === "block" ? "拉黑" : "隐藏";
+      const verb = plannedVerb;
       // The visible queue owns everything from here: records up-front, then
       // in-place badge → paced X action → animated collapse → bubble row
       // states. The 处理记录 line is written after the X action settles so it
@@ -1092,6 +1723,7 @@ export default defineContentScript({
         anchor,
         verdict: entry.verdict,
         categoryZh: CATEGORY_ZH[entry.category],
+        badgeSource,
         ...(hitTweetId ? { tweetId: hitTweetId } : {}),
       });
     }
@@ -1112,6 +1744,11 @@ export default defineContentScript({
           markViewerProtected(anchor, key);
           return;
         }
+
+        // Strong bio templates are deterministic and outrank fuzzy scoring.
+        // Often X already carries the bio in React memory; otherwise the same
+        // path runs when a naturally-opened hover card supplies it.
+        if (sig.bio && (await handleStrongBio(sig, anchor))) return;
 
         // 1. Already blocked → hide, never render again. Exception: the cell
         //    the visible auto queue is working on (it was recorded up-front)
@@ -1143,10 +1780,12 @@ export default defineContentScript({
         //    ABOVE the legacy cache: a stale "legit" entry from v0.4 must not
         //    mask a since-human-confirmed list hit, and a stale "spam" entry
         //    must not demote it to mark-only (cache never auto-acts).
-        const entry = lookupLocal(sig.userId, sig.handle);
+        const entry = await lookupPublicList(sig);
+        if (entry === undefined) return;
         if (entry) {
-          if (await protectDetectedFollow(sig, anchor, key)) return;
-          renderLocalIndex(anchor, key, sig, entry, "list", ctx);
+          const relationship = await protectDetectedFollow(sig, anchor, key);
+          if (relationship === "following") return;
+          renderLocalIndex(anchor, key, sig, entry, "list", ctx, relationship);
           return;
         }
 
@@ -1157,7 +1796,11 @@ export default defineContentScript({
         if (cached) {
           const spammy = ["spam", "porn_bot", "likely_spam"].includes(cached.verdict.label);
           if (spammy || cached.signalsHash === signalsHash(sig)) {
-            if (spammy && (await protectDetectedFollow(sig, anchor, key))) return;
+            if (
+              spammy &&
+              (await protectDetectedFollow(sig, anchor, key)) === "following"
+            )
+              return;
             renderCached(anchor, key, sig, cached);
             void bumpStats({ cacheHits: 1 });
             return;
@@ -1170,7 +1813,8 @@ export default defineContentScript({
         // at step 2.
         const ruleHit = matchLocalRules(sig);
         if (ruleHit) {
-          if (await protectDetectedFollow(sig, anchor, key)) return;
+          const relationship = await protectDetectedFollow(sig, anchor, key);
+          if (relationship === "following") return;
           renderLocalIndex(
             anchor,
             key,
@@ -1193,12 +1837,20 @@ export default defineContentScript({
             },
             "rule",
             ctx,
+            relationship,
           );
           return;
         }
 
-        // 6. Local public list did not match. Just show neutral/unhit state.
-        badgeFor(anchor, key, sig, null);
+        // 7. Local public list did not match. Just show neutral/unhit state.
+        badgeFor(
+          anchor,
+          key,
+          sig,
+          null,
+          undefined,
+          settings.botDetectionEnabled && ctx === "reply" ? "bot-scan" : "fresh",
+        );
       } finally {
         inFlight.delete(key);
       }
@@ -1219,9 +1871,7 @@ export default defineContentScript({
       }
     }
 
-    function scan() {
-      captureViewer();
-      refreshVisibleRelationships();
+    function scanProfile(): void {
       const p = extractProfile();
       if (p) {
         const el = document.querySelector<HTMLElement>('[data-testid="UserName"]');
@@ -1235,6 +1885,61 @@ export default defineContentScript({
           }
         }
       }
+    }
+
+    function scanArticle(
+      art: HTMLElement,
+      topic: string | null | undefined,
+      focal: string | null,
+    ): void {
+      const handle = handleFromArticle(art);
+      const nameBlock = art.querySelector<HTMLElement>('[data-testid="User-Name"]');
+      if (!handle || !nameBlock) return;
+      const hasMount = !!nameBlock.querySelector(":scope > .xss-mount");
+      const hasQuickActions =
+        art.querySelector<HTMLElement>("[data-mxga-quick-actions]")?.dataset.mxgaHandle ===
+        handle.toLowerCase();
+      if (nodeHandle.get(art) === handle && hasMount && hasQuickActions) return;
+      if (nodeHandle.get(art) !== handle) {
+        // Restore a recycled virtual row before signal extraction. Hidden
+        // elements have no innerText, so waiting until after extraction can
+        // leave the new author's row permanently collapsed.
+        showAccountSurface(art);
+        clearMounts(nameBlock);
+      }
+      const info = extractFromArticle(art);
+      if (!info) return;
+      if (topic && !info.threadTopic) info.threadTopic = topic;
+      nodeHandle.set(art, handle);
+      const sid = focal ? articleStatusId(art) : null;
+      const scanContext: ScanContext = focal && sid && sid !== focal ? "reply" : "feed";
+      const cell = regexCell(art);
+      const regexApplies =
+        settings.regexEnabled &&
+        regexRules.length > 0 &&
+        !isFollowProtected(info) &&
+        !isWhitelisted(info.userId, info.handle) &&
+        (settings.regexScope === "all" || scanContext === "reply");
+      const regexHit = regexApplies
+        ? matchRegexText(info.triggeringComment ?? "", regexRules)
+        : null;
+      if (regexHit) {
+        void handleRegexCandidate(art, nameBlock, cell, info, regexHit.source);
+        return;
+      }
+      if (cell.hasAttribute(REGEX_HIDDEN_ATTR)) {
+        showAccountSurface(cell);
+        cell.removeAttribute(REGEX_HIDDEN_ATTR);
+        cell.removeAttribute("data-mxga-regex-rule");
+      }
+      void process(info, nameBlock, scanContext);
+    }
+
+    function scan() {
+      if (document.hidden) return;
+      captureViewer();
+      refreshVisibleRelationships();
+      scanProfile();
       // Account-keyed, NOT node-tagged: X virtualizes the list and recycles
       // <article> nodes, so a permanent per-node flag would skip recycled
       // (new) spam. Re-evaluate a node when its account changed or our badge
@@ -1250,47 +1955,8 @@ export default defineContentScript({
       for (const art of document.querySelectorAll<HTMLElement>(
         'article[data-testid="tweet"]',
       )) {
-        const handle = handleFromArticle(art);
-        const nameBlock = art.querySelector<HTMLElement>('[data-testid="User-Name"]');
-        if (!handle || !nameBlock) continue;
-        const hasMount = !!nameBlock.querySelector(":scope > .xss-mount");
-        const hasQuickActions =
-          art.querySelector<HTMLElement>("[data-mxga-quick-actions]")?.dataset.mxgaHandle ===
-          handle.toLowerCase();
-        if (nodeHandle.get(art) === handle && hasMount && hasQuickActions) continue;
-        if (nodeHandle.get(art) !== handle) {
-          // Restore a recycled virtual row before signal extraction. Hidden
-          // elements have no innerText, so waiting until after extraction can
-          // leave the new author's row permanently collapsed.
-          showAccountSurface(art);
-          clearMounts(nameBlock);
-        }
-        const info = extractFromArticle(art);
-        if (!info) continue;
-        if (topic && !info.threadTopic) info.threadTopic = topic;
-        nodeHandle.set(art, handle);
-        const sid = focal ? articleStatusId(art) : null;
-        const ctx: ScanContext = focal && sid && sid !== focal ? "reply" : "feed";
-        const cell = regexCell(art);
-        const regexApplies =
-          settings.regexEnabled &&
-          regexRules.length > 0 &&
-          !isFollowProtected(info) &&
-          !isWhitelisted(info.userId, info.handle) &&
-          (settings.regexScope === "all" || ctx === "reply");
-        const regexHit = regexApplies
-          ? matchRegexText(info.triggeringComment ?? "", regexRules)
-          : null;
-        if (regexHit) {
-          void handleRegexCandidate(art, nameBlock, cell, info, regexHit.source);
-          continue;
-        }
-        if (cell.hasAttribute(REGEX_HIDDEN_ATTR)) {
-          showAccountSurface(cell);
-          cell.removeAttribute(REGEX_HIDDEN_ATTR);
-          cell.removeAttribute("data-mxga-regex-rule");
-        }
-        void process(info, nameBlock, ctx);
+        if (!isNearViewport(art)) continue;
+        scanArticle(art, topic, focal);
       }
     }
 
@@ -1324,9 +1990,11 @@ export default defineContentScript({
      * are extracted only if the user clicks, keeping this immediate pass
      * cheap and recycling-safe. */
     function mountVisibleQuickActions() {
+      if (document.hidden) return;
       for (const art of document.querySelectorAll<HTMLElement>(
         'article[data-testid="tweet"]',
       )) {
+        if (!isNearViewport(art, 600)) continue;
         const handle = handleFromArticle(art);
         if (!handle) continue;
         mountQuickActions(art, handle, (action) => {
@@ -1403,6 +2071,9 @@ export default defineContentScript({
             // echoes the new state back into the bubble, a no-op here).
             void setSetting("autoProcess", v);
           },
+          onToggleQueue(paused: boolean) {
+            void setQueuePaused(paused).then(() => syncQueueBubble());
+          },
         }, settings.bubblePos, actionVerb(settings.actionMode), {
           autoProcess: settings.autoProcess,
           autoCategoryCount: autoCategoryCount(settings),
@@ -1412,6 +2083,7 @@ export default defineContentScript({
         container.appendChild(bubble.el);
         if (!settings.bubble) bubble.el.style.display = "none";
         bubbleApi = bubble;
+        void syncQueueBubble();
         // The bubble's 已处理 list is SESSION-scoped: it persists across SPA
         // navigation (the content script and its in-memory archive live on),
         // but a full reload / freshly-opened X must start clean — resurrecting
@@ -1422,10 +2094,8 @@ export default defineContentScript({
         // queue died mid-flight (navigation / reload / tab close) never fired,
         // so resume it best-effort. This is protection follow-through, NOT
         // history display — resumed accounts are not seeded into 已处理.
-        void getPendingActions().then((pending) => {
-          refreshVisibleRelationships();
-          if (pending.length) void resumeInterrupted(pending);
-        });
+        refreshVisibleRelationships();
+        void resumeInterrupted();
         return bubble;
       },
     });
@@ -1435,6 +2105,10 @@ export default defineContentScript({
     // the block is recorded even if the row's DOM is gone), then drop all
     // per-page state so detached DOM nodes can be garbage-collected.
     ctx.addEventListener(window, "wxt:locationchange", () => {
+      // Automatic account actions are deliberately NOT cancelled here. They
+      // were snapshotted at detection time and no longer depend on tweet DOM,
+      // so the user can return immediately and keep browsing while the paced
+      // X-native queue finishes in this tab.
       for (const [key, p] of pendingActions) {
         clearTimeout(p.timer);
         void executeHide(key, p.sig);
@@ -1449,33 +2123,119 @@ export default defineContentScript({
       bubbleApi?.pageReset();
     });
 
-    let debounce: ReturnType<typeof setTimeout> | undefined;
+    const pendingArticleScans = new Set<HTMLElement>();
+    let incrementalTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function queueArticleScans(root: HTMLElement): void {
+      if (document.hidden) return;
+      const owner = root.closest<HTMLElement>('article[data-testid="tweet"]');
+      if (owner) pendingArticleScans.add(owner);
+      if (root.matches('article[data-testid="tweet"]')) pendingArticleScans.add(root);
+      for (const article of root.querySelectorAll<HTMLElement>('article[data-testid="tweet"]')) {
+        pendingArticleScans.add(article);
+      }
+      // Do not debounce indefinitely while X is continuously mutating the
+      // timeline. The first mutation starts a short, bounded batch window.
+      if (incrementalTimer) return;
+      incrementalTimer = setTimeout(() => {
+        incrementalTimer = undefined;
+        captureViewer();
+        refreshVisibleRelationships();
+        scanProfile();
+        const topic = extractThreadTopic();
+        const focal = focalStatusId();
+        const batch = [...pendingArticleScans];
+        pendingArticleScans.clear();
+        for (const article of batch) {
+          if (article.isConnected && isNearViewport(article)) scanArticle(article, topic, focal);
+        }
+      }, 80);
+    }
+
+    let storageListener:
+      | ((changes: Record<string, chrome.storage.StorageChange>, area: string) => void)
+      | undefined;
     const observer = new MutationObserver((records) => {
       for (const record of records) {
         for (const node of record.addedNodes) {
-          if (node instanceof HTMLElement) concealKnownBlockedRows(node);
+          if (!(node instanceof HTMLElement)) continue;
+          concealKnownBlockedRows(node);
+          queueArticleScans(node);
+          learnVisibleHoverCards(node);
         }
       }
       mountVisibleQuickActions();
-      clearTimeout(debounce);
-      debounce = setTimeout(scan, 600);
     });
     observer.observe(document.documentElement, { childList: true, subtree: true });
+    learnVisibleHoverCards();
     ctx.onInvalidated(() => {
       observer.disconnect();
-      clearTimeout(debounce);
+      clearTimeout(incrementalTimer);
+      pendingArticleScans.clear();
+      clearTimeout(listLookupTimer);
+      listLookupTimer = undefined;
+      for (const pending of pendingListLookups.values()) {
+        for (const resolve of pending.resolve) resolve(undefined);
+      }
+      pendingListLookups.clear();
+      clearTimeout(retryWakeTimer);
+      unsubscribeSettings();
+      if (storageListener) chrome.storage.onChanged.removeListener(storageListener);
     });
     // Periodic tick so newly virtualized rows are revisited even when the
     // user stops scrolling (no new DOM mutations). ctx-bound: stops when
     // the content script is invalidated.
-    ctx.setInterval(scan, 4000);
+    ctx.setInterval(() => {
+      if (!document.hidden) scan();
+    }, 4000);
+    ctx.addEventListener(document, "visibilitychange", () => {
+      if (!document.hidden) {
+        scan();
+        mountVisibleQuickActions();
+        void resumeInterrupted();
+      }
+    });
     // List / whitelist hot-swap (background sync or 立即更新): the lookup
     // maps already rebuilt via local-index's own onChanged hook, but rows
     // rendered with the OLD data keep their badge (scan skips mounted
     // nodes). Drop every neutral badge so the next scan re-evaluates the
     // page against the fresh list. Pending/hidden rows are untouched.
     try {
-      chrome.storage.onChanged.addListener((changes, area) => {
+      storageListener = (changes, area) => {
+        if (area === "local") {
+          const control = changes[K_QUEUE_CONTROL]?.newValue as { paused?: boolean } | undefined;
+          const pendingChange = changes["xss:pending-actions"];
+          const before = Array.isArray(pendingChange?.oldValue) ? pendingChange.oldValue : [];
+          const after = Array.isArray(pendingChange?.newValue) ? pendingChange.newValue : [];
+          const retried = after.some(
+            (row: { id?: string; status?: string }) =>
+              row.status === "queued" &&
+              before.some(
+                (old: { id?: string; status?: string }) =>
+                  old.id === row.id && old.status === "failed",
+              ),
+          );
+          const dueRetry = after.some(
+            (row: { status?: string; nextAttemptAt?: number }) =>
+              row.status === "queued" &&
+              typeof row.nextAttemptAt === "number" &&
+              row.nextAttemptAt <= Date.now(),
+          );
+          if (control?.paused === false || retried || dueRetry) void resumeInterrupted();
+          const nextRetry = after
+            .filter(
+              (row: { status?: string; nextAttemptAt?: number }) =>
+                row.status === "queued" &&
+                typeof row.nextAttemptAt === "number" &&
+                row.nextAttemptAt > Date.now(),
+            )
+            .sort(
+              (a: { nextAttemptAt?: number }, b: { nextAttemptAt?: number }) =>
+                (a.nextAttemptAt ?? 0) - (b.nextAttemptAt ?? 0),
+            )[0] as { nextAttemptAt?: number } | undefined;
+          if (nextRetry?.nextAttemptAt) scheduleRetryWake(nextRetry.nextAttemptAt);
+          if (changes[K_QUEUE_CONTROL] || pendingChange) void syncQueueBubble();
+        }
         if (area === "local" && (changes["xss:blocklist:v2"] || changes["xss:blocked"])) {
           void getBlocklist().then((records) => {
             blockedHandles = new Set(records.map((record) => record.handle.toLowerCase()));
@@ -1487,16 +2247,19 @@ export default defineContentScript({
           (!changes[LIST_KEY] && !changes[WL_KEY] && !changes[LOCAL_ALLOWLIST_KEY])
         )
           return;
+        listLookupCache.clear();
         for (const host of document.querySelectorAll<HTMLElement>(".xss-mount")) {
           // Badges live in the host's shadow root; keep pending-undo flows.
           if (host.shadowRoot?.querySelector(".xss-badge.pending")) continue;
           host.remove();
         }
         scan();
-      });
+      };
+      chrome.storage.onChanged.addListener(storageListener);
     } catch {
       /* non-fatal */
     }
+    ctx.addEventListener(window, "online", () => void resumeInterrupted());
     mountVisibleQuickActions();
     scan();
   },

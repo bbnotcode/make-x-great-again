@@ -20,7 +20,7 @@
     "zip:safari": "wxt zip -b safari --mv3",
     "postzip:safari": "node ../scripts/prepare-safari-list.js --clean",
     "zip:firefox": "wxt zip -b firefox",
-    "test": "tsx --test test/**/*.test.ts",
+    "test": "tsx --test test/*.test.ts",
     "compile": "tsc --noEmit",
     "postinstall": "wxt prepare"
   },
@@ -33,14 +33,18 @@
     "@types/chrome": "^0.0.287",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "5.1.0",
     "@wxt-dev/module-react": "^1.2.2",
     "linkedom": "^0.18.13",
     "tailwindcss": "^4.3.0",
     "tsx": "^4.23.0",
     "typescript": "^5.7.2",
+    "vite": "7.2.4",
     "wxt": "^0.20.27"
   },
   "overrides": {
+    "@jridgewell/remapping": "2.3.4",
+    "@jridgewell/trace-mapping": "0.3.30",
     "esbuild": "^0.28.1",
     "shell-quote": "^1.10.0",
     "tmp": "^0.2.7",

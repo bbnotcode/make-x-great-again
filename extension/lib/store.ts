@@ -26,6 +26,8 @@ export interface BlockRecord {
   avatarUrl?: string;
   verdict?: Verdict;
   reason?: string;
+  ruleVersion?: string;
+  evidenceHash?: string;
   /** The tweet/reply that triggered the action — audit trail so the user
    *  can revisit the scene (https://x.com/<handle>/status/<tweetId>).
    *  Absent when the action happened without a tweet context (profile
@@ -51,8 +53,21 @@ export interface PendingXAction {
   /** Regex and explicitly clicked quick actions are independent of the
    * user's default manual action mode. Legacy entries without a source are
    * automatic category actions. */
-  source?: "auto" | "regex" | "quick";
+  source?: "auto" | "bio_rule" | "regex" | "quick";
   ts: number;
+  status?: "queued" | "running" | "failed";
+  attempts?: number;
+  updatedAt?: number;
+  lastError?: string;
+  priority?: 0 | 1 | 2;
+  /** Earliest time a transiently failed action may run again. */
+  nextAttemptAt?: number;
+}
+
+export interface QueueControl {
+  paused: boolean;
+  updatedAt: number;
+  reason?: string;
 }
 
 /** Permalink of the triggering tweet, when recorded. */
@@ -73,6 +88,28 @@ const K_BLOCK = "xss:blocklist:v2";
 const K_BLOCK_LEGACY = "xss:blocked";
 const K_STATS = "xss:stats";
 const K_PENDING = "xss:pending-actions";
+export const K_QUEUE_CONTROL = "xss:queue-control:v1";
+export const MAX_PENDING_ACTIONS = 200;
+export const QUEUE_BURST_LIMIT = 80;
+export const QUEUE_BURST_WINDOW_MS = 5 * 60 * 1000;
+
+export function pendingPriority(source: PendingXAction["source"]): 0 | 1 | 2 {
+  return source === "quick" ? 0 : source === "regex" ? 1 : 2;
+}
+
+export function isIndependentPendingSource(source: PendingXAction["source"]): boolean {
+  return source === "quick" || source === "regex" || source === "bio_rule";
+}
+
+// Every record mutation is a read-modify-write. A busy reply scan can commit
+// dozens at once, so serialize them or late storage writes can overwrite rows
+// written by an adjacent task.
+let recordLock: Promise<unknown> = Promise.resolve();
+function withRecordLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = recordLock.then(fn, fn);
+  recordLock = run.catch(() => {});
+  return run;
+}
 
 async function get<T>(key: string, fallback: T): Promise<T> {
   try {
@@ -106,28 +143,32 @@ export async function getBlocklist(): Promise<BlockRecord[]> {
 }
 
 export async function addBlockRecord(rec: BlockRecord): Promise<void> {
-  const list = await getBlocklist();
-  if (list.some((r) => r.id === rec.id)) return;
-  list.push(rec);
-  await set(K_BLOCK, list);
+  return withRecordLock(async () => {
+    const list = await getBlocklist();
+    if (list.some((r) => r.id === rec.id)) return;
+    list.push(rec);
+    await set(K_BLOCK, list);
+  });
 }
 
 export async function updateBlockRecord(
   id: string,
   patch: Partial<Omit<BlockRecord, "id">>,
 ): Promise<void> {
-  const list = await getBlocklist();
-  const i = list.findIndex((r) => r.id === id);
-  const rec = list[i];
-  if (!rec) return;
-  const merged: BlockRecord = { ...rec, ...patch };
-  // A patch value of undefined means "clear this field" (e.g. settling
-  // pendingAction) — drop the key rather than persisting an undefined.
-  for (const k of Object.keys(patch) as (keyof typeof patch)[]) {
-    if (patch[k] === undefined) delete merged[k];
-  }
-  list[i] = merged;
-  await set(K_BLOCK, list);
+  return withRecordLock(async () => {
+    const list = await getBlocklist();
+    const i = list.findIndex((r) => r.id === id);
+    const rec = list[i];
+    if (!rec) return;
+    const merged: BlockRecord = { ...rec, ...patch };
+    // A patch value of undefined means "clear this field" (e.g. settling
+    // pendingAction) — drop the key rather than persisting an undefined.
+    for (const k of Object.keys(patch) as (keyof typeof patch)[]) {
+      if (patch[k] === undefined) delete merged[k];
+    }
+    list[i] = merged;
+    await set(K_BLOCK, list);
+  });
 }
 
 // Serialize read-modify-write on the pending-actions key. A page can enqueue
@@ -135,24 +176,211 @@ export async function updateBlockRecord(
 // getPending→set and drop entries (a dropped entry = an account wrongly shown
 // as done instead of resumed). One in-context chain keeps them consistent.
 let pendingLock: Promise<unknown> = Promise.resolve();
+let decisionLock: Promise<unknown> = Promise.resolve();
 function withPendingLock<T>(fn: () => Promise<T>): Promise<T> {
-  const run = pendingLock.then(fn, fn);
+  const globallyLocked = async () => {
+    const locks = (
+      globalThis.navigator as Navigator & {
+        locks?: { request<T>(name: string, callback: () => Promise<T>): Promise<T> };
+      }
+    )?.locks;
+    return locks ? locks.request("mxga-pending-storage", fn) : fn();
+  };
+  const run = pendingLock.then(globallyLocked, globallyLocked);
   pendingLock = run.catch(() => {});
   return run;
 }
 
 export async function getPendingActions(): Promise<PendingXAction[]> {
-  return get<PendingXAction[]>(K_PENDING, []);
+  const rows = await get<PendingXAction[]>(K_PENDING, []);
+  return rows
+    .map((row) => ({
+      ...row,
+      status: row.status ?? "queued",
+      attempts: row.attempts ?? 0,
+      priority: row.priority ?? pendingPriority(row.source),
+    }))
+    .sort((a, b) => (a.priority ?? 2) - (b.priority ?? 2) || a.ts - b.ts);
 }
 
 /** Record an X action that's been committed locally but not yet fired. */
-export async function addPendingAction(p: PendingXAction): Promise<void> {
+export async function addPendingAction(p: PendingXAction): Promise<string | false> {
   return withPendingLock(async () => {
     const list = await getPendingActions();
-    if (list.some((x) => x.id === p.id)) return;
-    list.push(p);
+    const handle = p.handle.trim().replace(/^@/, "").toLowerCase();
+    const existing = list.findIndex(
+      (x) => x.id === p.id || x.handle.trim().replace(/^@/, "").toLowerCase() === handle,
+    );
+    if (existing >= 0) {
+      const row = list[existing];
+      if (!row) return false;
+      if (row.status !== "failed") {
+        // A later explicit click may upgrade an already queued automatic task.
+        // Keep the original id so the context currently executing it does not
+        // lose ownership, but adopt the higher-priority action and fresh handle.
+        if (pendingPriority(p.source) < pendingPriority(row.source)) {
+          list[existing] = {
+            ...row,
+            handle: p.handle,
+            action: p.action,
+            source: p.source,
+            priority: pendingPriority(p.source),
+            updatedAt: Date.now(),
+          };
+          await set(K_PENDING, list);
+        }
+        return row.id;
+      }
+      const refreshed: PendingXAction = {
+        ...row,
+        ...p,
+        id: row.id,
+        status: "queued",
+        priority: p.priority ?? pendingPriority(p.source),
+        updatedAt: Date.now(),
+      };
+      delete refreshed.lastError;
+      delete refreshed.nextAttemptAt;
+      list[existing] = refreshed;
+      await set(K_PENDING, list);
+      return refreshed.id;
+    }
+    if (list.length >= MAX_PENDING_ACTIONS) {
+      await set(K_QUEUE_CONTROL, {
+        paused: true,
+        updatedAt: Date.now(),
+        reason: `队列达到 ${MAX_PENDING_ACTIONS} 条容量上限`,
+      });
+      return false;
+    }
+    const now = Date.now();
+    list.push({
+      ...p,
+      status: p.status ?? "queued",
+      attempts: p.attempts ?? 0,
+      priority: p.priority ?? pendingPriority(p.source),
+      updatedAt: now,
+    });
+    await set(K_PENDING, list);
+    if (
+      p.source !== "quick" &&
+      list.filter((row) => row.source !== "quick" && now - row.ts <= QUEUE_BURST_WINDOW_MS)
+        .length >= QUEUE_BURST_LIMIT
+    ) {
+      await set(K_QUEUE_CONTROL, {
+        paused: true,
+        updatedAt: now,
+        reason: `5 分钟内自动任务达到 ${QUEUE_BURST_LIMIT} 条，已触发安全熔断`,
+      });
+    }
+    return p.id;
+  });
+}
+
+/** Atomically commit every durable part of an automatic decision. Chrome's
+ * multi-key storage.set is the closest available transaction boundary: a
+ * crash cannot leave an account hidden without its audit/recovery row. */
+export async function commitAutomaticDecision(input: {
+  record: BlockRecord;
+  blockedIds: string[];
+  pending?: PendingXAction;
+}): Promise<string | false | undefined> {
+  const run = async () => {
+    const stored = await chrome.storage.local.get([K_BLOCK, K_BLOCK_LEGACY, K_PENDING]);
+    const records: BlockRecord[] = Array.isArray(stored[K_BLOCK])
+      ? ([...stored[K_BLOCK]] as BlockRecord[])
+      : ((stored[K_BLOCK_LEGACY] as string[] | undefined) ?? []).map((id) => ({
+          id, handle: id.startsWith("h:") ? id.slice(2) : id, source: "manual" as const, ts: Date.now(),
+        }));
+    if (!records.some((row) => row.id === input.record.id)) records.push(input.record);
+    const blocked = new Set<string>((stored[K_BLOCK_LEGACY] as string[] | undefined) ?? []);
+    for (const id of input.blockedIds) blocked.add(id);
+    const pending = ((stored[K_PENDING] as PendingXAction[] | undefined) ?? []).map((row) => ({
+      ...row, status: row.status ?? "queued" as const, attempts: row.attempts ?? 0,
+      priority: row.priority ?? pendingPriority(row.source),
+    }));
+    let pendingId: string | false | undefined;
+    if (input.pending) {
+      const handle = input.pending.handle.trim().replace(/^@/, "").toLowerCase();
+      const existing = pending.find((row) => row.id === input.pending?.id || row.handle.trim().replace(/^@/, "").toLowerCase() === handle);
+      if (existing) pendingId = existing.id;
+      else if (pending.length >= MAX_PENDING_ACTIONS) pendingId = false;
+      else {
+        const now = Date.now();
+        pending.push({ ...input.pending, status: "queued", attempts: 0, priority: pendingPriority(input.pending.source), updatedAt: now });
+        pendingId = input.pending.id;
+      }
+    }
+    const values: Record<string, unknown> = {
+      [K_BLOCK]: records,
+      [K_BLOCK_LEGACY]: [...blocked],
+      [K_PENDING]: pending,
+    };
+    if (pendingId === false) values[K_QUEUE_CONTROL] = {
+      paused: true, updatedAt: Date.now(), reason: `队列达到 ${MAX_PENDING_ACTIONS} 条容量上限`,
+    };
+    await chrome.storage.local.set(values);
+    return pendingId;
+  };
+  const globallyLocked = async () => {
+    const locks = (globalThis.navigator as Navigator & { locks?: { request<T>(name: string, cb: () => Promise<T>): Promise<T> } })?.locks;
+    return locks ? locks.request("mxga-decision-storage", run) : run();
+  };
+  const result = decisionLock.then(globallyLocked, globallyLocked);
+  decisionLock = result.catch(() => {});
+  return result;
+}
+
+export async function updatePendingAction(
+  id: string,
+  patch: Partial<Omit<PendingXAction, "id">>,
+): Promise<void> {
+  return withPendingLock(async () => {
+    const list = await getPendingActions();
+    const index = list.findIndex((row) => row.id === id);
+    if (index < 0) return;
+    const current = list[index];
+    if (!current) return;
+    const merged: PendingXAction = { ...current, ...patch, updatedAt: Date.now() };
+    for (const key of Object.keys(patch) as (keyof typeof patch)[]) {
+      if (patch[key] === undefined) delete merged[key];
+    }
+    list[index] = merged;
     await set(K_PENDING, list);
   });
+}
+
+export async function clearPendingActions(): Promise<void> {
+  return withPendingLock(async () => {
+    const list = await getPendingActions();
+    await set(
+      K_PENDING,
+      list.filter((row) => row.status === "running"),
+    );
+  });
+}
+
+export async function clearPendingActionsBySource(source: PendingXAction["source"]): Promise<void> {
+  return withPendingLock(async () => {
+    const list = await getPendingActions();
+    await set(K_PENDING, list.filter((row) => row.status === "running" || row.source !== source));
+  });
+}
+
+export async function getQueueControl(): Promise<QueueControl> {
+  return get<QueueControl>(K_QUEUE_CONTROL, { paused: false, updatedAt: 0 });
+}
+
+export async function setQueuePaused(paused: boolean): Promise<QueueControl> {
+  const control = { paused, updatedAt: Date.now() };
+  await set(K_QUEUE_CONTROL, control);
+  return control;
+}
+
+export async function pauseQueue(reason: string): Promise<QueueControl> {
+  const control = { paused: true, updatedAt: Date.now(), reason };
+  await set(K_QUEUE_CONTROL, control);
+  return control;
 }
 
 /** Settle a pending X action (fired or abandoned) — remove it. */
@@ -165,16 +393,19 @@ export async function clearPendingAction(id: string): Promise<void> {
 }
 
 export async function removeBlock(id: string): Promise<void> {
-  const list = await getBlocklist();
-  const restored = list.find((r) => r.id === id);
-  const handle = restored?.handle;
-  const sameAccount = (r: BlockRecord) =>
-    r.id === id ||
-    (!!handle && r.handle.toLowerCase() === handle.toLowerCase());
-  await set(
-    K_BLOCK,
-    list.filter((r) => !sameAccount(r)),
-  );
+  let handle: string | undefined;
+  await withRecordLock(async () => {
+    const list = await getBlocklist();
+    const restored = list.find((r) => r.id === id);
+    handle = restored?.handle;
+    const sameAccount = (r: BlockRecord) =>
+      r.id === id ||
+      (!!handle && r.handle.toLowerCase() === handle.toLowerCase());
+    await set(
+      K_BLOCK,
+      list.filter((r) => !sameAccount(r)),
+    );
+  });
   // 恢复显示 is an explicit false-positive decision. Remember it locally so
   // the public list, regex, cache and official rules cannot hide the account
   // again on another tweet.
@@ -190,14 +421,16 @@ export async function removeBlock(id: string): Promise<void> {
  * Unlike removeBlock(), this must not create a permanent local allow entry:
  * following can later be undone, at which point normal filtering may resume. */
 export async function cancelAutomaticBlock(id: string, handle?: string): Promise<void> {
-  const list = await getBlocklist();
   const normalized = handle?.toLowerCase();
-  await set(
-    K_BLOCK,
-    list.filter(
-      (r) => r.id !== id && (!normalized || r.handle.toLowerCase() !== normalized),
-    ),
-  );
+  await withRecordLock(async () => {
+    const list = await getBlocklist();
+    await set(
+      K_BLOCK,
+      list.filter(
+        (r) => r.id !== id && (!normalized || r.handle.toLowerCase() !== normalized),
+      ),
+    );
+  });
   await clearPendingAction(id);
   await removeBlocked(id);
   if (normalized) await removeBlocked(`h:${normalized}`);

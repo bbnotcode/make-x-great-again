@@ -20,7 +20,9 @@ Object.assign(globalThis, {
   HTMLElement: window.HTMLElement,
 });
 
-const { hideAccountSurface, showAccountSurface } = await import("../lib/account-surface");
+const { hideAccountSurface, showAccountSurface, virtualRowDocumentDelta } = await import(
+  "../lib/account-surface"
+);
 
 test("manual local hide removes the visible profile header surface", () => {
   const anchor = document.querySelector("#badge-anchor");
@@ -51,4 +53,23 @@ test("protected accounts restore the visible profile header surface", () => {
   profileSurface?.style.setProperty("display", "none");
   assert.equal(showAccountSurface(anchor), true);
   assert.notEqual(profileSurface?.style.display, "none");
+});
+
+test("virtual-list correction ignores user scroll but follows X row recycling", () => {
+  const initialDocumentTop = 1_200;
+  // User scrolls down 300px: rect moves up 300px, document position is stable.
+  assert.equal(virtualRowDocumentDelta(initialDocumentTop, 700, 500), 0);
+  // X then compacts hidden rows by 240px while scrollY stays unchanged.
+  assert.equal(virtualRowDocumentDelta(initialDocumentTop, 460, 500), -240);
+});
+
+test("a recycled hidden row can be restored and hidden again without a blank placeholder", () => {
+  const anchor = document.querySelector("#timeline-anchor");
+  const cell = document.querySelector<HTMLElement>("#timeline-cell");
+  assert.equal(hideAccountSurface(anchor), true);
+  assert.equal(cell?.style.display, "none");
+  assert.equal(showAccountSurface(anchor), true);
+  assert.equal(cell?.style.display, "");
+  assert.equal(hideAccountSurface(anchor), true);
+  assert.equal(cell?.style.display, "none");
 });

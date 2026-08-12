@@ -611,6 +611,8 @@ export interface BubbleHandlers {
   onAppeal: (appeal: { handle: string; userId?: string }) => void;
   /** 自动处理 master switch flipped from the card header. */
   onToggleAuto?: (v: boolean) => void;
+  /** Persistent X-native queue pause/resume control. */
+  onToggleQueue?: (paused: boolean) => void;
 }
 
 export interface BubbleOpts {
@@ -624,6 +626,20 @@ export interface BubbleOpts {
   /** Pop the card open when the auto queue starts (settings.autoExpand).
    *  false = stay collapsed; the pill's hit-pulse is the only signal. */
   autoExpand?: boolean;
+}
+
+export interface QueueStatusDetails {
+  quick: number;
+  regex: number;
+  bio: number;
+  auto: number;
+  running: number;
+  failed: number;
+  retrying: number;
+  succeeded: number;
+  protectedSkipped: number;
+  estimatedMs: number;
+  nextRetryAt?: number;
 }
 
 /** Collapsed pill ⇄ expanded card. Default resting state = pill.
@@ -692,6 +708,21 @@ export function createBubble(
   let autoOn = opts.autoProcess ?? true;
   let autoCats = opts.autoCategoryCount ?? 0;
   let autoScopeAll = opts.autoScopeAll ?? false;
+  let globalQueueCount = 0;
+  let globalQueuePaused = false;
+  let globalQueueReason = "";
+  let globalQueueDetails: QueueStatusDetails = {
+    quick: 0,
+    regex: 0,
+    bio: 0,
+    auto: 0,
+    running: 0,
+    failed: 0,
+    retrying: 0,
+    succeeded: 0,
+    protectedSkipped: 0,
+    estimatedMs: 0,
+  };
   // Card list view: the live queue by default; "done" lists processed rows
   // behind the 已处理 chip so they don't pile up under the progress bar.
   let view: "queue" | "done" = "queue";
@@ -853,6 +884,17 @@ export function createBubble(
       });
       return;
     }
+    if (globalQueueCount > 0) {
+      pill.innerHTML = progressMarkup({
+        iconName: globalQueuePaused ? "pause" : "shield-x",
+        iconColor: globalQueuePaused ? "var(--warn)" : "var(--brand)",
+        title: globalQueuePaused ? "队列暂停" : "后台处理",
+        count: String(globalQueueCount),
+        percent: 0,
+        busy: !globalQueuePaused,
+      });
+      return;
+    }
     if (scanning > 0) {
       // Visible processing feedback (esp. reply sections).
       pill.innerHTML = progressMarkup({
@@ -912,6 +954,51 @@ export function createBubble(
       renderCard();
     });
   }
+  function queueRowMarkup() {
+    const hasSessionStats =
+      globalQueueDetails.succeeded > 0 ||
+      globalQueueDetails.failed > 0 ||
+      globalQueueDetails.protectedSkipped > 0;
+    if (!globalQueueCount && !hasSessionStats) return "";
+    const eta = !globalQueueCount
+      ? "本次会话"
+      : globalQueuePaused
+      ? "已暂停"
+      : globalQueueDetails.estimatedMs >= 60_000
+        ? `约 ${Math.ceil(globalQueueDetails.estimatedMs / 60_000)} 分钟`
+        : `约 ${Math.max(1, Math.ceil(globalQueueDetails.estimatedMs / 1000))} 秒`;
+    const sources = [
+      globalQueueDetails.quick ? `手动 ${globalQueueDetails.quick}` : "",
+      globalQueueDetails.regex ? `正则 ${globalQueueDetails.regex}` : "",
+      globalQueueDetails.bio ? `简介 ${globalQueueDetails.bio}` : "",
+      globalQueueDetails.auto ? `公榜 ${globalQueueDetails.auto}` : "",
+    ].filter(Boolean).join(" · ");
+    return `<div class="auto-row">
+      <button class="xss-sw" data-queue role="switch" aria-checked="${!globalQueuePaused}" ${
+        globalQueueCount ? "" : "disabled"
+      }
+        aria-label="后台任务队列"></button>
+      <span>${globalQueueCount ? "后台队列" : "队列统计"}</span>
+      <span class="auto-hint" title="${esc(globalQueueReason)}">${globalQueueCount} 条 · ${eta}${
+        sources ? ` · ${sources}` : ""
+      }${globalQueueDetails.retrying ? ` · 重试 ${globalQueueDetails.retrying}` : ""}${
+        globalQueueDetails.failed ? ` · 失败 ${globalQueueDetails.failed}` : ""
+      }${globalQueueDetails.succeeded ? ` · 成功 ${globalQueueDetails.succeeded}` : ""}${
+        globalQueueDetails.protectedSkipped
+          ? ` · 关注保护 ${globalQueueDetails.protectedSkipped}`
+          : ""
+      }</span>
+    </div>`;
+  }
+  function bindQueueRow() {
+    if (!globalQueueCount) return;
+    card.querySelector("[data-queue]")?.addEventListener("click", () => {
+      globalQueuePaused = !globalQueuePaused;
+      h.onToggleQueue?.(globalQueuePaused);
+      renderPill();
+      renderCard();
+    });
+  }
 
   function renderCard() {
     if (!findings.length && !archive.length) {
@@ -920,6 +1007,7 @@ export function createBubble(
           <span>${BRAND.acronym} 已启用</span>
           <span class="x" data-x>${icon("x", "currentColor", 14)}</span></div>
         ${autoRowMarkup()}
+        ${queueRowMarkup()}
         <div class="sub" style="display:block;line-height:1.6">
           正在被动检查本页账号。发现可疑的垃圾/色情机器人时，会在这里提示并提供一键处理。</div>
         <div class="row"><span class="lnk" data-gov>为什么 / 治理</span></div>`;
@@ -928,6 +1016,7 @@ export function createBubble(
         window.open(BRAND.governance, "_blank", "noopener"),
       );
       bindAutoRow();
+      bindQueueRow();
       return;
     }
     const s = stats();
@@ -968,6 +1057,7 @@ export function createBubble(
         }</span>
         <span class="x" data-x>${icon("x", "currentColor", 14)}</span></div>
       ${autoRowMarkup()}
+      ${queueRowMarkup()}
       <div class="sub">
         <span class="metric" title="本页命中的可疑账号">
           <i style="background:var(--danger)"></i><b>${s.found}</b><em>命中</em>
@@ -1100,6 +1190,7 @@ export function createBubble(
       <div class="row"><span class="lnk" data-each>逐个查看处理</span>
         <span class="lnk" data-ign>忽略本页</span></div>`;
     bindAutoRow();
+    bindQueueRow();
     card.querySelector("[data-x]")?.addEventListener("click", collapseByUser);
     card.querySelector("[data-ign]")?.addEventListener("click", () => {
       h.onDismiss();
@@ -1594,6 +1685,19 @@ export function createBubble(
       if (scopeAll !== undefined) autoScopeAll = scopeAll;
       if (open) renderCard();
     },
+    setQueueStatus(
+      count: number,
+      paused: boolean,
+      reason = "",
+      details?: QueueStatusDetails,
+    ) {
+      globalQueueCount = Math.max(0, Math.floor(count));
+      globalQueuePaused = paused;
+      globalQueueReason = reason;
+      if (details) globalQueueDetails = details;
+      renderPill();
+      if (open) renderCard();
+    },
     /** settings.actionMode changed: every rendered 隐藏/静音/拉黑 label must
      *  follow, or the batch button would state one action and run another. */
     setVerb(v: string) {
@@ -1647,7 +1751,14 @@ const ACTION_LADDER: { mode: ActionMode; verb: string }[] = [
 /** Inline pill on the author row; hover/focus → popover with reasons. */
 /** source: 'fresh' = just classified (rise-in); 'list'/'cache' = already on
  *  record → instant calm "known" marker, no processing implied. */
-export type BadgeSource = "fresh" | "list" | "cache" | "rule";
+export type BadgeSource =
+  | "fresh"
+  | "list"
+  | "cache"
+  | "rule"
+  | "bot-scan"
+  | "bio-rule"
+  ;
 
 // Popover overlay — a singleton shadow host attached directly under
 // <html>. Popovers must NOT live inside the badge's own shadow root: X's
@@ -1686,9 +1797,17 @@ export function createBadge(
     // Unhit ghost — still INTERACTIVE: hover/focus opens the 手动处理
     // popover (v0.4 behavior the v0.5 rewrite dropped). "Not on the list"
     // is exactly when the user needs a manual handle on an obvious spammer.
+    const botScanned = source === "bot-scan";
     el.className = "xss-badge ghost";
-    el.setAttribute("aria-label", "MXGA：未命中名单 · 悬停可手动处理");
-    el.innerHTML = `${icon("shield", "currentColor", 13)}<span>检查</span>`;
+    el.setAttribute(
+      "aria-label",
+      botScanned
+        ? "MXGA：简介强规则未命中；若简介尚未加载，可自然悬停头像后自动识别 · 悬停此标记可手动处理"
+        : "MXGA：未命中名单 · 悬停可手动处理",
+    );
+    el.innerHTML = botScanned
+      ? `${icon("shield", "currentColor", 13)}<span>简介检查</span>`
+      : `${icon("shield", "currentColor", 13)}<span>检查</span>`;
   } else {
     const meta = LABEL[v.label];
     const known = source === "list" || source === "cache" || source === "rule";
@@ -1700,6 +1819,8 @@ export function createBadge(
         ? "命中公共名单"
         : source === "rule"
           ? "命中官方关键词规则（本机比对）"
+          : source === "bio-rule"
+            ? "简介命中固定色情引流模板"
           : source === "cache"
             ? "本地缓存命中"
             : "首次发现（本机首次判定，已记录待人工确认）";
@@ -1709,8 +1830,9 @@ export function createBadge(
     // Badge = icon + ONE short label word (色情/垃圾/疑似) on a solid pill —
     // the compact shape users recognize. Source (公榜/规则/缓存) plus
     // category/confidence/provenance all live in the hover popover.
-    const tag = known ? "" : `<span class="ntag">首发</span>`;
-    el.innerHTML = `${icon(meta.ic, "currentColor", 12)}<span>${BADGE_TEXT[v.label]}</span>${tag}`;
+    const botLabel = source === "bio-rule" ? "色情简介" : "";
+    const tag = known || botLabel ? "" : `<span class="ntag">首发</span>`;
+    el.innerHTML = `${icon(meta.ic, "currentColor", 12)}<span>${botLabel || BADGE_TEXT[v.label]}</span>${tag}`;
   }
 
   let pop: HTMLElement | null = null;
@@ -1783,9 +1905,13 @@ export function createBadge(
       </div>
       <div class="pop-status" data-report-status hidden></div>`
       : `
-      <h4>手动处理</h4>
+      <h4>${source === "bot-scan" ? "简介规则：暂未命中" : "手动处理"}</h4>
       <div style="color:var(--muted);line-height:1.55">
-        未命中公共名单与官方规则。确认是垃圾/骚扰账号时，可手动处理（5 秒内可撤销），或举报给公共名单。</div>
+        ${
+          source === "bot-scan"
+            ? "当前未发现固定色情引流简介。如果 X 尚未加载简介，自然悬停该账号头像或用户名；资料卡出现后会自动识别并记住。也可立即手动处理（5 秒内可撤销）。"
+            : "未命中公共名单与官方规则。确认是垃圾/骚扰账号时，可手动处理（5 秒内可撤销），或举报给公共名单。"
+        }</div>
       <div class="acts">${ladder}${reportBtn}</div>
       <div class="pop-status" data-report-status hidden></div>`;
     for (const b of pop.querySelectorAll<HTMLElement>("[data-act]"))

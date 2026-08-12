@@ -3,6 +3,8 @@
 
 export const MAX_REGEX_RULES = 50;
 export const MAX_REGEX_LENGTH = 200;
+export const MAX_REGEX_INPUT_LENGTH = 2_000;
+export const REGEX_BATCH_BUDGET_MS = 8;
 
 export interface CompiledRegexRule {
   source: string;
@@ -17,10 +19,18 @@ export interface RegexRuleError {
 /** A deliberately conservative guard against common catastrophic-backtracking
  * shapes. It is not a formal ReDoS proof, so length/count caps remain in place. */
 function unsafeShape(pattern: string): boolean {
+  const complexity =
+    (pattern.match(/[+*?]/g)?.length ?? 0) * 8 +
+    (pattern.match(/\{/g)?.length ?? 0) * 10 +
+    (pattern.match(/\|/g)?.length ?? 0) * 4 +
+    (pattern.match(/\(/g)?.length ?? 0) * 2 +
+    (pattern.match(/\.\*|\.\+/g)?.length ?? 0) * 12;
   return (
     /\\[1-9]/.test(pattern) ||
     /\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)\s*(?:[+*]|\{\d*,?\d*\})/.test(pattern) ||
-    /(?:\.\*|\.\+){2,}/.test(pattern)
+    /\((?:[^()\\]|\\.)*\|(?:[^()\\]|\\.)*\)\s*(?:[+*]|\{\d*,?\d*\})/.test(pattern) ||
+    /(?:\.\*|\.\+){2,}/.test(pattern) ||
+    complexity > 80
   );
 }
 
@@ -95,9 +105,14 @@ export function compileRegexRules(rules: string[]): {
 
 export function matchRegexText(text: string, rules: CompiledRegexRule[]): CompiledRegexRule | null {
   if (!text) return null;
+  // X posts are normally far shorter. Bounding user-controlled text keeps a
+  // large quoted/Grok payload from multiplying work across all saved rules.
+  const input = text.slice(0, MAX_REGEX_INPUT_LENGTH);
+  const started = performance.now();
   for (const rule of rules) {
+    if (performance.now() - started > REGEX_BATCH_BUDGET_MS) return null;
     rule.regex.lastIndex = 0;
-    if (rule.regex.test(text)) return rule;
+    if (rule.regex.test(input)) return rule;
   }
   return null;
 }

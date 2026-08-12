@@ -44,6 +44,9 @@ export type AutoTierMode = "badge" | "hide" | "full";
 
 /** Where user-authored regular-expression rules hide matching post text. */
 export type RegexScope = "replies" | "all";
+/** Fixed bio-template hits can enter the same durable processing queue as
+ * public-list hits. Native actions are still follow-verified and paced. */
+export type BotDetectionAction = CategoryAction;
 
 export interface Settings {
   enabled: boolean; // master: passive detection on/off
@@ -52,12 +55,15 @@ export interface Settings {
   actionMode: ActionMode; // what "隐藏" does to a flagged account
   categoryActions: CategoryActions; // per-category automatic action on list hits
   autoProcess: boolean; // master kill-switch for categoryActions auto hide/mute/block
+  previewMode: boolean; // detect and show planned automatic actions without executing them
   autoScope: AutoScope; // where auto actions may fire (replies-only by default)
   autoTierMode: AutoTierMode; // how far auto-published (non-human) list hits may auto-act
   autoExpand: boolean; // pop the bubble card open when auto-processing starts (off = pill pulse only; better on narrow/mobile viewports)
   regexEnabled: boolean; // local regex match + paced X-native mute
   regexScope: RegexScope; // replies-only by default to reduce false positives
   regexRules: string[]; // one JavaScript regex per entry; rules never uploaded
+  botDetectionEnabled: boolean;
+  botDetectionAction: BotDetectionAction;
   edgeBase: string; // advanced: override the service base URL — list/whitelist sync source, whitelist-apply backend AND outbound links
 }
 
@@ -79,12 +85,15 @@ export const DEFAULTS: Settings = {
   actionMode: "local",
   categoryActions: { ...DEFAULT_CATEGORY_ACTIONS },
   autoProcess: true,
+  previewMode: false,
   autoScope: "replies",
   autoTierMode: "full",
   autoExpand: true,
   regexEnabled: false,
   regexScope: "replies",
   regexRules: [],
+  botDetectionEnabled: true,
+  botDetectionAction: "badge",
   edgeBase: "",
 };
 

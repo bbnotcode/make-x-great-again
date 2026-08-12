@@ -45,6 +45,19 @@ export interface Signals {
  *  (read-only GET of the official artifact; nothing is uploaded). */
 export type BgRequest =
   | { type: "health" }
+  | {
+      type: "list-lookup-batch";
+      identities: Array<{ userId?: string; handle?: string }>;
+    }
+  | { type: "diagnostics" }
+  | { type: "queue-status" }
+  | {
+      type: "queue-command";
+      command: "pause" | "resume" | "cancel" | "retry" | "clear" | "clear-source";
+      id?: string;
+      source?: "auto" | "bio_rule" | "regex" | "quick";
+    }
+  | { type: "cache-cleanup" }
   | { type: "stats" }
   | { type: "records" }
   | { type: "list-sync"; force?: boolean }

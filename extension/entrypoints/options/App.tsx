@@ -1533,6 +1533,17 @@ function Settings() {
       p ? { ...p, categoryActions: { ...p.categoryActions, [cat]: action } } : p,
     );
   };
+  const changeBioAction = async (action: CategoryAction) => {
+    if (action === "mute" || action === "block") {
+      const ok = await ensureXPermission();
+      if (!ok) {
+        setPermDenied(true);
+        return;
+      }
+    }
+    setPermDenied(false);
+    await save("botDetectionAction", action);
+  };
   const regexLines = regexDraft.split(/\r?\n/).map((r) => r.trim()).filter(Boolean);
   const regexValidation = compileRegexRules(regexLines);
   const saveRegexRules = async () => {
@@ -1585,6 +1596,41 @@ function Settings() {
 
         {st && (
           <section>
+            <SectionH>🤖 人机评论识别</SectionH>
+            <p className="mb-3 text-[12px] leading-relaxed text-fg-3">
+              被动读取 X 已加载的个人简介，或在你自然悬停资料卡时识别固定色情引流模板；不会模拟悬停或额外请求。关注用户和白名单始终优先保护。
+            </p>
+            <Toggle
+              on={st.botDetectionEnabled}
+              onChange={(v) => save("botDetectionEnabled", v)}
+              label="启用人机评论识别"
+              hint="关闭后不再识别色情引流简介；公榜、官方规则和正则功能不受影响"
+            />
+            <div className="mt-4">
+              <div className="mb-1.5 text-[12px] font-semibold text-fg">命中后的行为</div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {([
+                  ["badge", "仅标记（默认）", "显示 🤖 标签，由你决定是否处理"],
+                  ["hide", "本地隐藏", "立即写入处理记录并隐藏，可随时恢复"],
+                  ["mute", "X 静音", "命中后立即持久化到后台队列；离开帖子仍会继续"],
+                  ["block", "X 拉黑", "命中后立即持久化到后台队列；离开帖子仍会继续"],
+                ] as const).map(([value, label, hint]) => {
+                  const active = st.botDetectionAction === value;
+                  return (
+                    <button key={value} type="button" onClick={() => void changeBioAction(value)}
+                      className={`rounded-lg border p-3 text-left transition ${active ? "border-fg bg-card-hi" : "border-border-2 hover:border-fg-3"}`}>
+                      <span className="text-[13px] font-medium text-fg">{label}</span>
+                      <span className="block text-[11px] leading-5 text-fg-3">{hint}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {st && (
+          <section>
             <SectionH>自动处理策略</SectionH>
             <p className="mb-3 text-[12px] leading-relaxed text-fg-3">
               命中<b className="text-fg-2">公共黑名单或官方规则</b>的账号按下方类别设定自动处理，其余只挂角标。
@@ -1596,6 +1642,12 @@ function Settings() {
                 onChange={(v) => save("autoProcess", v)}
                 label="启用自动处理"
                 hint="总开关，与气泡面板里的「自动处理」开关同步；关闭后以下配置保留但不执行，一切命中只标记"
+              />
+              <Toggle
+                on={st.previewMode}
+                onChange={(v) => save("previewMode", v)}
+                label="安全预览模式"
+                hint="继续检测并显示原计划动作，但不自动隐藏、静音或拉黑；手动点击操作仍然有效"
               />
             </div>
             <div className="mb-4">
@@ -1987,12 +2039,305 @@ function WhitelistPage() {
   );
 }
 
+interface DiagnosticData {
+  extensionVersion: string;
+  indexOwner: string;
+  indexEntries: number;
+  listVersion: string | null;
+  listFetchedAt: number | null;
+  whitelistEntries: number;
+  rules: number;
+  processedRecords: number;
+  pendingActions: number;
+  followCacheEntries: number;
+  cacheCleanup: {
+    ts?: number;
+    removedDetection?: number;
+    removedFollow?: number;
+  } | null;
+  storageBytes: {
+    total: number;
+    list: number;
+    cache: number;
+    records: number;
+    other: number;
+  };
+}
+
+interface QueueTaskData {
+  id: string;
+  handle: string;
+  action: "mute" | "block";
+  source?: "auto" | "bio_rule" | "regex" | "quick";
+  ts: number;
+  status?: "queued" | "running" | "failed";
+  attempts?: number;
+  updatedAt?: number;
+  lastError?: string;
+  nextAttemptAt?: number;
+}
+
+interface QueueData {
+  paused: boolean;
+  updatedAt: number;
+  reason?: string;
+  tasks: QueueTaskData[];
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
+
+/** Read-only support panel. It reports the state the background actually
+ * uses, making stale builds, failed list syncs and stuck action queues visible
+ * without opening DevTools. */
+function DiagnosticsPage() {
+  const [data, setData] = useState<DiagnosticData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [cleanupMsg, setCleanupMsg] = useState<string | null>(null);
+  const [queue, setQueue] = useState<QueueData | null>(null);
+  const [queueMsg, setQueueMsg] = useState<string | null>(null);
+  const [queueFilter, setQueueFilter] = useState<"all" | "bio_rule" | "quick" | "regex" | "auto">("all");
+  const load = async (silent = false) => {
+    if (!silent) setBusy(true);
+    setError(null);
+    try {
+      const [response, queueResponse] = (await Promise.all([
+        chrome.runtime.sendMessage({ type: "diagnostics" }),
+        chrome.runtime.sendMessage({ type: "queue-status" }),
+      ])) as [{
+        ok?: boolean;
+        data?: DiagnosticData;
+        error?: string;
+      }, { ok?: boolean; data?: QueueData; error?: string }];
+      if (!response?.ok || !response.data) throw new Error(response?.error ?? "后台无响应");
+      setData(response.data);
+      if (queueResponse?.ok && queueResponse.data) setQueue(queueResponse.data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (!silent) setBusy(false);
+    }
+  };
+  useEffect(() => {
+    void load();
+    const timer = window.setInterval(() => void load(true), 2_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const queueCommand = async (
+    command: "pause" | "resume" | "cancel" | "retry" | "clear" | "clear-source",
+    id?: string,
+    source?: "auto" | "bio_rule" | "regex" | "quick",
+  ) => {
+    setQueueMsg(null);
+    const response = (await chrome.runtime.sendMessage({
+      type: "queue-command",
+      command,
+      ...(id ? { id } : {}),
+      ...(source ? { source } : {}),
+    })) as { ok?: boolean; data?: QueueData; error?: string };
+    if (!response?.ok || !response.data) {
+      setQueueMsg(`操作失败：${response?.error ?? "后台无响应"}`);
+      return;
+    }
+    setQueue(response.data);
+    setQueueMsg(
+      command === "pause"
+        ? "队列已暂停；当前请求完成后不再启动新任务"
+        : command === "resume"
+          ? "队列已继续"
+          : command === "retry"
+            ? "失败任务已重新排队"
+              : command === "cancel"
+                ? "任务已取消"
+                : command === "clear-source"
+                  ? "该来源的未开始任务已取消"
+              : "未完成任务已清空",
+    );
+  };
+  const cleanup = async () => {
+    setBusy(true);
+    setCleanupMsg(null);
+    try {
+      const response = (await chrome.runtime.sendMessage({ type: "cache-cleanup" })) as {
+        ok?: boolean;
+        data?: { removedDetection?: number; removedFollow?: number };
+        error?: string;
+      };
+      if (!response?.ok) throw new Error(response?.error ?? "后台无响应");
+      const removed = (response.data?.removedDetection ?? 0) + (response.data?.removedFollow ?? 0);
+      setCleanupMsg(`已清理 ${removed.toLocaleString("zh-CN")} 条过期缓存`);
+      await load();
+    } catch (e) {
+      setCleanupMsg(`清理失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const rows = data
+    ? [
+        ["扩展版本", `v${data.extensionVersion}`],
+        ["名单索引位置", data.indexOwner === "background" ? "扩展后台（所有 X 标签页共享）" : data.indexOwner],
+        ["黑名单索引", `${data.indexEntries.toLocaleString("zh-CN")} 条`],
+        ["白名单", `${data.whitelistEntries.toLocaleString("zh-CN")} 条`],
+        ["检测规则", `${data.rules.toLocaleString("zh-CN")} 条`],
+        ["名单版本", data.listVersion ?? "尚未同步"],
+        ["上次同步", relTime(data.listFetchedAt)],
+        ["扩展存储总计", formatBytes(data.storageBytes.total)],
+        ["公榜与白名单", formatBytes(data.storageBytes.list)],
+        ["可清理缓存", formatBytes(data.storageBytes.cache)],
+        ["处理记录", `${data.processedRecords.toLocaleString("zh-CN")} 条 · ${formatBytes(data.storageBytes.records)}`],
+        ["其他设置数据", formatBytes(data.storageBytes.other)],
+        ["待执行动作", `${data.pendingActions.toLocaleString("zh-CN")} 条`],
+        ["关注关系缓存", `${data.followCacheEntries.toLocaleString("zh-CN")} 个账号`],
+        ["上次缓存清理", relTime(data.cacheCleanup?.ts ?? null)],
+        [
+          "上次清理数量",
+          `${((data.cacheCleanup?.removedDetection ?? 0) + (data.cacheCleanup?.removedFollow ?? 0)).toLocaleString("zh-CN")} 条`,
+        ],
+      ]
+    : [];
+  const queueActive = queue?.tasks.filter((task) => task.status !== "failed").length ?? 0;
+  const queueNextRetry = queue?.tasks
+    .map((task) => task.nextAttemptAt)
+    .filter((at): at is number => typeof at === "number" && at > Date.now())
+    .sort((a, b) => a - b)[0];
+  const queueEtaMs = queueActive * 1_900 + Math.max(0, (queueNextRetry ?? Date.now()) - Date.now());
+  const queueSourceSummary = queue
+    ? [
+        `手动 ${queue.tasks.filter((task) => task.source === "quick").length}`,
+        `正则 ${queue.tasks.filter((task) => task.source === "regex").length}`,
+        `简介 ${queue.tasks.filter((task) => task.source === "bio_rule").length}`,
+        `公榜 ${queue.tasks.filter((task) => !["quick", "regex", "bio_rule"].includes(task.source ?? "auto")).length}`,
+      ].join(" · ")
+    : "";
+  const filteredQueueTasks = (queue?.tasks ?? []).filter((task) =>
+    queueFilter === "all"
+      ? true
+      : queueFilter === "auto"
+        ? !["quick", "regex", "bio_rule"].includes(task.source ?? "auto")
+        : task.source === queueFilter,
+  );
+  return (
+    <Page title="诊断信息" sub="只读取本机扩展状态，不上传浏览记录或账号数据">
+      <div className="mb-4 max-w-[760px] rounded-lg border border-border bg-card p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-[14px] font-semibold text-fg">后台任务队列</div>
+            <div className="mt-1 text-[12px] text-fg-3">
+              {queue?.paused ? "已暂停" : "运行中"} · {queue?.tasks.length ?? 0} 条未完成
+              {queue?.tasks.length
+                ? ` · ${queueSourceSummary} · 预计约 ${
+                    queueEtaMs >= 60_000
+                      ? `${Math.ceil(queueEtaMs / 60_000)} 分钟`
+                      : `${Math.max(1, Math.ceil(queueEtaMs / 1000))} 秒`
+                  }`
+                : ""}
+            </div>
+            {queue?.paused && queue.reason && (
+              <div className="mt-1 max-w-[500px] text-[11px] text-warn">{queue.reason}</div>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Btn onClick={() => void queueCommand(queue?.paused ? "resume" : "pause")}>
+              {queue?.paused ? "继续处理" : "暂停队列"}
+            </Btn>
+            <Btn onClick={() => void queueCommand("clear")} disabled={!queue?.tasks.length}>
+              取消全部未完成
+            </Btn>
+          </div>
+        </div>
+        {queueMsg && <div className="mb-3 text-[12px] text-fg-3">{queueMsg}</div>}
+        {!!queue?.tasks.length && (
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            {([[
+              "all", "全部"], ["bio_rule", "色情简介"], ["quick", "手动"], ["regex", "正则"], ["auto", "公榜"],
+            ] as const).map(([value, label]) => (
+              <Btn key={value} onClick={() => setQueueFilter(value)}>{queueFilter === value ? `✓ ${label}` : label}</Btn>
+            ))}
+            {queueFilter !== "all" && (
+              <Btn
+                disabled={!filteredQueueTasks.some((task) => task.status !== "running")}
+                onClick={() => void queueCommand("clear-source", undefined, queueFilter)}
+              >取消该类未开始任务</Btn>
+            )}
+          </div>
+        )}
+        {!queue?.tasks.length ? (
+          <div className="rounded-md bg-card-hi px-3 py-5 text-center text-[12px] text-fg-3">
+            当前没有待执行任务
+          </div>
+        ) : (
+          <div className="max-h-[360px] overflow-auto rounded-md border border-border">
+            {filteredQueueTasks.map((task) => {
+              const status = task.status ?? "queued";
+              const statusText = status === "running" ? "执行中" : status === "failed" ? "失败" : "排队中";
+              const sourceText = task.source === "quick" ? "手动按钮" : task.source === "regex" ? "正则" : task.source === "bio_rule" ? "色情简介" : "公榜自动";
+              return (
+                <div key={task.id} className="flex items-center gap-3 border-b border-border px-3 py-2.5 last:border-b-0">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[13px] font-medium text-fg">@{task.handle}</div>
+                    <div className="mt-0.5 text-[11px] text-fg-3">
+                      {task.action === "block" ? "拉黑" : "静音"} · {sourceText} · {statusText}
+                      {task.attempts ? ` · 已尝试 ${task.attempts} 次` : ""}
+                      {task.nextAttemptAt && task.nextAttemptAt > Date.now()
+                        ? ` · ${relTime(task.nextAttemptAt)}重试`
+                        : ""}
+                    </div>
+                    {task.lastError && <div className="mt-1 text-[11px] text-danger">{task.lastError}</div>}
+                  </div>
+                  {status === "failed" && (
+                    <Btn onClick={() => void queueCommand("retry", task.id)}>重试</Btn>
+                  )}
+                  {status !== "running" && (
+                    <Btn onClick={() => void queueCommand("cancel", task.id)}>取消</Btn>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      <div className="max-w-[760px] rounded-lg border border-border bg-card p-4">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <span className="text-[13px] text-fg-3">
+            用于确认实际运行版本、名单状态和未完成动作
+          </span>
+          <div className="flex items-center gap-2">
+            <Btn onClick={() => void cleanup()} disabled={busy}>立即清理缓存</Btn>
+            <Btn onClick={() => void load()} disabled={busy}>
+              {busy ? "处理中…" : "重新检查"}
+            </Btn>
+          </div>
+        </div>
+        {cleanupMsg && <div className="mb-3 text-[12px] text-fg-3">{cleanupMsg}</div>}
+        {error && <div className="rounded-md bg-danger-soft px-3 py-2 text-[13px] text-danger">读取失败：{error}</div>}
+        {!error && !data && <div className="py-8 text-center text-fg-3">正在读取后台状态…</div>}
+        {data && (
+          <dl className="divide-y divide-border text-[13px]">
+            {rows.map(([label, value]) => (
+              <div key={label} className="grid grid-cols-[130px_1fr] gap-4 py-3">
+                <dt className="text-fg-3">{label}</dt>
+                <dd className="min-w-0 break-all font-mono text-fg">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </div>
+    </Page>
+  );
+}
+
 const TABS = [
   ["overview", "概览", Overview],
   ["blocklist", "处理记录", Blocklist],
   ["cache", "检测缓存", Cache],
   ["settings", "设置", Settings],
   ["whitelist", "保护我的账号", WhitelistPage],
+  ["diagnostics", "诊断信息", DiagnosticsPage],
   ["about", "关于", About],
 ] as const;
 type TabId = (typeof TABS)[number][0];

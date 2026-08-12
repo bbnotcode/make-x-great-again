@@ -47,6 +47,24 @@ test("is idempotent for the same account and refreshes recycled articles", () =>
   assert.equal(article.querySelectorAll("[data-mxga-quick-actions]").length, 1);
 });
 
+test("repositions an existing control when Grok appears after the initial mount", () => {
+  const late = document.createElement("article");
+  late.dataset.testid = "tweet";
+  late.innerHTML = `<div id="late-actions"><button data-testid="caret">More</button></div>`;
+  document.body.appendChild(late);
+  assert.equal(mountQuickActions(late, "LateGrok", async () => ({ ok: true })), true);
+  const actions = late.querySelector("#late-actions");
+  const host = late.querySelector<HTMLElement>("[data-mxga-quick-actions]");
+  const grok = document.createElement("button");
+  grok.dataset.testid = "grok-actions";
+  grok.textContent = "Grok";
+  actions?.insertBefore(grok, host);
+
+  assert.equal(mountQuickActions(late, "LateGrok", async () => ({ ok: true })), true);
+  assert.equal(actions?.firstElementChild, host);
+  assert.equal(host?.nextElementSibling, grok);
+});
+
 test("click delegates the requested native action without opening the post", async () => {
   const article = document.querySelector<HTMLElement>("article");
   assert.ok(article);
@@ -65,4 +83,31 @@ test("click delegates the requested native action without opening the post", asy
   assert.equal(block.dataset.state, "error");
   assert.equal(block.disabled, false);
   assert.equal(block.title, "测试失败");
+});
+
+test("queued clicks acknowledge immediately and report eventual completion", async () => {
+  const article = document.querySelector<HTMLElement>("article");
+  assert.ok(article);
+  let finish!: (result: { ok: boolean; message: string }) => void;
+  const completion = new Promise<{ ok: boolean; message: string }>((resolve) => {
+    finish = resolve;
+  });
+  mountQuickActions(article, "QueueTest", async () => ({
+    ok: true,
+    message: "已加入静音队列",
+    completion,
+  }));
+  const mute = article
+    .querySelector<HTMLElement>("[data-mxga-quick-actions]")
+    ?.shadowRoot?.querySelector<HTMLButtonElement>('[data-action="mute"]');
+  assert.ok(mute);
+  mute.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(mute.dataset.state, "queued");
+  assert.equal(mute.title, "已加入静音队列");
+
+  finish({ ok: true, message: "X 原生静音成功" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(mute.dataset.state, "success");
+  assert.equal(mute.title, "X 原生静音成功");
 });

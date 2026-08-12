@@ -53,6 +53,7 @@ let indexUpdatedAt = new Date(0).toISOString();
 let wlIds = new Set<string>();
 let wlHandles = new Set<string>();
 let warmed = false;
+let protectionsWarmed = false;
 
 function buildWhitelist(wl: StoredWhitelist): void {
   const ids = new Set<string>();
@@ -109,7 +110,11 @@ function buildMaps(list: StoredList): void {
 try {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
-    if (changes[LIST_KEY]?.newValue) buildMaps(changes[LIST_KEY].newValue as StoredList);
+    if (changes[LIST_KEY]?.newValue) {
+      const list = changes[LIST_KEY].newValue as StoredList;
+      if (warmed) buildMaps(list);
+      else setLocalRules(list.rules);
+    }
     if (changes[WL_KEY]?.newValue) buildWhitelist(changes[WL_KEY].newValue as StoredWhitelist);
   });
 } catch {
@@ -161,9 +166,7 @@ function requestBackgroundSync(): void {
  *  first page load; remote sync still replaces it as soon as it succeeds. */
 export async function warmLocalIndex(): Promise<void> {
   if (warmed) return;
-  await warmLocalAllowlist();
-  const wl = await getStoredWhitelist();
-  if (wl) buildWhitelist(wl);
+  await warmLocalProtections();
   const stored = await getStoredList();
   if (stored) {
     buildMaps(stored);
@@ -181,7 +184,25 @@ export async function warmLocalIndex(): Promise<void> {
 
   userIdMap ??= new Map();
   handleMap ??= new Map();
+  // Mark this empty bootstrap as warmed. When a cache clear happens while
+  // Chrome is already running, the background downloads the list after the
+  // first lookup. storage.onChanged must then replace these temporary empty
+  // maps immediately; leaving `warmed` false stranded the background index
+  // at zero until another lookup happened to call warmLocalIndex again.
+  warmed = true;
   requestBackgroundSync();
+}
+
+/** Content scripts need the small whitelist and keyword-rule collections,
+ * but not the 100k+ account maps. Keeping this separate lets the background
+ * own the large index once for all open X tabs. */
+export async function warmLocalProtections(): Promise<void> {
+  if (protectionsWarmed) return;
+  await warmLocalAllowlist();
+  const [wl, stored] = await Promise.all([getStoredWhitelist(), getStoredList()]);
+  if (wl) buildWhitelist(wl);
+  setLocalRules(stored?.rules);
+  protectionsWarmed = true;
 }
 
 /** Synchronous lookup by numeric userId. Returns null if not found. */

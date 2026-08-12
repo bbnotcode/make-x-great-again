@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MAX_REGEX_RULES, compileRegexRules, matchRegexText } from "../lib/regex-filter";
+import {
+  MAX_REGEX_INPUT_LENGTH,
+  MAX_REGEX_RULES,
+  compileRegexRules,
+  matchRegexText,
+} from "../lib/regex-filter";
 
 test("plain rules default to case-insensitive unicode matching", () => {
   const { compiled, errors } = compileRegexRules(["加我.*私聊", "ONLYFANS"]);
@@ -18,9 +23,21 @@ test("slash syntax accepts flags and strips stateful flags", () => {
 });
 
 test("invalid and risky expressions are rejected", () => {
-  const { compiled, errors } = compileRegexRules(["/[a-/", "(a+)+$", "(foo)\\1"]);
+  const { compiled, errors } = compileRegexRules([
+    "/[a-/",
+    "(a+)+$",
+    "(foo)\\1",
+    "(a|aa)+$",
+    Array.from({ length: 12 }, () => ".*").join(""),
+  ]);
   assert.equal(compiled.length, 0);
-  assert.equal(errors.length, 3);
+  assert.equal(errors.length, 5);
+});
+
+test("matching examines only a bounded prefix of unusually large rendered text", () => {
+  const { compiled } = compileRegexRules(["needle"]);
+  assert.equal(matchRegexText(`${"x".repeat(MAX_REGEX_INPUT_LENGTH)}needle`, compiled), null);
+  assert.ok(matchRegexText(`needle${"x".repeat(MAX_REGEX_INPUT_LENGTH)}`, compiled));
 });
 
 test("rules are deduplicated and capped", () => {

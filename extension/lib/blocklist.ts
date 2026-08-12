@@ -4,6 +4,13 @@
 const KEY = "xss:blocked";
 
 let mem: Set<string> | null = null;
+let mutationLock: Promise<unknown> = Promise.resolve();
+
+function withMutationLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = mutationLock.then(fn, fn);
+  mutationLock = run.catch(() => {});
+  return run;
+}
 
 // Keep the in-memory set in sync across contexts: when the options page
 // un-hides an account (or another tab hides one), every open X tab must see
@@ -43,22 +50,26 @@ export async function warm(): Promise<void> {
 }
 
 export async function addBlocked(id: string): Promise<void> {
-  const s = await load();
-  if (s.has(id)) return;
-  s.add(id);
-  try {
-    await chrome.storage.local.set({ [KEY]: [...s] });
-  } catch {
-    /* non-fatal */
-  }
+  return withMutationLock(async () => {
+    const s = await load();
+    if (s.has(id)) return;
+    s.add(id);
+    try {
+      await chrome.storage.local.set({ [KEY]: [...s] });
+    } catch {
+      /* non-fatal */
+    }
+  });
 }
 
 export async function removeBlocked(id: string): Promise<void> {
-  const s = await load();
-  if (!s.delete(id)) return;
-  try {
-    await chrome.storage.local.set({ [KEY]: [...s] });
-  } catch {
-    /* non-fatal */
-  }
+  return withMutationLock(async () => {
+    const s = await load();
+    if (!s.delete(id)) return;
+    try {
+      await chrome.storage.local.set({ [KEY]: [...s] });
+    } catch {
+      /* non-fatal */
+    }
+  });
 }

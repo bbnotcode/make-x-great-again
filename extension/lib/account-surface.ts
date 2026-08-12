@@ -22,6 +22,16 @@ function now(): number {
   return typeof performance === "undefined" ? Date.now() : performance.now();
 }
 
+/** Document-space movement excludes ordinary user scrolling (rect.top and
+ * scrollY cancel each other) but captures X moving a recycled virtual row. */
+export function virtualRowDocumentDelta(
+  previousDocumentTop: number,
+  currentRectTop: number,
+  currentScrollY: number,
+): number {
+  return currentRectTop + currentScrollY - previousDocumentTop;
+}
+
 function captureScrollAnchor(surface: HTMLElement): void {
   if (typeof window === "undefined" || typeof document === "undefined") return;
   const targetRect = surface.getBoundingClientRect();
@@ -62,8 +72,9 @@ function scheduleScrollCorrection(): void {
     // rect.top alone also changes when the user scrolls. The document-space
     // position changes only when X reflows its virtual rows, so compensating
     // this delta does not fight an intentional wheel/touch scroll.
-    const documentTop = anchor.element.getBoundingClientRect().top + window.scrollY;
-    const delta = documentTop - anchor.documentTop;
+    const rectTop = anchor.element.getBoundingClientRect().top;
+    const documentTop = rectTop + window.scrollY;
+    const delta = virtualRowDocumentDelta(anchor.documentTop, rectTop, window.scrollY);
     if (Math.abs(delta) > 0.5) {
       window.scrollBy(0, delta);
       anchor.documentTop = documentTop;

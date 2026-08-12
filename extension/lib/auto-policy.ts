@@ -12,6 +12,28 @@ export function viewerProtected(sig: Pick<Signals, "viewerFollowing" | "viewerIs
 
 /** Where a hit came from, for auto-action eligibility purposes. */
 export type AutoSource = "list" | "rule" | "cache" | "fresh";
+export type FollowVerification = "following" | "not_following" | "unknown";
+
+/** X-native automatic actions are allowed only after X explicitly confirms
+ * the viewer does not follow the account. An unavailable relationship lookup
+ * degrades to the reversible local hide rather than guessing. */
+export function capUnverifiedFollowingAction(
+  action: CategoryAction,
+  relationship: FollowVerification,
+): CategoryAction {
+  if ((action === "mute" || action === "block") && relationship !== "not_following") {
+    return "hide";
+  }
+  return action;
+}
+
+export function automaticActionDisposition(
+  action: CategoryAction,
+  options: { autoProcess: boolean; previewMode: boolean },
+): "badge" | "preview" | "execute" {
+  if (action === "badge" || !options.autoProcess) return "badge";
+  return options.previewMode ? "preview" : "execute";
+}
 
 /**
  * Whether a hit may enter the automatic-processing path at all (the
